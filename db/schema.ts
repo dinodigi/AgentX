@@ -63,6 +63,10 @@ export const collections = pgTable(
     publicWrite: boolean("public_write").notNull().default(false),
     /** Fired on public-write submissions. No email engine — webhook and stop. */
     webhookUrl: text("webhook_url"),
+    /** Row visibility for delivery reads: only rows matching ALL clauses are served. */
+    publicFilter: jsonb("public_filter").$type<
+      { field: string; op: "eq" | "contains" | "gt" | "lt"; value: string | number | boolean }[]
+    >(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -113,6 +117,26 @@ export const projectMembers = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("project_members_user_idx").on(t.projectId, t.clerkUserId)],
+);
+
+/** Outcome log for public-write webhooks — a lost lead must at least be visible. */
+export const webhookDeliveries = pgTable(
+  "webhook_deliveries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    collectionId: uuid("collection_id").notNull(),
+    url: text("url").notNull(),
+    event: text("event").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    status: text("status").notNull(), // 'success' | 'failed'
+    attempts: text("attempts").notNull(),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("webhook_deliveries_project_idx").on(t.projectId)],
 );
 
 /** Uploaded file metadata; bytes live in R2 under `r2Key`. */

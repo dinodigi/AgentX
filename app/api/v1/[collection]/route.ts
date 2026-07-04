@@ -1,10 +1,12 @@
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import { bearerFrom, resolveProjectId } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
+import { deliverWebhook } from "@/lib/webhook";
+import { rateLimit } from "@/lib/ratelimit";
 import {
   createEntry,
   queryEntries,
-  resolveRelations,
+  resolveRefsForRead,
   toPublicView,
   publicFields,
   ValidationError,
@@ -80,8 +82,10 @@ export async function GET(
   }
 
   try {
-    const rows = await queryEntries(collection, { limit, offset, where, orderBy });
-    const resolved = await resolveRelations(projectId, collection, rows);
+    // publicFilter first: declarative row visibility set on the collection.
+    const effectiveWhere = [...((collection.publicFilter as WhereClause[] | null) ?? []), ...where];
+    const rows = await queryEntries(collection, { limit, offset, where: effectiveWhere, orderBy });
+    const resolved = await resolveRefsForRead(projectId, collection, rows);
     const data = resolved.map((e) => toPublicView(collection, e));
     return Response.json({ data });
   } catch (e) {
@@ -114,6 +118,15 @@ export async function POST(
     );
   }
 
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const limit = rateLimit(`${projectId}:${ip}`);
+  if (!limit.allowed) {
+    return Response.json(
+      { error: "too many submissions — try again shortly" },
+      { status: 429, headers: { "retry-after": String(limit.retryAfterSec) } },
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -123,26 +136,26 @@ export async function POST(
 
   try {
     const entry = await createEntry(projectId, collection, body);
-    // No email engine — fire the webhook and stop. Fire-and-forget.
-    if (collection.webhookUrl) void fireWebhook(collection.webhookUrl, collection.name, entry);
+    // No email engine — webhook and stop. Retries + outcome log run after the
+    // response is sent, so submitters never wait on a slow webhook endpoint.
+    if (collection.webhookUrl) {
+      const url = collection.webhookUrl;
+      after(() =>
+        deliverWebhook({
+          projectId,
+          collectionId: collection.id,
+          url,
+          event: "entry.created",
+          payload: { collection: collection.name, entry: { id: entry.id, data: entry.data } },
+        }),
+      );
+    }
     return Response.json({ id: entry.id }, { status: 201 });
   } catch (e) {
     if (e instanceof ValidationError) {
       return Response.json({ error: e.message }, { status: 422 });
     }
     return Response.json({ error: "internal error" }, { status: 500 });
-  }
-}
-
-async function fireWebhook(url: string, collection: string, entry: unknown) {
-  try {
-    await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ event: "entry.created", collection, entry }),
-    });
-  } catch {
-    // Best-effort; delivery of the webhook is not guaranteed in v1.
   }
 }
 

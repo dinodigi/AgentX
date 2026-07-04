@@ -1,7 +1,9 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { assets, type Asset } from "@/db/schema";
+import { assets, entries, type Asset } from "@/db/schema";
+import { ValidationError } from "./validation";
 
 /**
  * Cloudflare R2 via the S3-compatible API. One bucket, keys namespaced per
@@ -58,4 +60,39 @@ export async function uploadAsset(input: UploadInput): Promise<Asset> {
 
 function sanitize(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
+}
+
+export async function listAssets(projectId: string): Promise<Asset[]> {
+  return db.select().from(assets).where(eq(assets.projectId, projectId));
+}
+
+/**
+ * Delete an asset (R2 object + metadata row). Blocked while any entry still
+ * references its id — deleting would leave dangling refs the validator can't
+ * repair. Asset ids are uuids, so a text containment check is precise.
+ */
+export async function deleteAsset(projectId: string, assetId: string): Promise<void> {
+  const [asset] = await db
+    .select()
+    .from(assets)
+    .where(and(eq(assets.id, assetId), eq(assets.projectId, projectId)))
+    .limit(1);
+  if (!asset) throw new ValidationError(`asset ${assetId} not found`);
+
+  const [ref] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(entries)
+    .where(
+      and(eq(entries.projectId, projectId), sql`${entries.data}::text LIKE ${"%" + assetId + "%"}`),
+    );
+  if (Number(ref.n) > 0) {
+    throw new ValidationError(
+      `blocked: ${ref.n} entries still reference asset ${assetId} — clear those fields first`,
+    );
+  }
+
+  await client().send(
+    new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: asset.r2Key }),
+  );
+  await db.delete(assets).where(eq(assets.id, assetId));
 }

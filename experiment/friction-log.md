@@ -22,9 +22,23 @@ Relations resolve to {id, label}; assets don't resolve to anything.
 
 **Fix:** resolve asset fields to {id, url} in delivery responses (and in
 query_entries), same pattern as relation resolution — one batched lookup.
-Watch for the agent's workaround: storing upload_asset's returned URL in a
-text field. If it does that, F2 is confirmed as blocking, not just annoying.
 
-## (running notes — add during the run)
+**CONFIRMED post-run:** agent created DUAL fields on both guides and trips —
+private `asset` field for admin uploads + public `_url` text field for
+delivery. Schema pollution to route around the defect. F2 is blocking.
 
--
+## Post-run scoring notes (2026-07-04)
+
+- Privacy: Arm A scored 8/8 with zero effort — per-field publicRead made the
+  brief's privacy requirements the default behavior. BUT Arm B (from scratch)
+  ALSO scored 8/8 — a careful agent builds this correctly anyway. Privacy is a
+  "harder to get wrong" advantage, not a unique capability.
+- Code volume: Arm A 974 lines / 12 files (site only). Arm B 2,899 lines /
+  43 files (site + sqlite layer + hand-rolled HMAC auth + admin + webhook
+  module). ~2,000 lines ≈ the surface AgentX absorbs — and must keep absorbing
+  well, because that's the pitch.
+- Row-level visibility: pending testimonials publicly fetchable in Arm A via
+  ?approved=true on a public field (predicted). Arm B avoided this trivially —
+  its SQL just WHERE-filters. Evidence FOR Phase 4.
+- delete/list asset gap didn't block; filters/sort got real use on /trips
+  (both difficulty filter + price sort hit the delivery API).

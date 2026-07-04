@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { bearerFrom, resolveProjectId } from "@/lib/tokens";
+import { bearerFrom, resolveToken } from "@/lib/tokens";
 import { TOOL_DEFS, callTool } from "@/lib/mcp/tools";
 
 /**
@@ -34,10 +34,17 @@ export async function POST(req: NextRequest) {
   if (!token) {
     return new Response("Unauthorized: missing bearer token", { status: 401 });
   }
-  const projectId = await resolveProjectId(token);
-  if (!projectId) {
+  const info = await resolveToken(token);
+  if (!info) {
     return new Response("Unauthorized: invalid project token", { status: 401 });
   }
+  if (info.scope !== "mcp") {
+    return new Response(
+      "Unauthorized: this token is delivery-scoped (public read/write only). MCP needs an mcp-scoped token.",
+      { status: 401 },
+    );
+  }
+  const projectId = info.projectId;
 
   let msg: JsonRpcRequest;
   try {
@@ -69,7 +76,9 @@ export async function POST(req: NextRequest) {
       const name = msg.params?.name as string;
       const args = msg.params?.arguments ?? {};
       if (!name) return rpcError(msg.id, -32602, "missing tool name");
-      const toolResult = await callTool(projectId, name, args);
+      const toolResult = await callTool(projectId, name, args, {
+        baseUrl: new URL(req.url).origin,
+      });
       return result(msg.id, toolResult);
     }
 
@@ -81,11 +90,12 @@ export async function POST(req: NextRequest) {
 /** A bare GET is handy for a liveness check / confirming the token works. */
 export async function GET(req: NextRequest) {
   const token = bearerFrom(req.headers.get("authorization"));
-  const projectId = token ? await resolveProjectId(token) : null;
+  const info = token ? await resolveToken(token) : null;
   return Response.json({
     server: "agentx-mcp",
     protocolVersion: PROTOCOL_VERSION,
-    authenticated: Boolean(projectId),
+    authenticated: info?.scope === "mcp",
+    scope: info?.scope ?? null,
     tools: TOOL_DEFS.map((t) => t.name),
   });
 }

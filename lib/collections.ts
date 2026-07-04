@@ -3,6 +3,7 @@ import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
 import { collections, entries, type Collection } from "@/db/schema";
 import { validateFieldDefs, collectionNameSchema } from "./validation";
+import { buildWhere, type WhereClause } from "./query";
 import type { FieldDef } from "./field-types";
 
 /**
@@ -58,6 +59,12 @@ export interface DefineCollectionInput {
   fields: FieldDef[];
   publicWrite?: boolean;
   webhookUrl?: string | null;
+  /**
+   * Row visibility for delivery reads: only rows matching ALL clauses are
+   * publicly served (e.g. [{field:"approved",op:"eq",value:true}]). May
+   * reference private fields. Admin/MCP reads are unaffected.
+   */
+  publicFilter?: WhereClause[] | null;
   /** Required when redefinition drops or retypes fields (destructive). */
   confirm?: boolean;
 }
@@ -115,6 +122,9 @@ export async function defineCollection(
   const name = collectionNameSchema.parse(input.name);
   const fields = validateFieldDefs(input.fields);
 
+  // publicFilter clauses must be valid against these fields (throws with hint).
+  if (input.publicFilter?.length) buildWhere(fields, input.publicFilter);
+
   // Relation targets must resolve to a real collection in this project.
   const existing = await listCollections(projectId);
   const known = new Set(existing.map((c) => c.name).concat(name));
@@ -154,6 +164,7 @@ export async function defineCollection(
     fields,
     publicWrite: input.publicWrite ?? false,
     webhookUrl: input.webhookUrl ?? null,
+    publicFilter: input.publicFilter ?? null,
     updatedAt: new Date(),
   };
 
@@ -167,6 +178,7 @@ export async function defineCollection(
         fields: values.fields,
         publicWrite: values.publicWrite,
         webhookUrl: values.webhookUrl,
+        publicFilter: values.publicFilter,
         updatedAt: values.updatedAt,
       },
     })

@@ -11,10 +11,15 @@ import {
   createEntry,
   updateEntry,
   deleteEntry,
+  getEntry,
+  countEntries,
+  bulkCreateEntries,
   queryEntries,
-  resolveRelations,
+  resolveRefsForRead,
   ValidationError,
 } from "@/lib/entries";
+import { getProject } from "@/lib/admin";
+import { listAssets, deleteAsset } from "@/lib/r2";
 import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
 import { formatZodError } from "@/lib/validation";
@@ -39,6 +44,15 @@ export interface ToolDef {
 
 export const TOOL_DEFS: ToolDef[] = [
   {
+    name: "get_project_info",
+    description:
+      "Call this FIRST in a fresh session. Returns the project's name/branding and every " +
+      "URL you need: the delivery API base (how the live site reads/writes content), the " +
+      "admin URL (hand to the client), and the MCP endpoint. Pair with list_collections " +
+      "to fully orient yourself.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
     name: "list_field_types",
     description:
       "List the 8 field primitives you may compose collections from (text, richtext, " +
@@ -52,7 +66,8 @@ export const TOOL_DEFS: ToolDef[] = [
       "Create or update a collection (a data model). `fields` is an array of field " +
       "defs, each: {name, label, type, required?, publicRead?} plus type-specific config " +
       "(enum:options[], relation:{targetCollection,labelField}). Instantly manageable in " +
-      "the admin; no per-project UI code. Set publicWrite:true + webhookUrl for a form. " +
+      "the admin; no per-project UI code. Public fields are served by the delivery API " +
+      "(see get_project_info). Set publicWrite:true + webhookUrl for a form. " +
       "Redefining an existing collection with dropped/retyped fields returns a diff plan " +
       `and requires confirm:true (affected entries are counted, not silently orphaned). ${BOUNDARIES}`,
     inputSchema: {
@@ -63,6 +78,23 @@ export const TOOL_DEFS: ToolDef[] = [
         fields: { type: "array", items: { type: "object" } },
         publicWrite: { type: "boolean", description: "allow public POST submissions (forms)" },
         webhookUrl: { type: "string", description: "fired on public-write submissions" },
+        publicFilter: {
+          type: "array",
+          description:
+            "row visibility for delivery reads: only rows matching ALL clauses are publicly " +
+            "served, e.g. [{field:'approved',op:'eq',value:true}]. May use private fields. " +
+            "Admin and MCP reads are unaffected.",
+          items: {
+            type: "object",
+            properties: {
+              field: { type: "string" },
+              op: { type: "string", enum: ["eq", "contains", "gt", "lt"] },
+              value: {},
+            },
+            required: ["field", "op", "value"],
+            additionalProperties: false,
+          },
+        },
         confirm: { type: "boolean", description: "required to apply destructive schema changes" },
       },
       required: ["name", "fields"],
@@ -187,6 +219,72 @@ export const TOOL_DEFS: ToolDef[] = [
     },
   },
   {
+    name: "get_entry",
+    description: "Fetch one entry by id (relations → {id,label}, assets → {id,url}).",
+    inputSchema: {
+      type: "object",
+      properties: { collection: { type: "string" }, id: { type: "string" } },
+      required: ["collection", "id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "count_entries",
+    description: "Count entries in a collection, optionally with the same where filters as query_entries.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        where: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              field: { type: "string" },
+              op: { type: "string", enum: ["eq", "contains", "gt", "lt"] },
+              value: {},
+            },
+            required: ["field", "op", "value"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["collection"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "bulk_create_entries",
+    description:
+      "Create up to 100 entries in one call (use for seeding). Each item is validated like " +
+      "create_entry; returns per-item results so you can fix only the failures.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        entries: { type: "array", items: { type: "object" }, maxItems: 100 },
+      },
+      required: ["collection", "entries"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_assets",
+    description: "List uploaded assets (id, filename, contentType, size, url).",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "delete_asset",
+    description:
+      "Delete an uploaded asset (file + record). Blocked while entries still reference it.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "export_project",
     description:
       "Export the entire project definition (branding + all collections) as one JSON " +
@@ -233,6 +331,15 @@ const defineArgs = z.object({
   fields: z.array(z.any()),
   publicWrite: z.boolean().optional(),
   webhookUrl: z.string().url().optional(),
+  publicFilter: z
+    .array(
+      z.object({
+        field: z.string(),
+        op: z.enum(["eq", "contains", "gt", "lt"]),
+        value: z.union([z.string(), z.number(), z.boolean()]),
+      }),
+    )
+    .optional(),
   confirm: z.boolean().optional(),
 });
 const nameArg = z.object({ name: z.string() });
@@ -288,13 +395,45 @@ async function mustCollection(projectId: string, name: string) {
 }
 
 /** Dispatch a tool call for a resolved project. Never throws — returns ToolResult. */
+export interface ToolContext {
+  /** Origin of the incoming request, e.g. http://localhost:3000 */
+  baseUrl: string;
+}
+
 export async function callTool(
   projectId: string,
   name: string,
   rawArgs: unknown,
+  ctx: ToolContext,
 ): Promise<ToolResult> {
   try {
     switch (name) {
+      case "get_project_info": {
+        const project = await getProject(projectId);
+        if (!project) return err("project not found");
+        return ok({
+          project: {
+            name: project.name,
+            branding: project.branding,
+          },
+          urls: {
+            deliveryBase: `${ctx.baseUrl}/api/v1`,
+            admin: `${ctx.baseUrl}/admin/${projectId}`,
+            mcp: `${ctx.baseUrl}/api/mcp`,
+          },
+          deliveryApi: {
+            auth: "Authorization: Bearer <project token> on every request",
+            read:
+              "GET {deliveryBase}/{collection} — returns ONLY publicRead fields; " +
+              "relations resolve to {id,label}, assets to {id,url}; " +
+              "filters: ?field=value (public fields, equality); sort: ?sort=field:asc|desc; " +
+              "pagination: ?limit=&offset=",
+            write:
+              "POST {deliveryBase}/{collection} — only when publicWrite is true; " +
+              "validated like create_entry; fires the collection webhook",
+          },
+        });
+      }
       case "list_field_types":
         return ok(FIELD_TYPE_SPECS);
 
@@ -306,6 +445,7 @@ export async function callTool(
           fields: a.fields as never,
           publicWrite: a.publicWrite,
           webhookUrl: a.webhookUrl,
+          publicFilter: a.publicFilter,
           confirm: a.confirm,
         });
         if (!result.applied) {
@@ -343,6 +483,7 @@ export async function callTool(
           displayName: c.displayName,
           publicWrite: c.publicWrite,
           webhookUrl: c.webhookUrl,
+          publicFilter: c.publicFilter ?? null,
           fields: c.fields,
         });
       }
@@ -403,8 +544,52 @@ export async function callTool(
           where: a.where,
           orderBy: a.orderBy,
         });
-        const resolved = await resolveRelations(projectId, c, rows);
+        const resolved = await resolveRefsForRead(projectId, c, rows);
         return ok(resolved.map((r) => ({ id: r.id, data: r.data })));
+      }
+
+      case "get_entry": {
+        const a = z.object({ collection: z.string(), id: z.string() }).parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        const row = await getEntry(c, a.id);
+        if (!row) return err(`no entry ${a.id} in "${a.collection}"`);
+        const [resolved] = await resolveRefsForRead(projectId, c, [row]);
+        return ok({ id: resolved.id, data: resolved.data });
+      }
+
+      case "count_entries": {
+        const a = queryArgs.omit({ limit: true, offset: true, orderBy: true }).parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        return ok({ count: await countEntries(c, a.where ?? []) });
+      }
+
+      case "bulk_create_entries": {
+        const a = z
+          .object({ collection: z.string(), entries: z.array(z.record(z.unknown())).max(100) })
+          .parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        const results = await bulkCreateEntries(projectId, c, a.entries);
+        const created = results.filter((r) => r.ok).length;
+        return ok({ created, failed: results.length - created, results });
+      }
+
+      case "list_assets": {
+        const rows = await listAssets(projectId);
+        return ok(
+          rows.map((r) => ({
+            id: r.id,
+            filename: r.filename,
+            contentType: r.contentType,
+            size: Number(r.size),
+            url: r.url,
+          })),
+        );
+      }
+
+      case "delete_asset": {
+        const a = z.object({ id: z.string() }).parse(rawArgs);
+        await deleteAsset(projectId, a.id);
+        return ok({ deleted: a.id });
       }
 
       case "export_project":

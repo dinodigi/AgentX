@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { entries, assets, collections, type Collection, type Entry } from "@/db/schema";
 import { buildEntrySchema, formatZodError, ValidationError, type RefCheck } from "./validation";
@@ -176,6 +176,76 @@ export async function deleteEntry(collection: Collection, id: string): Promise<v
     .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)));
 }
 
+export async function getEntry(collection: Collection, id: string): Promise<Entry | null> {
+  const [row] = await db
+    .select()
+    .from(entries)
+    .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function countEntries(
+  collection: Collection,
+  where: WhereClause[] = [],
+): Promise<number> {
+  const conditions = [
+    eq(entries.collectionId, collection.id),
+    ...buildWhere(collection.fields, where),
+  ];
+  const [row] = await db
+    .select({ n: count() })
+    .from(entries)
+    .where(and(...conditions));
+  return row?.n ?? 0;
+}
+
+export interface BulkItemResult {
+  index: number;
+  ok: boolean;
+  id?: string;
+  error?: string;
+}
+
+/**
+ * Validate every item, then insert all valid ones in ONE statement. Per-item
+ * results so an agent can fix just its failures — a partial seed beats an
+ * all-or-nothing retry of 50 round-trips.
+ */
+export async function bulkCreateEntries(
+  projectId: string,
+  collection: Collection,
+  items: unknown[],
+): Promise<BulkItemResult[]> {
+  if (items.length > 100) throw new ValidationError("max 100 entries per bulk call");
+  const { refChecks } = buildEntrySchema(collection.fields);
+
+  const results: BulkItemResult[] = [];
+  const valid: { index: number; clean: Record<string, unknown> }[] = [];
+  await Promise.all(
+    items.map(async (item, index) => {
+      try {
+        const clean = validate(collection.fields, item, false);
+        await verifyRefs(projectId, clean, refChecks);
+        valid.push({ index, clean });
+      } catch (e) {
+        results.push({ index, ok: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    }),
+  );
+
+  if (valid.length > 0) {
+    const rows = await db
+      .insert(entries)
+      .values(
+        valid.map((v) => ({ projectId, collectionId: collection.id, data: v.clean })),
+      )
+      .returning({ id: entries.id });
+    valid.forEach((v, i) => results.push({ index: v.index, ok: true, id: rows[i].id }));
+  }
+  return results.sort((a, b) => a.index - b.index);
+}
+
 export interface QueryOpts {
   limit?: number;
   offset?: number;
@@ -238,6 +308,58 @@ export async function resolveRelations(
       }
     }
   }
+  return rows;
+}
+
+/**
+ * Resolve asset values on a set of entries to { id, url } — same batched
+ * pattern as relations. Without this, delivery consumers get bare uuids and
+ * agents invent dual-field workarounds (see experiment friction log F2).
+ */
+export async function resolveAssets(
+  projectId: string,
+  collection: Collection,
+  rows: Entry[],
+): Promise<Entry[]> {
+  const assetFields = collection.fields.filter((f) => f.type === "asset");
+  if (assetFields.length === 0 || rows.length === 0) return rows;
+
+  const ids = new Set<string>();
+  for (const f of assetFields) {
+    for (const r of rows) {
+      const v = r.data[f.name];
+      if (typeof v === "string") ids.add(v);
+    }
+  }
+  if (ids.size === 0) return rows;
+
+  const found = await db
+    .select({ id: assets.id, url: assets.url })
+    .from(assets)
+    .where(and(inArray(assets.id, [...ids]), eq(assets.projectId, projectId)));
+  const byId = new Map(found.map((a) => [a.id, a.url]));
+
+  for (const f of assetFields) {
+    for (const r of rows) {
+      const v = r.data[f.name];
+      if (typeof v === "string" && byId.has(v)) {
+        r.data[f.name] = { id: v, url: byId.get(v)! };
+      }
+    }
+  }
+  return rows;
+}
+
+/** Relations + assets in one pass (disjoint fields — safe to run together). */
+export async function resolveRefsForRead(
+  projectId: string,
+  collection: Collection,
+  rows: Entry[],
+): Promise<Entry[]> {
+  await Promise.all([
+    resolveRelations(projectId, collection, rows),
+    resolveAssets(projectId, collection, rows),
+  ]);
   return rows;
 }
 

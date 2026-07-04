@@ -27,6 +27,7 @@ export interface ProjectManifest {
     displayName: string;
     publicWrite: boolean;
     webhookUrl: string | null;
+    publicFilter: { field: string; op: "eq" | "contains" | "gt" | "lt"; value: string | number | boolean }[] | null;
     fields: FieldDef[];
   }[];
 }
@@ -49,6 +50,16 @@ const manifestSchema = z.object({
       displayName: z.string(),
       publicWrite: z.boolean().default(false),
       webhookUrl: z.string().nullable().default(null),
+      publicFilter: z
+        .array(
+          z.object({
+            field: z.string(),
+            op: z.enum(["eq", "contains", "gt", "lt"]),
+            value: z.union([z.string(), z.number(), z.boolean()]),
+          }),
+        )
+        .nullable()
+        .default(null),
       fields: z.array(z.any()),
     }),
   ),
@@ -69,6 +80,7 @@ export async function exportProject(projectId: string): Promise<ProjectManifest>
       displayName: c.displayName,
       publicWrite: c.publicWrite,
       webhookUrl: c.webhookUrl,
+      publicFilter: c.publicFilter ?? null,
       fields: c.fields,
     })),
   };
@@ -146,6 +158,7 @@ export async function importProject(
       fields: col.fields as FieldDef[],
       publicWrite: col.publicWrite,
       webhookUrl: col.webhookUrl,
+      publicFilter: col.publicFilter,
       confirm,
     });
     if (result.applied) applied.push(col.name);

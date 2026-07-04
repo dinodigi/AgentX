@@ -19,27 +19,39 @@ export function hashToken(raw: string): string {
   return createHash("sha256").update(raw).digest("hex");
 }
 
+export interface TokenInfo {
+  projectId: string;
+  /** 'mcp' = full agent access; 'delivery' = public read/write only (what sites hold). */
+  scope: "mcp" | "delivery";
+}
+
 /**
- * Resolve a raw bearer token to its project id, or null if unknown.
+ * Resolve a raw bearer token to its project + scope, or null if unknown.
  * Cached cross-request (this runs on EVERY MCP and delivery call); revoking a
  * token must call revalidateTag("project-tokens").
  */
-export async function resolveProjectId(rawToken: string): Promise<string | null> {
+export async function resolveToken(rawToken: string): Promise<TokenInfo | null> {
   if (!rawToken.startsWith(PREFIX)) return null;
   const hash = hashToken(rawToken);
   const cached = unstable_cache(
     async () => {
       const rows = await db
-        .select({ projectId: projectTokens.projectId })
+        .select({ projectId: projectTokens.projectId, scope: projectTokens.scope })
         .from(projectTokens)
         .where(eq(projectTokens.tokenHash, hash))
         .limit(1);
-      return rows[0]?.projectId ?? null;
+      if (!rows[0]) return null;
+      return { projectId: rows[0].projectId, scope: rows[0].scope as TokenInfo["scope"] };
     },
-    ["token", hash],
+    ["token-v2", hash],
     { tags: ["project-tokens"] },
   );
   return cached();
+}
+
+/** Any-scope resolution — the delivery API accepts both scopes. */
+export async function resolveProjectId(rawToken: string): Promise<string | null> {
+  return (await resolveToken(rawToken))?.projectId ?? null;
 }
 
 /** Extract a bearer token from an Authorization header value. */

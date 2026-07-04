@@ -93,6 +93,7 @@ export function TokensSection({
   const [revealed, setRevealed] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [label, setLabel] = useState("");
+  const [scope, setScope] = useState<"mcp" | "delivery">("mcp");
 
   return (
     <div className="max-w-md rounded-xl border border-gray-200 p-4">
@@ -154,10 +155,19 @@ export function TokensSection({
           onChange={(e) => setLabel(e.target.value)}
           className={inputClass}
         />
+        <select
+          value={scope}
+          onChange={(e) => setScope(e.target.value as "mcp" | "delivery")}
+          className={`${inputClass} w-32 shrink-0`}
+          aria-label="Token scope"
+        >
+          <option value="mcp">mcp (full)</option>
+          <option value="delivery">delivery</option>
+        </select>
         <button
           type="button"
           onClick={async () => {
-            const res = await mintToken(projectId, label);
+            const res = await mintToken(projectId, label, scope);
             setError(res.error ?? null);
             if (res.token) {
               setRevealed(res.token);
@@ -169,6 +179,10 @@ export function TokensSection({
           Mint token
         </button>
       </div>
+      <p className="mt-2 text-xs text-gray-400">
+        Give the site a delivery-scoped token (public read/write only) — never the
+        mcp token, which can change schemas.
+      </p>
       <ErrorLine error={error} />
     </div>
   );

@@ -50,7 +50,26 @@ All inside the original brief's boundaries.
 
 **Gate to Phase 2:** ✅ all 12 tools verified over live MCP round-trips.
 
-## Phase 2 — Dogfood + deploy (the acceptance test) ← CURRENT
+## Phase 1.5 — Production hardening (v1.2) ← CURRENT
+
+Experiment-driven fixes plus the security floor that identity (Phase 4) must
+land on. Evidence: experiment/friction-log.md.
+
+- [ ] 1.5.1 F2 fix — assets resolve to `{id, url}` in delivery + query_entries
+- [ ] 1.5.2 F1 fix — `get_project_info` tool (delivery base URL + endpoint shapes,
+      admin URL, branding, connector status later)
+- [ ] 1.5.3 Scoped tokens — `delivery` scope (public read/write only) for sites;
+      `mcp` scope required for the MCP endpoint. Sites never hold write-the-world keys.
+- [ ] 1.5.4 Rate limiting on public POST (per token+IP sliding window)
+- [ ] 1.5.5 Webhook reliability — retries with backoff + `webhook_deliveries` log
+      (pulled forward from 3.3; a lost lead is the worst failure mode)
+- [ ] 1.5.6 `publicFilter` — per-collection row visibility for delivery reads
+      (closes the testimonials leak declaratively, no identity needed)
+- [ ] 1.5.7 `get_entry` + `count_entries` tools
+- [ ] 1.5.8 `bulk_create_entries` (seeding cost 30+ round-trips in the experiment)
+- [ ] 1.5.9 `list_assets` / `delete_asset` tools
+
+## Phase 2 — Dogfood + deploy (the acceptance test)
 
 The brief's definition of done ends with "use it on a real Currents site."
 Evidence from this phase decides Phase 4's scope.
@@ -72,15 +91,21 @@ Email is NOT hosted here — it becomes an action once the email connector exist
 - [ ] 3.4 Events section in settings + `define_collection` support
 - [ ] 3.5 Event log table in admin (observability for clients)
 
-## Phase 4 — Identity-aware access (GATED on Phase 2 evidence)
+## Phase 4 — Identity-aware access (BYO issuer)
 
-The product decision: CMS substrate → app platform. Only if real sites hit this
-wall. Rule *presets*, not an expression language — keeps the security surface small.
+The CMS→app-platform jump. Design locked 2026-07-04: **BYO auth issuer** — each
+project configures its own Clerk instance (JWKS URL via the Connectors tab);
+the delivery API verifies end-user JWTs against THAT issuer. Client users live
+in the client's Clerk, never ours. The agent never sees keys — `list_connectors`
+reports status; the publishable key (public by design) is all a site needs.
+Rule *presets*, not an expression language.
 
-- [ ] 4.1 Design note: fixed rule set (`public` / `authenticated` / `owner`), no eval
-- [ ] 4.2 Delivery API verifies end-user Clerk JWTs (site's Clerk, via connector)
-- [ ] 4.3 `ownerField` on collections; `owner` rules for read/write
-- [ ] 4.4 Rules surfaced in admin + API reference
+- [ ] 4.1 Project auth config: issuer + JWKS URL (manual entry first; Connectors
+      tab UI arrives with 5.2)
+- [ ] 4.2 Delivery API verifies end-user JWTs against the project issuer
+- [ ] 4.3 Rule presets per collection: read/write `public|authenticated|owner`
+      + `ownerField` auto-stamped from the verified user id
+- [ ] 4.4 Rules surfaced in admin, API reference, and tool descriptions
 
 ## Phase 5 — Connectors (BYO infra)
 

@@ -41,15 +41,17 @@ export async function updateBranding(
 export async function mintToken(
   projectId: string,
   label: string,
+  scope: "mcp" | "delivery" = "mcp",
 ): Promise<{ error?: string; token?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
+  if (scope !== "mcp" && scope !== "delivery") return { error: "invalid scope" };
 
   const raw = generateToken();
   await db.insert(projectTokens).values({
     projectId,
     tokenHash: hashToken(raw),
-    scope: "mcp",
+    scope,
     label: label.trim() || null,
   });
   revalidatePath(`/admin/${projectId}/settings`);

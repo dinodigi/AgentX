@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Plus } from "lucide-react";
 import { getCollection } from "@/lib/collections";
-import { queryEntries, resolveRelations } from "@/lib/entries";
+import { queryEntries, resolveRefsForRead } from "@/lib/entries";
 import type { FieldDef } from "@/lib/field-types";
 
 /** Entry list for a collection — auto-generated table, columns from field defs. */
@@ -15,7 +15,7 @@ export default async function CollectionEntries({
   const collection = await getCollection(projectId, name);
   if (!collection) notFound();
 
-  const rows = await resolveRelations(
+  const rows = await resolveRefsForRead(
     projectId,
     collection,
     await queryEntries(collection, { limit: 200 }),
@@ -118,8 +118,17 @@ function Cell({ field, value }: { field: FieldDef; value: unknown }) {
           })}
         </span>
       );
-    case "asset":
-      return <span className="text-xs text-gray-400">file</span>;
+    case "asset": {
+      const url =
+        value && typeof value === "object" && "url" in value
+          ? String((value as { url: unknown }).url)
+          : null;
+      return url && /\.(png|jpe?g|gif|webp|svg)$/i.test(url) ? (
+        <img src={url} alt="" className="h-8 w-8 rounded object-cover" />
+      ) : (
+        <span className="text-xs text-gray-400">file</span>
+      );
+    }
     case "richtext": {
       const text = String(value).replace(/<[^>]+>/g, "");
       return <span>{text.length > 60 ? text.slice(0, 60) + "…" : text}</span>;
