@@ -1,0 +1,256 @@
+import { and, eq, inArray } from "drizzle-orm";
+import { db } from "@/db";
+import { entries, assets, collections, type Collection, type Entry } from "@/db/schema";
+import { buildEntrySchema, formatZodError, ValidationError, type RefCheck } from "./validation";
+import { buildWhere, buildOrderBy, type WhereClause, type OrderByClause } from "./query";
+import type { FieldDef } from "./field-types";
+import { z } from "zod";
+
+/**
+ * Entry CRUD with full validation. Every write goes through buildEntrySchema
+ * (shape + type + enum + required) and then verifyRefs (relation/asset ids
+ * actually exist). This is what "an AI can't corrupt stored data" means in
+ * practice.
+ *
+ * Every Neon query is an HTTPS round-trip, so this module batches aggressively:
+ * one query for all asset refs, one per target collection for relation refs,
+ * one for all relation labels — never one query per field.
+ */
+
+export { ValidationError };
+
+/** Check that relation/asset ids referenced by an entry exist in this project. */
+async function verifyRefs(
+  projectId: string,
+  data: Record<string, unknown>,
+  refChecks: RefCheck[],
+): Promise<void> {
+  const assetIds: { field: string; id: string }[] = [];
+  const relByTarget = new Map<string, { field: string; id: string }[]>();
+
+  for (const ref of refChecks) {
+    const value = data[ref.field];
+    if (value == null) continue; // optional / not provided
+    if (ref.kind === "asset") {
+      assetIds.push({ field: ref.field, id: value as string });
+    } else {
+      const list = relByTarget.get(ref.targetCollection!) ?? [];
+      list.push({ field: ref.field, id: value as string });
+      relByTarget.set(ref.targetCollection!, list);
+    }
+  }
+  if (assetIds.length === 0 && relByTarget.size === 0) return;
+
+  const checks: Promise<void>[] = [];
+
+  if (assetIds.length > 0) {
+    checks.push(
+      db
+        .select({ id: assets.id })
+        .from(assets)
+        .where(
+          and(
+            inArray(assets.id, assetIds.map((a) => a.id)),
+            eq(assets.projectId, projectId),
+          ),
+        )
+        .then((found) => {
+          const ok = new Set(found.map((f) => f.id));
+          for (const a of assetIds) {
+            if (!ok.has(a.id)) throw new ValidationError(`${a.field}: asset ${a.id} not found`);
+          }
+        }),
+    );
+  }
+
+  for (const [targetName, refs] of relByTarget) {
+    checks.push(
+      db
+        .select({ id: entries.id })
+        .from(entries)
+        .innerJoin(collections, eq(entries.collectionId, collections.id))
+        .where(
+          and(
+            inArray(entries.id, refs.map((r) => r.id)),
+            eq(collections.projectId, projectId),
+            eq(collections.name, targetName),
+          ),
+        )
+        .then((found) => {
+          const ok = new Set(found.map((f) => f.id));
+          for (const r of refs) {
+            if (!ok.has(r.id)) {
+              throw new ValidationError(`${r.field}: no entry ${r.id} in "${targetName}"`);
+            }
+          }
+        }),
+    );
+  }
+
+  await Promise.all(checks);
+}
+
+function validate(
+  fields: FieldDef[],
+  data: unknown,
+  partial: boolean,
+): Record<string, unknown> {
+  const { schema } = buildEntrySchema(fields, partial);
+  try {
+    return schema.parse(data);
+  } catch (e) {
+    if (e instanceof z.ZodError) throw new ValidationError(formatZodError(e));
+    throw e;
+  }
+}
+
+export async function createEntry(
+  projectId: string,
+  collection: Collection,
+  data: unknown,
+  opts: { idempotencyKey?: string } = {},
+): Promise<Entry> {
+  const clean = validate(collection.fields, data, false);
+  const { refChecks } = buildEntrySchema(collection.fields);
+  await verifyRefs(projectId, clean, refChecks);
+
+  const [row] = await db
+    .insert(entries)
+    .values({
+      projectId,
+      collectionId: collection.id,
+      data: clean,
+      idempotencyKey: opts.idempotencyKey ?? null,
+    })
+    .onConflictDoNothing()
+    .returning();
+  if (row) return row;
+
+  // Conflict = this idempotency key already created an entry; return it.
+  const [existing] = await db
+    .select()
+    .from(entries)
+    .where(
+      and(
+        eq(entries.collectionId, collection.id),
+        eq(entries.idempotencyKey, opts.idempotencyKey!),
+      ),
+    )
+    .limit(1);
+  return existing;
+}
+
+export async function updateEntry(
+  projectId: string,
+  collection: Collection,
+  id: string,
+  data: unknown,
+): Promise<Entry> {
+  const patch = validate(collection.fields, data, true);
+  const { refChecks } = buildEntrySchema(collection.fields, true);
+
+  // Ref checks and the current-row fetch are independent — run together.
+  const [, current] = await Promise.all([
+    verifyRefs(projectId, patch, refChecks),
+    db
+      .select()
+      .from(entries)
+      .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
+      .limit(1)
+      .then((rows) => rows[0]),
+  ]);
+  if (!current) throw new ValidationError(`entry ${id} not found`);
+
+  const merged = { ...current.data, ...patch };
+  const [row] = await db
+    .update(entries)
+    .set({ data: merged, updatedAt: new Date() })
+    .where(eq(entries.id, id))
+    .returning();
+  return row;
+}
+
+export async function deleteEntry(collection: Collection, id: string): Promise<void> {
+  await db
+    .delete(entries)
+    .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)));
+}
+
+export interface QueryOpts {
+  limit?: number;
+  offset?: number;
+  where?: WhereClause[];
+  orderBy?: OrderByClause;
+}
+
+export async function queryEntries(
+  collection: Collection,
+  opts: QueryOpts = {},
+): Promise<Entry[]> {
+  const conditions = [
+    eq(entries.collectionId, collection.id),
+    ...buildWhere(collection.fields, opts.where ?? []),
+  ];
+  const order = buildOrderBy(collection.fields, opts.orderBy);
+
+  let q = db.select().from(entries).where(and(...conditions)).$dynamic();
+  if (order) q = q.orderBy(order);
+  return q.limit(Math.min(opts.limit ?? 100, 500)).offset(opts.offset ?? 0);
+}
+
+/**
+ * Resolve relation values on a set of entries to { id, label } using each
+ * relation's labelField. ONE query for all referenced ids across every
+ * relation field, regardless of how many relation fields the schema has.
+ */
+export async function resolveRelations(
+  projectId: string,
+  collection: Collection,
+  rows: Entry[],
+): Promise<Entry[]> {
+  const relationFields = collection.fields.filter(
+    (f): f is Extract<FieldDef, { type: "relation" }> => f.type === "relation",
+  );
+  if (relationFields.length === 0 || rows.length === 0) return rows;
+
+  const allIds = new Set<string>();
+  for (const rf of relationFields) {
+    for (const r of rows) {
+      const v = r.data[rf.name];
+      if (typeof v === "string") allIds.add(v);
+    }
+  }
+  if (allIds.size === 0) return rows;
+
+  // Entry ids are globally unique — one fetch covers every target collection.
+  const targetRows = await db
+    .select({ id: entries.id, data: entries.data })
+    .from(entries)
+    .where(and(inArray(entries.id, [...allIds]), eq(entries.projectId, projectId)));
+  const byId = new Map(targetRows.map((t) => [t.id, t.data]));
+
+  for (const rf of relationFields) {
+    for (const r of rows) {
+      const v = r.data[rf.name];
+      if (typeof v === "string" && byId.has(v)) {
+        const data = byId.get(v)!;
+        r.data[rf.name] = { id: v, label: String(data[rf.labelField] ?? v) };
+      }
+    }
+  }
+  return rows;
+}
+
+/** Project an entry's data down to only fields flagged publicRead. */
+export function toPublicView(collection: Collection, entry: Entry): Record<string, unknown> {
+  const out: Record<string, unknown> = { id: entry.id };
+  for (const f of collection.fields) {
+    if (f.publicRead && f.name in entry.data) out[f.name] = entry.data[f.name];
+  }
+  return out;
+}
+
+/** The public-read fields of a collection (empty => not exposed at all). */
+export function publicFields(collection: Collection): FieldDef[] {
+  return collection.fields.filter((f) => f.publicRead);
+}

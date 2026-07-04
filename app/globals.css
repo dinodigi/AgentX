@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand is a CSS variable so each project reskins the admin by overriding
+     --brand on a wrapper element (see BrandScope). */
+  --color-brand: var(--brand, #4f46e5);
+  --color-brand-soft: color-mix(in srgb, var(--brand, #4f46e5) 10%, white);
+  --color-brand-strong: color-mix(in srgb, var(--brand, #4f46e5) 85%, black);
+}
+
+:root {
+  --brand: #4f46e5;
+}
+
+body {
+  @apply bg-white text-gray-900 antialiased;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
