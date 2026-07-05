@@ -2,32 +2,58 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Plus } from "lucide-react";
 import { getCollection } from "@/lib/collections";
-import { queryEntries, resolveRefsForRead } from "@/lib/entries";
+import { queryEntries, countEntries, resolveRefsForRead } from "@/lib/entries";
 import type { FieldDef } from "@/lib/field-types";
+
+const PAGE_SIZE = 50;
 
 /** Entry list for a collection — auto-generated table, columns from field defs. */
 export default async function CollectionEntries({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string; collection: string }>;
+  searchParams: Promise<{ q?: string; page?: string }>;
 }) {
   const { projectId, collection: name } = await params;
+  const { q, page: pageParam } = await searchParams;
   const collection = await getCollection(projectId, name);
   if (!collection) notFound();
 
-  const rows = await resolveRefsForRead(
-    projectId,
-    collection,
-    await queryEntries(collection, { limit: 200 }),
-  );
+  const page = Math.max(1, Number(pageParam ?? 1) || 1);
+  // Quick filter: contains on the first text-ish field.
+  const searchField = collection.fields.find((f) => f.type === "text" || f.type === "richtext");
+  const where =
+    q && searchField ? [{ field: searchField.name, op: "contains" as const, value: q }] : [];
+
+  const [rows, total] = await Promise.all([
+    queryEntries(collection, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, where }).then(
+      (r) => resolveRefsForRead(projectId, collection, r),
+    ),
+    countEntries(collection, where),
+  ]);
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   // First 4 fields as columns keeps the table readable at any schema size.
   const cols = collection.fields.slice(0, 4);
+  const pageHref = (p: number) =>
+    `/admin/${projectId}/${name}?${new URLSearchParams({ ...(q ? { q } : {}), page: String(p) })}`;
 
   return (
     <>
       <div className="mb-4 flex items-center gap-3">
         <h1 className="text-lg font-medium">{collection.displayName}</h1>
-        <span className="text-sm text-gray-400">{rows.length} entries</span>
+        <span className="text-sm text-gray-400">{total} entries</span>
+        {searchField && (
+          <form className="ml-2">
+            <input
+              type="search"
+              name="q"
+              defaultValue={q ?? ""}
+              placeholder={`Search ${searchField.label.toLowerCase()}…`}
+              className="w-48 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-soft"
+            />
+          </form>
+        )}
         <Link
           href={`/admin/${projectId}/${name}/new`}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-strong"
@@ -39,7 +65,7 @@ export default async function CollectionEntries({
 
       {rows.length === 0 ? (
         <div className="rounded-xl border border-gray-200 p-8 text-center text-sm text-gray-500">
-          No entries yet.
+          {q ? "No matches." : "No entries yet."}
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-200">
@@ -78,6 +104,24 @@ export default async function CollectionEntries({
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {pages > 1 && (
+        <div className="mt-4 flex items-center gap-3 text-sm">
+          {page > 1 && (
+            <Link href={pageHref(page - 1)} className="rounded-lg border border-gray-200 px-3 py-1.5 hover:bg-gray-50">
+              ← Prev
+            </Link>
+          )}
+          <span className="text-gray-400">
+            Page {page} of {pages}
+          </span>
+          {page < pages && (
+            <Link href={pageHref(page + 1)} className="rounded-lg border border-gray-200 px-3 py-1.5 hover:bg-gray-50">
+              Next →
+            </Link>
+          )}
         </div>
       )}
     </>

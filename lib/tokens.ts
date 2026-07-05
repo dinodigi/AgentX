@@ -44,7 +44,9 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
       return { projectId: rows[0].projectId, scope: rows[0].scope as TokenInfo["scope"] };
     },
     ["token-v2", hash],
-    { tags: ["project-tokens"] },
+    // TTL as defense-in-depth: a token revoked outside the app (script, other
+    // instance) dies within 5 minutes even if no revalidateTag fires.
+    { tags: ["project-tokens"], revalidate: 300 },
   );
   return cached();
 }

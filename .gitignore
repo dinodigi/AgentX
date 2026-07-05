@@ -2,6 +2,7 @@ node_modules/
 .next/
 .env
 .env.local
+.tokens.local
 *.tsbuildinfo
 next-env.d.ts
 db/migrations/meta/_journal.json.bak

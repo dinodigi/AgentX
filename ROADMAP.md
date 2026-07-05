@@ -88,16 +88,13 @@ Evidence from this phase decides Phase 4's scope.
 - [ ] 2.4 Friction log — every wall hit during the real build, captured as issues
 - [ ] 2.5 Token hygiene — rotate dev tokens, document handoff flow
 
-## Phase 3 — Events & actions
+## Phase 3 — Events & actions ✅ DONE 2026-07-05
 
-Generalize the existing public-write webhook into a declarative event system.
-Email is NOT hosted here — it becomes an action once the email connector exists (5.3).
-
-- [ ] 3.1 Event model — `on: entry.created|updated|deleted` config per collection
-- [ ] 3.2 Single emit point in the entries layer (MCP, admin, delivery all flow through)
-- [ ] 3.3 Webhook action executor with delivery log (last N attempts, status)
-- [ ] 3.4 Events section in settings + `define_collection` support
-- [ ] 3.5 Event log table in admin (observability for clients)
+- [x] 3.1 Event model — `on: entry.created|updated|deleted` → webhook/email actions
+- [x] 3.2 Single emit point in the entries layer (MCP, admin, delivery all flow through)
+- [x] 3.3 Webhook executor with retries + delivery log (shipped in 1.5.5)
+- [x] 3.4 `define_collection` events support ({{field}} interpolation in email to/subject)
+- [x] 3.5 Delivery log section in settings (webhooks + emails, status + errors)
 
 ## Phase 4 — Identity-aware access (BYO issuer)
 
@@ -108,22 +105,24 @@ in the client's Clerk, never ours. The agent never sees keys — `list_connector
 reports status; the publishable key (public by design) is all a site needs.
 Rule *presets*, not an expression language.
 
-- [ ] 4.1 Project auth config: issuer + JWKS URL (manual entry first; Connectors
-      tab UI arrives with 5.2)
-- [ ] 4.2 Delivery API verifies end-user JWTs against the project issuer
-- [ ] 4.3 Rule presets per collection: read/write `public|authenticated|owner`
-      + `ownerField` auto-stamped from the verified user id
-- [ ] 4.4 Rules surfaced in admin, API reference, and tool descriptions
+✅ DONE 2026-07-05 (verified against a mock RS256 issuer; plug a real Clerk
+instance into the connector card to go live):
+
+- [x] 4.1 Auth config lives in the Clerk connector (issuer → JWKS derived)
+- [x] 4.2 Delivery API verifies end-user JWTs (jose, cached JWKS, X-User-Token header)
+- [x] 4.3 Rule presets read/write public|authenticated|owner + ownerField stamping;
+      write:"owner" enables GET/PATCH/DELETE /v1/{collection}/{id} on own rows
+- [x] 4.4 Rules + auth status in tool descriptions and get_project_info
 
 ## Phase 5 — Connectors (BYO infra)
 
 The control-plane model: users connect their own services; secrets encrypted at
 rest, exposed to agents as references only.
 
-- [ ] 5.1 `project_connectors` model + AES-GCM secret encryption (master key env)
-- [ ] 5.2 Connector admin UI — connect, health check, disconnect
-- [ ] 5.3 Email connector (Resend) → unlocks `send_email` event action
-- [ ] 5.4 Clerk connector — per-project Clerk instance for the client site's end users
+- [x] 5.1 `project_connectors` model + AES-GCM secret encryption ✅ 2026-07-05
+- [x] 5.2 Connector admin UI — connect, test, disconnect + `list_connectors` tool ✅
+- [x] 5.3 Email connector (Resend) → email event action, define-time gated ✅
+- [x] 5.4 Clerk connector — per-project end-user auth (powers Phase 4) ✅
 - [ ] 5.5 Neon connector (BYO database) — split: connection mgmt / migration
       runner / data-plane routing
 - [ ] 5.6 Neon branching — preview environments ("branch, try migration, promote/discard")
@@ -144,6 +143,25 @@ Deliberately coarse — refine after Phase 5 proves the connector model.
 - [ ] 7.3 MCP tool proxying for plugin-contributed tools
 
 ---
+
+## Deferred ideas (build when a real project asks)
+
+- **Business-logic ladder** (in order; each evidence-gated):
+  1. Field constraints — `unique`, `min/max`, required-if (validator extension)
+  2. `update_entry_if` — atomic compare-and-set + guarded increment; the 80/20
+     of transactions (book-a-seat) with zero code execution
+  3. Claims-based role presets (see below) once a multi-role project exists
+  4. `transact([ops])` — multi-op atomic batch, declarative, validator-checked
+  Hosted server-side functions stay REJECTED: events out + transact in + the
+  agent-owned site as the code runtime composes to full business logic without
+  us ever hosting tenant code.
+
+- **Claims-based role presets** — e.g. `write: {claim:"role", equals:"editor"}` from
+  Clerk JWT custom claims. Declarative roles without an expression language.
+  Until then: roles live in the app layer (a members collection the site checks).
+- **`content` token scope** — full entry CRUD, no schema/destructive ops. The right
+  credential for custom-built admin dashboards, which today must hold the full
+  `mcp` token (server-side only) to see private fields.
 
 ## Explicitly rejected (revisit only with strong evidence)
 
