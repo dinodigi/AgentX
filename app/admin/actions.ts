@@ -78,6 +78,23 @@ export async function toggleHandledAction(
   revalidatePath(`/admin/${projectId}`, "layout");
 }
 
+/** Delete an asset from the Media page. Blocked while entries reference it. */
+export async function deleteAssetAction(
+  projectId: string,
+  assetId: string,
+): Promise<{ error?: string } | void> {
+  const role = await getProjectRole(projectId);
+  if (!role) return { error: "no access to this project" };
+  try {
+    const { deleteAsset } = await import("@/lib/r2");
+    await deleteAsset(projectId, assetId);
+  } catch (e) {
+    if (e instanceof ValidationError) return { error: e.message };
+    return { error: "could not delete asset" };
+  }
+  revalidatePath(`/admin/${projectId}/assets`);
+}
+
 /** Delete an entry from the admin edit page. */
 export async function deleteEntryAction(
   projectId: string,

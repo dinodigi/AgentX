@@ -45,7 +45,7 @@ describe("schema registry", () => {
   });
 
   it("rejects reserved collection slugs", async () => {
-    for (const name of ["settings", "api", "connectors"]) {
+    for (const name of ["settings", "api", "connectors", "assets"]) {
       const r = await mcp(p.mcpToken, "define_collection", {
         name,
         fields: [{ name: "x", label: "X", type: "text" }],

@@ -62,11 +62,13 @@ export default async function ProjectLayout({
         }))}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-[--color-line] px-8 py-3">
+        <header className="flex items-center justify-between border-b border-[--color-line] py-3 pl-14 pr-4 md:px-8">
           <span className="eyebrow">{displayName}</span>
           <UserButton />
         </header>
-        <main className="page-enter mx-auto w-full max-w-4xl flex-1 px-8 py-8">{children}</main>
+        <main className="page-enter mx-auto w-full max-w-4xl flex-1 px-4 py-6 md:px-8 md:py-8">
+          {children}
+        </main>
       </div>
     </div>
   );

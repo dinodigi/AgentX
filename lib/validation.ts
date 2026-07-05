@@ -131,6 +131,7 @@ const RESERVED_NAMES = new Set([
   "v1",
   "appearance",
   "connectors",
+  "assets",
 ]);
 
 export const collectionNameSchema = z

@@ -189,3 +189,35 @@ body {
   text-transform: uppercase;
   color: var(--color-ink-mute);
 }
+
+/* Richtext editor content (TipTap) — preflight strips element styles, so the
+   editable area restores just enough typography to feel like a document. */
+.richtext-editor h2 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0.75em 0 0.35em;
+}
+.richtext-editor h3 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin: 0.65em 0 0.3em;
+}
+.richtext-editor p {
+  margin: 0.35em 0;
+}
+.richtext-editor ul {
+  list-style: disc;
+  padding-left: 1.4em;
+  margin: 0.35em 0;
+}
+.richtext-editor ol {
+  list-style: decimal;
+  padding-left: 1.4em;
+  margin: 0.35em 0;
+}
+.richtext-editor blockquote {
+  border-left: 3px solid var(--color-line-strong);
+  padding-left: 0.9em;
+  color: var(--color-ink-mute);
+  margin: 0.5em 0;
+}

@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Globe, Lock } from "lucide-react";
 import type { FieldDef } from "@/lib/field-types";
 import { AssetInput } from "./AssetInput";
+import { RelationCombobox } from "./RelationCombobox";
+import { RichtextInput } from "./RichtextInput";
 
 /**
  * The auto-generated entry form. One input per primitive, derived entirely from
@@ -118,11 +120,7 @@ function FieldInput({
       return (
         <div className="mb-4">
           <Label field={field} />
-          <textarea
-            name={field.name}
-            defaultValue={str(value)}
-            className={`${inputClass} min-h-28 resize-y`}
-          />
+          <RichtextInput name={field.name} initialHtml={str(value)} />
         </div>
       );
     case "number":
@@ -184,14 +182,7 @@ function FieldInput({
       return (
         <div className="mb-4">
           <Label field={field} />
-          <select name={field.name} defaultValue={relationId(value)} className={inputClass}>
-            <option value="">—</option>
-            {choices.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+          <RelationCombobox name={field.name} choices={choices} initialId={relationId(value)} />
         </div>
       );
     case "asset":

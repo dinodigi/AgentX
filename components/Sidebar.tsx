@@ -1,8 +1,9 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Code2, Inbox, Palette, Plug, Settings, Table2 } from "lucide-react";
+import { ArrowLeft, Code2, Image as ImageIcon, Inbox, Menu, Palette, Plug, Settings, Table2 } from "lucide-react";
 
 /**
  * The project workspace rail — ink-dark so the content area reads as paper and
@@ -31,6 +32,9 @@ export function Sidebar({
   collections: SidebarCollection[];
 }) {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+  // Navigating closes the drawer (no-op on desktop where it isn't rendered).
+  useEffect(() => setOpen(false), [pathname]);
   const content = collections.filter((c) => !c.publicWrite);
   const inbox = collections.filter((c) => c.publicWrite);
 
@@ -77,7 +81,27 @@ export function Sidebar({
   );
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col bg-[#16130e] px-3 py-4">
+    <>
+      {/* Mobile: hamburger + scrim; the rail itself slides in as a drawer. */}
+      <button
+        type="button"
+        aria-label="Open navigation"
+        onClick={() => setOpen(true)}
+        className="fixed left-3 top-2.5 z-40 rounded-lg bg-[#16130e] p-2 text-white/80 shadow md:hidden"
+      >
+        <Menu className="h-4 w-4" />
+      </button>
+      {open && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+          onClick={() => setOpen(false)}
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex w-60 shrink-0 flex-col overflow-y-auto bg-[#16130e] px-3 py-4 transition-transform md:static md:translate-x-0 ${
+          open ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
       <div className="mb-2 flex items-center gap-2.5 px-2.5">
         {logoUrl ? (
           <img src={logoUrl} alt="" className="h-7 w-7 rounded-lg object-cover ring-1 ring-white/10" />
@@ -101,6 +125,7 @@ export function Sidebar({
       {inbox.map((c) => item(`/admin/${projectId}/${c.name}`, c.displayName, Inbox, c.unhandled))}
 
       {groupLabel("Project")}
+      {item(`/admin/${projectId}/assets`, "Media", ImageIcon)}
       {item(`/admin/${projectId}/appearance`, "Appearance", Palette)}
       {item(`/admin/${projectId}/connectors`, "Connectors", Plug)}
       {item(`/admin/${projectId}/api`, "API reference", Code2)}
@@ -113,6 +138,7 @@ export function Sidebar({
         <ArrowLeft className="h-3.5 w-3.5" />
         All projects
       </Link>
-    </aside>
+      </aside>
+    </>
   );
 }
