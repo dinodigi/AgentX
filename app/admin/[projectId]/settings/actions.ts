@@ -116,6 +116,58 @@ export async function addMember(
   return {};
 }
 
+export async function saveConnector(
+  projectId: string,
+  type: "clerk" | "resend",
+  formData: FormData,
+): Promise<{ error?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+
+  const { CONNECTOR_SPECS, upsertConnector } = await import("@/lib/connectors");
+  const spec = CONNECTOR_SPECS[type];
+  const config: Record<string, string> = {};
+  for (const f of spec.configFields) {
+    config[f.key] = String(formData.get(f.key) ?? "").trim();
+  }
+  if (type === "clerk" && config.issuer && !/^https:\/\//.test(config.issuer)) {
+    return { error: "Issuer must be an https URL" };
+  }
+  const secret = String(formData.get("secret") ?? "").trim();
+  if (spec.secretLabel && !secret) {
+    const { getConnector } = await import("@/lib/connectors");
+    const existing = await getConnector(projectId, type);
+    if (!existing?.secretEnc) return { error: `${spec.secretLabel} is required` };
+  }
+  await upsertConnector(projectId, type, config, secret || undefined);
+  revalidatePath(`/admin/${projectId}/settings`);
+  return {};
+}
+
+export async function disconnectConnector(
+  projectId: string,
+  type: "clerk" | "resend",
+): Promise<{ error?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const { removeConnector } = await import("@/lib/connectors");
+  await removeConnector(projectId, type);
+  revalidatePath(`/admin/${projectId}/settings`);
+  return {};
+}
+
+export async function testConnector(
+  projectId: string,
+  type: "clerk" | "resend",
+): Promise<{ error?: string; ok?: boolean; detail?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const { checkConnectorHealth } = await import("@/lib/connectors");
+  const result = await checkConnectorHealth(projectId, type);
+  revalidatePath(`/admin/${projectId}/settings`);
+  return result;
+}
+
 export async function removeMember(
   projectId: string,
   memberId: string,

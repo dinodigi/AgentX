@@ -90,6 +90,35 @@ export function buildWhere(fields: FieldDef[], where: WhereClause[]): SQL[] {
   });
 }
 
+/** JS-side clause evaluation for single-entry row gates (same semantics as buildWhere). */
+export function matchesClauses(
+  fields: FieldDef[],
+  clauses: WhereClause[],
+  data: Record<string, unknown>,
+): boolean {
+  return clauses.every((c) => {
+    const f = fields.find((x) => x.name === c.field);
+    if (!f) return false;
+    const v = data[c.field];
+    switch (c.op) {
+      case "eq":
+        if (f.type === "number") return Number(v) === Number(c.value);
+        if (f.type === "boolean") return Boolean(v) === Boolean(c.value);
+        return String(v ?? "") === String(c.value);
+      case "contains":
+        return String(v ?? "").toLowerCase().includes(String(c.value).toLowerCase());
+      case "gt":
+        return f.type === "number"
+          ? Number(v) > Number(c.value)
+          : new Date(String(v)) > new Date(String(c.value));
+      case "lt":
+        return f.type === "number"
+          ? Number(v) < Number(c.value)
+          : new Date(String(v)) < new Date(String(c.value));
+    }
+  });
+}
+
 /** Validate + compile an orderBy clause. Throws ValidationError. */
 export function buildOrderBy(fields: FieldDef[], orderBy?: OrderByClause): SQL | undefined {
   if (!orderBy) return undefined;

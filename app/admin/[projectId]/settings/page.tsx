@@ -1,11 +1,19 @@
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
+import { desc } from "drizzle-orm";
 import { db } from "@/db";
-import { projectTokens, projectMembers } from "@/db/schema";
+import { projectTokens, projectMembers, webhookDeliveries } from "@/db/schema";
 import { getProject } from "@/lib/admin";
 import { getProjectRole } from "@/lib/access";
 import { listCollections } from "@/lib/collections";
-import { BrandingForm, TokensSection, WebhookForm, MembersSection } from "./sections";
+import { listConnectors, CONNECTOR_SPECS, type ConnectorType } from "@/lib/connectors";
+import {
+  BrandingForm,
+  TokensSection,
+  WebhookForm,
+  MembersSection,
+  ConnectorCard,
+} from "./sections";
 
 /** Project settings: branding, tokens, webhooks, members. Operator-only. */
 export default async function SettingsPage({
@@ -17,7 +25,7 @@ export default async function SettingsPage({
   const role = await getProjectRole(projectId);
   if (role !== "operator") notFound();
 
-  const [project, collections, tokens, members] = await Promise.all([
+  const [project, collections, tokens, members, connectors, deliveries] = await Promise.all([
     getProject(projectId),
     listCollections(projectId),
     db
@@ -29,8 +37,16 @@ export default async function SettingsPage({
       .from(projectTokens)
       .where(eq(projectTokens.projectId, projectId)),
     db.select().from(projectMembers).where(eq(projectMembers.projectId, projectId)),
+    listConnectors(projectId),
+    db
+      .select()
+      .from(webhookDeliveries)
+      .where(eq(webhookDeliveries.projectId, projectId))
+      .orderBy(desc(webhookDeliveries.createdAt))
+      .limit(15),
   ]);
   if (!project) notFound();
+  const connectorByType = new Map(connectors.map((c) => [c.type, c]));
 
   const formCollections = collections.filter((c) => c.publicWrite);
 
@@ -90,6 +106,75 @@ export default async function SettingsPage({
                 initialUrl={c.webhookUrl ?? ""}
               />
             ))}
+          </div>
+        )}
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-1 font-medium">Connectors</h2>
+        <p className="mb-3 text-sm text-gray-500">
+          Bring your own infrastructure. Clerk powers end-user sign-in and access
+          rules; Resend powers email actions. Secrets are encrypted at rest and
+          never exposed to agents.
+        </p>
+        <div className="space-y-3">
+          {(Object.keys(CONNECTOR_SPECS) as ConnectorType[]).map((type) => {
+            const spec = CONNECTOR_SPECS[type];
+            const row = connectorByType.get(type);
+            return (
+              <ConnectorCard
+                key={type}
+                projectId={projectId}
+                type={type}
+                label={spec.label}
+                configFields={spec.configFields}
+                secretLabel={spec.secretLabel}
+                connected={Boolean(row)}
+                hasSecret={Boolean(row?.secretEnc)}
+                status={row?.status ?? "disconnected"}
+                config={row?.config ?? {}}
+              />
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="mb-8">
+        <h2 className="mb-1 font-medium">Delivery log</h2>
+        <p className="mb-3 text-sm text-gray-500">
+          Outcome of every webhook and email action — a lost lead is always visible here.
+        </p>
+        {deliveries.length === 0 ? (
+          <p className="rounded-lg border border-gray-200 p-4 text-sm text-gray-400">
+            No deliveries yet.
+          </p>
+        ) : (
+          <div className="max-w-2xl overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full text-sm">
+              <tbody>
+                {deliveries.map((d) => (
+                  <tr key={d.id} className="border-b border-gray-100 last:border-0">
+                    <td className="px-3 py-2">
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs ${
+                          d.status === "success"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-red-50 text-red-700"
+                        }`}
+                      >
+                        {d.status}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">{d.event}</td>
+                    <td className="max-w-48 truncate px-3 py-2 font-mono text-xs text-gray-500">{d.url}</td>
+                    <td className="px-3 py-2 text-xs text-gray-400">
+                      {d.createdAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                    </td>
+                    <td className="max-w-40 truncate px-3 py-2 text-xs text-red-600">{d.lastError}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

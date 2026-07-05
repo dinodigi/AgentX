@@ -20,6 +20,7 @@ import {
 } from "@/lib/entries";
 import { getProject } from "@/lib/admin";
 import { listAssets, deleteAsset } from "@/lib/r2";
+import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
 import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
 import { formatZodError } from "@/lib/validation";
@@ -50,6 +51,15 @@ export const TOOL_DEFS: ToolDef[] = [
       "URL you need: the delivery API base (how the live site reads/writes content), the " +
       "admin URL (hand to the client), and the MCP endpoint. Pair with list_collections " +
       "to fully orient yourself.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "list_connectors",
+    description:
+      "Status of the project's BYO-infra connectors (clerk = end-user auth, resend = email " +
+      "actions). Returns type, status, and non-secret config (issuer, publishable key, from " +
+      "address). Secrets NEVER appear here — connecting/rotating them is done by the operator " +
+      "in project settings, not over MCP.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -94,6 +104,35 @@ export const TOOL_DEFS: ToolDef[] = [
             required: ["field", "op", "value"],
             additionalProperties: false,
           },
+        },
+        access: {
+          type: "object",
+          description:
+            "identity rule presets for the delivery API. read: public|authenticated|owner; " +
+            "write: none|authenticated|owner. owner/authenticated rules need ownerField (a text " +
+            "field storing the end-user id, auto-stamped from the verified JWT — never client-set). " +
+            'write:"owner" also enables PATCH/DELETE /v1/{collection}/{id} for own rows. ' +
+            "Requires the project's Clerk connector. Complex authorization beyond these presets " +
+            "stays in the app layer.",
+          properties: {
+            read: { type: "string", enum: ["public", "authenticated", "owner"] },
+            write: { type: "string", enum: ["none", "authenticated", "owner"] },
+            ownerField: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+        events: {
+          type: "object",
+          description:
+            "declarative actions on entry lifecycle: {created|updated|deleted: [{type:'webhook',url} " +
+            "| {type:'email',to,subject}]}. Email needs the Resend connector; to/subject support " +
+            "{{field}} interpolation from entry data. All outcomes land in the delivery log.",
+          properties: {
+            created: { type: "array", items: { type: "object" } },
+            updated: { type: "array", items: { type: "object" } },
+            deleted: { type: "array", items: { type: "object" } },
+          },
+          additionalProperties: false,
         },
         confirm: { type: "boolean", description: "required to apply destructive schema changes" },
       },
@@ -325,6 +364,11 @@ export const TOOL_DEFS: ToolDef[] = [
   },
 ];
 
+const eventActionSchema = z.union([
+  z.object({ type: z.literal("webhook"), url: z.string() }),
+  z.object({ type: z.literal("email"), to: z.string(), subject: z.string() }),
+]);
+
 const defineArgs = z.object({
   name: z.string(),
   displayName: z.string().optional(),
@@ -339,6 +383,20 @@ const defineArgs = z.object({
         value: z.union([z.string(), z.number(), z.boolean()]),
       }),
     )
+    .optional(),
+  access: z
+    .object({
+      read: z.enum(["public", "authenticated", "owner"]).optional(),
+      write: z.enum(["none", "authenticated", "owner"]).optional(),
+      ownerField: z.string().optional(),
+    })
+    .optional(),
+  events: z
+    .object({
+      created: z.array(eventActionSchema).optional(),
+      updated: z.array(eventActionSchema).optional(),
+      deleted: z.array(eventActionSchema).optional(),
+    })
     .optional(),
   confirm: z.boolean().optional(),
 });
@@ -408,8 +466,19 @@ export async function callTool(
 ): Promise<ToolResult> {
   try {
     switch (name) {
+      case "list_connectors": {
+        const rows = await listConnectorRows(projectId);
+        return ok(
+          rows.map((c) => ({ type: c.type, status: c.status, config: c.config })),
+        );
+      }
+
       case "get_project_info": {
-        const project = await getProject(projectId);
+        const [project, authConfig, connectorRows] = await Promise.all([
+          getProject(projectId),
+          getAuthConfig(projectId),
+          listConnectorRows(projectId),
+        ]);
         if (!project) return err("project not found");
         return ok({
           project: {
@@ -429,9 +498,17 @@ export async function callTool(
               "filters: ?field=value (public fields, equality); sort: ?sort=field:asc|desc; " +
               "pagination: ?limit=&offset=",
             write:
-              "POST {deliveryBase}/{collection} — only when publicWrite is true; " +
-              "validated like create_entry; fires the collection webhook",
+              "POST {deliveryBase}/{collection} — anonymous when publicWrite, or " +
+              "authenticated per access rules; validated like create_entry; fires events",
+            userAuth:
+              "collections with access rules need the end-user's JWT in the X-User-Token " +
+              "header (issued by the project's connected Clerk instance). " +
+              'write:"owner" also enables PATCH/DELETE {deliveryBase}/{collection}/{id}.',
           },
+          endUserAuth: authConfig
+            ? { configured: true, issuer: authConfig.issuer }
+            : { configured: false, hint: "connect Clerk in project settings to use access rules" },
+          connectors: connectorRows.map((c) => ({ type: c.type, status: c.status })),
         });
       }
       case "list_field_types":
@@ -446,6 +523,8 @@ export async function callTool(
           publicWrite: a.publicWrite,
           webhookUrl: a.webhookUrl,
           publicFilter: a.publicFilter,
+          access: a.access,
+          events: a.events,
           confirm: a.confirm,
         });
         if (!result.applied) {
@@ -484,6 +563,8 @@ export async function callTool(
           publicWrite: c.publicWrite,
           webhookUrl: c.webhookUrl,
           publicFilter: c.publicFilter ?? null,
+          access: c.access ?? null,
+          events: c.events ?? null,
           fields: c.fields,
         });
       }

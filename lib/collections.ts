@@ -1,7 +1,9 @@
 import { and, count, eq, sql } from "drizzle-orm";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
-import { collections, entries, type Collection } from "@/db/schema";
+import { collections, entries, type Collection, type EventAction } from "@/db/schema";
+import { getConnector } from "./connectors";
+import { ValidationError } from "./validation";
 import { validateFieldDefs, collectionNameSchema } from "./validation";
 import { buildWhere, type WhereClause } from "./query";
 import type { FieldDef } from "./field-types";
@@ -65,8 +67,66 @@ export interface DefineCollectionInput {
    * reference private fields. Admin/MCP reads are unaffected.
    */
   publicFilter?: WhereClause[] | null;
+  /** Identity rule presets (Phase 4). owner rules need ownerField (a text field). */
+  access?: {
+    read?: "public" | "authenticated" | "owner";
+    write?: "none" | "authenticated" | "owner";
+    ownerField?: string;
+  } | null;
+  /** Declarative event actions (Phase 3). Email needs the Resend connector. */
+  events?: {
+    created?: EventAction[];
+    updated?: EventAction[];
+    deleted?: EventAction[];
+  } | null;
   /** Required when redefinition drops or retypes fields (destructive). */
   confirm?: boolean;
+}
+
+const READ_RULES = ["public", "authenticated", "owner"] as const;
+const WRITE_RULES = ["none", "authenticated", "owner"] as const;
+
+async function validateAccessAndEvents(
+  projectId: string,
+  fields: FieldDef[],
+  access: DefineCollectionInput["access"],
+  events: DefineCollectionInput["events"],
+): Promise<void> {
+  if (access) {
+    const read = access.read ?? "public";
+    const write = access.write ?? "none";
+    if (!READ_RULES.includes(read)) throw new ValidationError(`access.read must be one of ${READ_RULES.join("|")}`);
+    if (!WRITE_RULES.includes(write)) throw new ValidationError(`access.write must be one of ${WRITE_RULES.join("|")}`);
+    const needsOwner = read === "owner" || write === "owner" || write === "authenticated";
+    if (needsOwner) {
+      const f = fields.find((x) => x.name === access.ownerField);
+      if (!access.ownerField || !f) {
+        throw new ValidationError(
+          'access: owner/authenticated rules need ownerField naming an existing field (add a text field, e.g. "owner")',
+        );
+      }
+      if (f.type !== "text") {
+        throw new ValidationError(`access.ownerField "${access.ownerField}" must be a text field (holds the user id)`);
+      }
+    }
+  }
+  if (events) {
+    const all = [...(events.created ?? []), ...(events.updated ?? []), ...(events.deleted ?? [])];
+    for (const a of all) {
+      if (a.type === "webhook") {
+        if (!/^https?:\/\//.test(a.url)) throw new ValidationError("events: webhook url must be http(s)");
+      } else if (a.type === "email") {
+        if (!a.to || !a.subject) throw new ValidationError("events: email actions need to + subject");
+      } else {
+        throw new ValidationError('events: action type must be "webhook" or "email"');
+      }
+    }
+    if (all.some((a) => a.type === "email") && !(await getConnector(projectId, "resend"))) {
+      throw new ValidationError(
+        "events: email actions need the Resend connector — connect it in project settings first",
+      );
+    }
+  }
 }
 
 export interface SchemaDiff {
@@ -124,6 +184,7 @@ export async function defineCollection(
 
   // publicFilter clauses must be valid against these fields (throws with hint).
   if (input.publicFilter?.length) buildWhere(fields, input.publicFilter);
+  await validateAccessAndEvents(projectId, fields, input.access, input.events);
 
   // Relation targets must resolve to a real collection in this project.
   const existing = await listCollections(projectId);
@@ -165,6 +226,8 @@ export async function defineCollection(
     publicWrite: input.publicWrite ?? false,
     webhookUrl: input.webhookUrl ?? null,
     publicFilter: input.publicFilter ?? null,
+    access: input.access ?? null,
+    events: input.events ?? null,
     updatedAt: new Date(),
   };
 
@@ -179,6 +242,8 @@ export async function defineCollection(
         publicWrite: values.publicWrite,
         webhookUrl: values.webhookUrl,
         publicFilter: values.publicFilter,
+        access: values.access,
+        events: values.events,
         updatedAt: values.updatedAt,
       },
     })

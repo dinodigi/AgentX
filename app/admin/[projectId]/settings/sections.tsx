@@ -10,6 +10,9 @@ import {
   updateWebhook,
   addMember,
   removeMember,
+  saveConnector,
+  disconnectConnector,
+  testConnector,
 } from "./actions";
 
 const inputClass =
@@ -223,6 +226,104 @@ export function WebhookForm({
         <button type="submit" className={`${buttonClass} shrink-0`}>
           {saved ? "Saved" : "Save"}
         </button>
+      </div>
+      <ErrorLine error={error} />
+    </form>
+  );
+}
+
+export interface ConnectorCardProps {
+  projectId: string;
+  type: "clerk" | "resend";
+  label: string;
+  configFields: { key: string; label: string; placeholder: string }[];
+  secretLabel: string | null;
+  connected: boolean;
+  hasSecret: boolean;
+  status: string;
+  config: Record<string, string>;
+}
+
+export function ConnectorCard(p: ConnectorCardProps) {
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <form
+      action={async (fd) => {
+        setBusy(true);
+        setNote(null);
+        const res = await saveConnector(p.projectId, p.type, fd);
+        setBusy(false);
+        setError(res.error ?? null);
+        if (!res.error) setNote("Saved");
+      }}
+      className="max-w-md rounded-xl border border-gray-200 p-4"
+    >
+      <div className="mb-3 flex items-center gap-2">
+        <span
+          className={`h-2 w-2 rounded-full ${
+            !p.connected ? "bg-gray-300" : p.status === "connected" ? "bg-emerald-500" : "bg-red-500"
+          }`}
+        />
+        <p className="text-sm font-medium">{p.label}</p>
+        {p.connected && (
+          <span className="text-xs text-gray-400">
+            {p.status === "connected" ? "connected" : "error"}
+          </span>
+        )}
+      </div>
+
+      {p.configFields.map((f) => (
+        <div key={f.key} className="mb-3">
+          <label className="mb-1 block text-xs text-gray-500">{f.label}</label>
+          <input name={f.key} defaultValue={p.config[f.key] ?? ""} placeholder={f.placeholder} className={inputClass} />
+        </div>
+      ))}
+      {p.secretLabel && (
+        <div className="mb-3">
+          <label className="mb-1 block text-xs text-gray-500">
+            {p.secretLabel}
+            {p.hasSecret ? " (stored — leave blank to keep)" : ""}
+          </label>
+          <input name="secret" type="password" placeholder={p.hasSecret ? "••••••••" : ""} className={inputClass} />
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <button type="submit" disabled={busy} className={buttonClass}>
+          {p.connected ? "Save" : "Connect"}
+        </button>
+        {p.connected && (
+          <>
+            <button
+              type="button"
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              onClick={async () => {
+                setBusy(true);
+                setNote(null);
+                const res = await testConnector(p.projectId, p.type);
+                setBusy(false);
+                setError(res.error ?? null);
+                if (!res.error) setNote(res.ok ? `OK — ${res.detail}` : `Failed — ${res.detail}`);
+              }}
+            >
+              Test
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:border-red-200 hover:text-red-600"
+              onClick={async () => {
+                const res = await disconnectConnector(p.projectId, p.type);
+                setError(res.error ?? null);
+              }}
+            >
+              Disconnect
+            </button>
+          </>
+        )}
+        {note && <span className="text-xs text-gray-500">{note}</span>}
       </div>
       <ErrorLine error={error} />
     </form>

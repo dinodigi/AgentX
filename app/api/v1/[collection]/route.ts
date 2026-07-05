@@ -1,8 +1,8 @@
-import { NextRequest, after } from "next/server";
+import { NextRequest } from "next/server";
 import { bearerFrom, resolveProjectId } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
-import { deliverWebhook } from "@/lib/webhook";
 import { rateLimit } from "@/lib/ratelimit";
+import { gateRead, gateCreate, stampOwner } from "@/lib/access-rules";
 import {
   createEntry,
   queryEntries,
@@ -47,6 +47,10 @@ export async function GET(
   const pub = publicFields(collection);
   if (pub.length === 0) return notFound();
 
+  // Identity gate (Phase 4): public / authenticated / owner.
+  const gate = await gateRead(projectId, collection, req.headers.get("x-user-token"));
+  if (!gate.ok) return Response.json({ error: gate.error }, { status: gate.status });
+
   const url = new URL(req.url);
   const limit = Number(url.searchParams.get("limit") ?? 100);
   const offset = Number(url.searchParams.get("offset") ?? 0);
@@ -82,8 +86,12 @@ export async function GET(
   }
 
   try {
-    // publicFilter first: declarative row visibility set on the collection.
-    const effectiveWhere = [...((collection.publicFilter as WhereClause[] | null) ?? []), ...where];
+    // Row gates first: declarative publicFilter, then the owner clause.
+    const effectiveWhere = [
+      ...((collection.publicFilter as WhereClause[] | null) ?? []),
+      ...(gate.ownerClause ? [gate.ownerClause] : []),
+      ...where,
+    ];
     const rows = await queryEntries(collection, { limit, offset, where: effectiveWhere, orderBy });
     const resolved = await resolveRefsForRead(projectId, collection, rows);
     const data = resolved.map((e) => toPublicView(collection, e));
@@ -111,12 +119,9 @@ export async function POST(
   if ("error" in r) return r.error;
   const { projectId, collection } = r;
 
-  if (!collection.publicWrite) {
-    return Response.json(
-      { error: "public write is not enabled for this collection" },
-      { status: 403 },
-    );
-  }
+  // Identity gate: anonymous forms (publicWrite) or authenticated/owner creates.
+  const gate = await gateCreate(projectId, collection, req.headers.get("x-user-token"));
+  if (!gate.ok) return Response.json({ error: gate.error }, { status: gate.status });
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
   const limit = rateLimit(`${projectId}:${ip}`);
@@ -135,21 +140,14 @@ export async function POST(
   }
 
   try {
-    const entry = await createEntry(projectId, collection, body);
-    // No email engine — webhook and stop. Retries + outcome log run after the
-    // response is sent, so submitters never wait on a slow webhook endpoint.
-    if (collection.webhookUrl) {
-      const url = collection.webhookUrl;
-      after(() =>
-        deliverWebhook({
-          projectId,
-          collectionId: collection.id,
-          url,
-          event: "entry.created",
-          payload: { collection: collection.name, entry: { id: entry.id, data: entry.data } },
-        }),
-      );
-    }
+    // Authenticated creates get ownerField stamped from the verified JWT —
+    // a user can never forge ownership. Events (webhook/email) fire from the
+    // entries layer's single emit point.
+    const data =
+      body && typeof body === "object" && !Array.isArray(body)
+        ? stampOwner(collection, gate.user, body as Record<string, unknown>)
+        : body;
+    const entry = await createEntry(projectId, collection, data);
     return Response.json({ id: entry.id }, { status: 201 });
   } catch (e) {
     if (e instanceof ValidationError) {

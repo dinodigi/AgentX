@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { entries, assets, collections, type Collection, type Entry } from "@/db/schema";
 import { buildEntrySchema, formatZodError, ValidationError, type RefCheck } from "./validation";
 import { buildWhere, buildOrderBy, type WhereClause, type OrderByClause } from "./query";
+import { emitEntryEvent } from "./events";
 import type { FieldDef } from "./field-types";
 import { z } from "zod";
 
@@ -124,7 +125,10 @@ export async function createEntry(
     })
     .onConflictDoNothing()
     .returning();
-  if (row) return row;
+  if (row) {
+    void emitEntryEvent(collection, "created", { id: row.id, data: row.data });
+    return row;
+  }
 
   // Conflict = this idempotency key already created an entry; return it.
   const [existing] = await db
@@ -167,13 +171,16 @@ export async function updateEntry(
     .set({ data: merged, updatedAt: new Date() })
     .where(eq(entries.id, id))
     .returning();
+  void emitEntryEvent(collection, "updated", { id: row.id, data: row.data });
   return row;
 }
 
 export async function deleteEntry(collection: Collection, id: string): Promise<void> {
-  await db
+  const [row] = await db
     .delete(entries)
-    .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)));
+    .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
+    .returning();
+  if (row) void emitEntryEvent(collection, "deleted", { id: row.id, data: row.data });
 }
 
 export async function getEntry(collection: Collection, id: string): Promise<Entry | null> {
@@ -240,8 +247,11 @@ export async function bulkCreateEntries(
       .values(
         valid.map((v) => ({ projectId, collectionId: collection.id, data: v.clean })),
       )
-      .returning({ id: entries.id });
-    valid.forEach((v, i) => results.push({ index: v.index, ok: true, id: rows[i].id }));
+      .returning();
+    valid.forEach((v, i) => {
+      results.push({ index: v.index, ok: true, id: rows[i].id });
+      void emitEntryEvent(collection, "created", { id: rows[i].id, data: rows[i].data });
+    });
   }
   return results.sort((a, b) => a.index - b.index);
 }

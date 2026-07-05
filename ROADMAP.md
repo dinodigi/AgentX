@@ -50,26 +50,34 @@ All inside the original brief's boundaries.
 
 **Gate to Phase 2:** ✅ all 12 tools verified over live MCP round-trips.
 
-## Phase 1.5 — Production hardening (v1.2) ← CURRENT
+## Phase 1.5 — Production hardening (v1.2) ✅ DONE 2026-07-04
 
 Experiment-driven fixes plus the security floor that identity (Phase 4) must
-land on. Evidence: experiment/friction-log.md.
+land on. Evidence: experiment/friction-log.md. All verified over live MCP/HTTP.
 
-- [ ] 1.5.1 F2 fix — assets resolve to `{id, url}` in delivery + query_entries
-- [ ] 1.5.2 F1 fix — `get_project_info` tool (delivery base URL + endpoint shapes,
+- [x] 1.5.1 F2 fix — assets resolve to `{id, url}` in delivery + query_entries
+- [x] 1.5.2 F1 fix — `get_project_info` tool (delivery base URL + endpoint shapes,
       admin URL, branding, connector status later)
-- [ ] 1.5.3 Scoped tokens — `delivery` scope (public read/write only) for sites;
+- [x] 1.5.3 Scoped tokens — `delivery` scope (public read/write only) for sites;
       `mcp` scope required for the MCP endpoint. Sites never hold write-the-world keys.
-- [ ] 1.5.4 Rate limiting on public POST (per token+IP sliding window)
-- [ ] 1.5.5 Webhook reliability — retries with backoff + `webhook_deliveries` log
-      (pulled forward from 3.3; a lost lead is the worst failure mode)
-- [ ] 1.5.6 `publicFilter` — per-collection row visibility for delivery reads
+- [x] 1.5.4 Rate limiting on public POST (per token+IP sliding window; in-memory —
+      swap for shared store when serverless abuse outgrows it)
+- [x] 1.5.5 Webhook reliability — 3 attempts with backoff + `webhook_deliveries` log
+      (admin UI for the log: small follow-up, see 3.5)
+- [x] 1.5.6 `publicFilter` — per-collection row visibility for delivery reads
       (closes the testimonials leak declaratively, no identity needed)
-- [ ] 1.5.7 `get_entry` + `count_entries` tools
-- [ ] 1.5.8 `bulk_create_entries` (seeding cost 30+ round-trips in the experiment)
-- [ ] 1.5.9 `list_assets` / `delete_asset` tools
+- [x] 1.5.7 `get_entry` + `count_entries` tools
+- [x] 1.5.8 `bulk_create_entries` (seeding cost 30+ round-trips in the experiment)
+- [x] 1.5.9 `list_assets` / `delete_asset` tools (delete blocked while referenced)
 
-## Phase 2 — Dogfood + deploy (the acceptance test)
+> **Sequencing (revised 2026-07-04, user call):** deploy is deferred — Phase 4
+> (identity) comes NEXT and is fully buildable locally. Order: 4 → 3 → 5.1–5.4
+> (Clerk, then Resend connectors) → deploy + real-site dogfood whenever wanted
+> (deploy must precede the real site) → 5.5 Neon connector, built only when an
+> external tenant or a data-ownership requirement actually demands it — it is
+> the bridge into Phase 6, not a speculative build.
+
+## Phase 2 — Dogfood + deploy (deferred until wanted; must precede real site)
 
 The brief's definition of done ends with "use it on a real Currents site."
 Evidence from this phase decides Phase 4's scope.

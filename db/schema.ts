@@ -9,6 +9,11 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+
+/** An action fired by an entry event. Email requires the resend connector. */
+export type EventAction =
+  | { type: "webhook"; url: string }
+  | { type: "email"; to: string; subject: string };
 import type { FieldDef } from "@/lib/field-types";
 import type { InferSelectModel } from "drizzle-orm";
 
@@ -67,6 +72,22 @@ export const collections = pgTable(
     publicFilter: jsonb("public_filter").$type<
       { field: string; op: "eq" | "contains" | "gt" | "lt"; value: string | number | boolean }[]
     >(),
+    /**
+     * Identity rule presets for the delivery API (Phase 4). No expression
+     * language — three fixed levels per direction. `owner` requires ownerField
+     * to name a text field; it is auto-stamped from the verified JWT sub.
+     */
+    access: jsonb("access").$type<{
+      read?: "public" | "authenticated" | "owner";
+      write?: "none" | "authenticated" | "owner";
+      ownerField?: string;
+    }>(),
+    /** Declarative event actions: on created/updated/deleted → webhook/email. */
+    events: jsonb("events").$type<{
+      created?: EventAction[];
+      updated?: EventAction[];
+      deleted?: EventAction[];
+    }>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
@@ -119,6 +140,28 @@ export const projectMembers = pgTable(
   (t) => [uniqueIndex("project_members_user_idx").on(t.projectId, t.clerkUserId)],
 );
 
+/**
+ * Per-project external service connections (BYO infra). Non-secret config in
+ * `config`; secrets AES-256-GCM encrypted in `secretEnc` — never returned to
+ * agents or the browser. One row per (project, type).
+ */
+export const projectConnectors = pgTable(
+  "project_connectors",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    type: text("type").notNull(), // 'clerk' | 'resend'
+    config: jsonb("config").$type<Record<string, string>>().notNull().default({}),
+    secretEnc: text("secret_enc"),
+    status: text("status").notNull().default("connected"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("project_connectors_type_idx").on(t.projectId, t.type)],
+);
+
 /** Outcome log for public-write webhooks — a lost lead must at least be visible. */
 export const webhookDeliveries = pgTable(
   "webhook_deliveries",
@@ -165,3 +208,4 @@ export type Entry = InferSelectModel<typeof entries>;
 export type Asset = InferSelectModel<typeof assets>;
 export type ProjectToken = InferSelectModel<typeof projectTokens>;
 export type ProjectMember = InferSelectModel<typeof projectMembers>;
+export type ProjectConnector = InferSelectModel<typeof projectConnectors>;

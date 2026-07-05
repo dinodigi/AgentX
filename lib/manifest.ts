@@ -28,6 +28,8 @@ export interface ProjectManifest {
     publicWrite: boolean;
     webhookUrl: string | null;
     publicFilter: { field: string; op: "eq" | "contains" | "gt" | "lt"; value: string | number | boolean }[] | null;
+    access: { read?: "public" | "authenticated" | "owner"; write?: "none" | "authenticated" | "owner"; ownerField?: string } | null;
+    events: Record<string, unknown> | null;
     fields: FieldDef[];
   }[];
 }
@@ -60,6 +62,15 @@ const manifestSchema = z.object({
         )
         .nullable()
         .default(null),
+      access: z
+        .object({
+          read: z.enum(["public", "authenticated", "owner"]).optional(),
+          write: z.enum(["none", "authenticated", "owner"]).optional(),
+          ownerField: z.string().optional(),
+        })
+        .nullable()
+        .default(null),
+      events: z.record(z.unknown()).nullable().default(null),
       fields: z.array(z.any()),
     }),
   ),
@@ -81,6 +92,8 @@ export async function exportProject(projectId: string): Promise<ProjectManifest>
       publicWrite: c.publicWrite,
       webhookUrl: c.webhookUrl,
       publicFilter: c.publicFilter ?? null,
+      access: c.access ?? null,
+      events: c.events ?? null,
       fields: c.fields,
     })),
   };
@@ -159,6 +172,8 @@ export async function importProject(
       publicWrite: col.publicWrite,
       webhookUrl: col.webhookUrl,
       publicFilter: col.publicFilter,
+      access: col.access,
+      events: col.events as never,
       confirm,
     });
     if (result.applied) applied.push(col.name);
