@@ -1,0 +1,248 @@
+import type { Collection } from "@/db/schema";
+import type { FieldDef } from "@/lib/field-types";
+
+/**
+ * get_client_code generator: a typed, dependency-free TS client for the
+ * delivery API, built from the live schema. Everything is derived from the
+ * collection defs + the capability tables below, so when the query layer
+ * (subsystem 04) grows new operators, extending FILTERABLE/opts here
+ * regenerates every client for free.
+ *
+ * The client targets the DELIVERY surface (what a site holds: a
+ * delivery-scoped token), not MCP — reads return only publicRead fields,
+ * writes go through the same gates as any site.
+ */
+
+// Delivery-API filter capability: equality on public fields, except richtext
+// (its only operator is `contains`, which the delivery API doesn't expose yet).
+// Subsystem 04 extends this table.
+function filterable(f: FieldDef): boolean {
+  return f.type !== "richtext";
+}
+
+function pascal(slug: string): string {
+  return slug
+    .split("_")
+    .map((s) => s.charAt(0).toUpperCase() + s.slice(1))
+    .join("");
+}
+
+/** TS type of a field as it appears in READ results (public view). */
+function readType(f: FieldDef): string {
+  switch (f.type) {
+    case "text":
+    case "richtext":
+      return "string";
+    case "number":
+      return "number";
+    case "boolean":
+      return "boolean";
+    case "date":
+      return "string"; // ISO
+    case "enum":
+      return (f.options ?? []).map((o) => JSON.stringify(o)).join(" | ") || "string";
+    case "asset":
+      return "{ id: string; url: string }";
+    case "relation":
+      return "{ id: string; label: string }";
+  }
+}
+
+/** TS type of a field as it is WRITTEN (asset/relation values are ids). */
+function writeType(f: FieldDef): string {
+  if (f.type === "asset" || f.type === "relation") return "string";
+  return readType(f);
+}
+
+interface CollectionPlan {
+  slug: string;
+  typeName: string;
+  fields: FieldDef[];
+  publicFields: FieldDef[];
+  ownerField: string | null;
+  canRead: boolean;
+  canCreate: boolean;
+  canMutate: boolean;
+  needsUser: boolean;
+}
+
+function plan(c: Collection): CollectionPlan {
+  const publicFieldDefs = c.fields.filter((f) => f.publicRead);
+  const write = c.access?.write ?? "none";
+  return {
+    slug: c.name,
+    typeName: pascal(c.name),
+    fields: c.fields,
+    publicFields: publicFieldDefs,
+    ownerField: c.access?.ownerField ?? null,
+    canRead: publicFieldDefs.length > 0,
+    canCreate: Boolean(c.publicWrite) || write !== "none",
+    canMutate: write === "owner",
+    needsUser: (c.access?.read ?? "public") !== "public" || write !== "none",
+  };
+}
+
+function fieldLines(fields: FieldDef[], typeOf: (f: FieldDef) => string, forceOptional = false): string {
+  return fields
+    .map((f) => `  ${f.name}${f.required && !forceOptional ? "" : "?"}: ${typeOf(f)};`)
+    .join("\n");
+}
+
+function typeBlock(p: CollectionPlan): string {
+  const parts: string[] = [];
+  if (p.canRead) {
+    parts.push(
+      `/** ${p.slug} — public view; only publicRead fields are ever returned. */`,
+      `export interface ${p.typeName} {`,
+      `  id: string;`,
+      fieldLines(p.publicFields, readType),
+      `}`,
+    );
+    const filters = p.publicFields.filter(filterable);
+    parts.push(
+      ``,
+      `export interface ${p.typeName}ListOpts {`,
+      `  /** Equality filters on public fields. */`,
+      filters.length
+        ? `  filter?: {\n${fieldLines(filters, writeType, true).replace(/^ {2}/gm, "    ")}\n  };`
+        : `  filter?: Record<string, never>;`,
+      p.publicFields.length
+        ? `  sort?: { field: ${p.publicFields.map((f) => JSON.stringify(f.name)).join(" | ")}; dir: "asc" | "desc" };`
+        : ``,
+      `  limit?: number;`,
+      `  offset?: number;`,
+      `}`,
+    );
+  }
+  if (p.canCreate || p.canMutate) {
+    const writable = p.fields.filter((f) => f.name !== p.ownerField);
+    parts.push(
+      ``,
+      `/** ${p.slug} — write shape (relations/assets by id${p.ownerField ? `; "${p.ownerField}" is stamped server-side` : ""}). */`,
+      `export interface ${p.typeName}Create {`,
+      fieldLines(writable, writeType),
+      `}`,
+      ``,
+      `export type ${p.typeName}Update = Partial<${p.typeName}Create>;`,
+    );
+  }
+  return parts.filter((s) => s !== ``).join("\n").replace(/\n\n+/g, "\n\n");
+}
+
+function accessorBlock(p: CollectionPlan): string {
+  const methods: string[] = [];
+  if (p.canRead) {
+    methods.push(
+      `      async list(opts: ${p.typeName}ListOpts = {}): Promise<${p.typeName}[]> {
+        const query: Record<string, unknown> = { limit: opts.limit, offset: opts.offset, ...(opts.filter ?? {}) };
+        if (opts.sort) query.sort = opts.sort.field + ":" + opts.sort.dir;
+        return (await request<{ data: ${p.typeName}[] }>("GET", "/${p.slug}", query)).data;
+      },`,
+      `      async get(id: string): Promise<${p.typeName}> {
+        return (await request<{ data: ${p.typeName} }>("GET", "/${p.slug}/" + encodeURIComponent(id))).data;
+      },`,
+    );
+  }
+  if (p.canCreate) {
+    methods.push(
+      `      async create(data: ${p.typeName}Create): Promise<{ id: string }> {
+        return request<{ id: string }>("POST", "/${p.slug}", undefined, data);
+      },`,
+    );
+  }
+  if (p.canMutate) {
+    methods.push(
+      `      async update(id: string, patch: ${p.typeName}Update): Promise<${p.typeName}> {
+        return (await request<{ data: ${p.typeName} }>("PATCH", "/${p.slug}/" + encodeURIComponent(id), undefined, patch)).data;
+      },`,
+      `      async remove(id: string): Promise<void> {
+        await request<void>("DELETE", "/${p.slug}/" + encodeURIComponent(id));
+      },`,
+    );
+  }
+  const note = p.needsUser ? " // requires setUserToken() for non-public access" : "";
+  return `    ${p.slug}: {${note}\n${methods.join("\n")}\n    },`;
+}
+
+export function generateClientCode(opts: {
+  projectName: string;
+  deliveryBase: string;
+  collections: Collection[];
+}): { code: string; collections: string[]; skipped: string[] } {
+  const plans = opts.collections.map(plan);
+  const included = plans.filter((p) => p.canRead || p.canCreate);
+  const skipped = plans.filter((p) => !p.canRead && !p.canCreate).map((p) => p.slug);
+
+  const header = `/**
+ * AgentX delivery-API client for "${opts.projectName}" — GENERATED CODE.
+ * Regenerate with the get_client_code MCP tool after any schema change;
+ * do not edit by hand.
+ *
+ * Usage:
+ *   const ax = createClient({ token: process.env.AGENTX_DELIVERY_TOKEN! });
+ *   const rows = await ax.${included[0]?.slug ?? "your_collection"}.list();
+ *
+ * The token is a delivery-scoped project token — keep it server-side.
+ * Collections with authenticated/owner access rules also need the signed-in
+ * user's JWT: call ax.setUserToken(jwt) (sent as X-User-Token).
+ * Errors throw AgentXError with the HTTP status and the server's message.
+ */
+
+const DEFAULT_BASE_URL = ${JSON.stringify(opts.deliveryBase)};
+
+export interface AgentXClientOptions {
+  /** Delivery API base; defaults to the deployment this client was generated from. */
+  baseUrl?: string;
+  /** Delivery-scoped project token (agx_...). */
+  token: string;
+  /** End-user JWT for authenticated/owner collections. */
+  userToken?: string | null;
+}
+
+export class AgentXError extends Error {
+  constructor(readonly status: number, message: string) {
+    super(message);
+    this.name = "AgentXError";
+  }
+}`;
+
+  const factory = `export function createClient(options: AgentXClientOptions) {
+  const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\\/+$/, "");
+  let userToken = options.userToken ?? null;
+
+  async function request<T>(
+    method: string,
+    path: string,
+    query?: Record<string, unknown>,
+    body?: unknown,
+  ): Promise<T> {
+    const url = new URL(baseUrl + path);
+    for (const [k, v] of Object.entries(query ?? {})) {
+      if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+    }
+    const headers: Record<string, string> = { authorization: "Bearer " + options.token };
+    if (body !== undefined) headers["content-type"] = "application/json";
+    if (userToken) headers["x-user-token"] = userToken;
+    const res = await fetch(url.toString(), {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    if (res.status === 204) return undefined as T;
+    const json = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status);
+    return json as T;
+  }
+
+  return {
+    /** Swap the end-user JWT after login/logout. */
+    setUserToken(t: string | null) {
+      userToken = t;
+    },
+${included.map(accessorBlock).join("\n")}
+  };
+}`;
+
+  const code = [header, included.map(typeBlock).join("\n\n"), factory].join("\n\n") + "\n";
+  return { code, collections: included.map((p) => p.slug), skipped };
+}

@@ -22,6 +22,7 @@ import { getProject } from "@/lib/admin";
 import { listAssets, deleteAsset } from "@/lib/r2";
 import { listDeliveries } from "@/lib/webhook";
 import { listAuditLog } from "@/lib/audit";
+import { generateClientCode } from "@/lib/mcp/client-code";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
 import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
@@ -395,6 +396,17 @@ export const TOOL_DEFS: ToolDef[] = [
       },
       additionalProperties: false,
     },
+  },
+  {
+    name: "get_client_code",
+    description:
+      "Generate a typed, dependency-free TypeScript client for this project's delivery API " +
+      "from the live schema — use it in the site instead of hand-rolling fetch calls. " +
+      "Per-collection types + list/get/create/update/remove (each generated only where the " +
+      "schema allows it), delivery-token and X-User-Token handling built in. Save the returned " +
+      "code as a file (e.g. lib/agentx.ts) and RE-CALL THIS TOOL after any define_collection " +
+      "change — the client is a snapshot of the schema.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "get_audit_log",
@@ -822,6 +834,38 @@ export async function callTool(
           offset,
           hasMore,
           nextOffset: hasMore ? offset + limit : null,
+        });
+      }
+
+      case "get_client_code": {
+        const [project, all] = await Promise.all([
+          getProject(projectId),
+          listCollections(projectId),
+        ]);
+        if (!project) return err("project not found", "E_NOT_FOUND");
+        if (all.length === 0) {
+          return err(
+            "no collections defined yet — define_collection first, then generate the client",
+            "E_NOT_FOUND",
+          );
+        }
+        const generated = generateClientCode({
+          projectName: project.name,
+          deliveryBase: `${ctx.baseUrl}/api/v1`,
+          collections: all,
+        });
+        return ok({
+          filename: "agentx.ts",
+          language: "typescript",
+          collections: generated.collections,
+          ...(generated.skipped.length
+            ? {
+                skipped: generated.skipped,
+                skippedReason:
+                  "no public fields and no write access — nothing a delivery client could do",
+              }
+            : {}),
+          code: generated.code,
         });
       }
 
