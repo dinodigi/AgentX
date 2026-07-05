@@ -89,11 +89,11 @@ Three pillars:
 - [x] A2 Data export — ✅ 2026-07-05: export_entries tool + admin CSV/JSON + runbook
 - [x] A3 Webhook HMAC signatures — ✅ 2026-07-05
 - [x] A4 CORS policy on /v1 — ✅ 2026-07-05 (permissive; per-project allowlist later)
-- [ ] A5 `get_deliveries` tool — agents debug their own webhooks/emails
+- [x] A5 `get_deliveries` tool — ✅ 2026-07-05 (subsystem 03, + get_audit_log)
 - [x] A6 Light audit log — ✅ 2026-07-05 (write-only; UI in subsystem 07)
 
 ### Round B — First-app completeness
-- [ ] B1 `get_client_code` — generated typed TS client from live schema
+- [x] B1 `get_client_code` — ✅ 2026-07-05 (subsystem 03; tsc --strict + live round-trip tested)
 - [ ] B2 Public uploads — size/type-limited upload path for publicWrite forms
 - [ ] B3 Aggregations — sum/avg/min/max + group-by (number/enum fields)
 - [ ] B4 Field constraints — unique/min/max (ladder rung 1)
