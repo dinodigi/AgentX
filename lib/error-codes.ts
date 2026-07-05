@@ -15,6 +15,8 @@ export const ERROR_CODES = {
     "operation blocked by existing references — the message lists them; remove those first",
   E_CONNECTOR_REQUIRED:
     "a required connector is not connected — the operator connects it in project settings (not over MCP)",
+  E_CONFLICT:
+    "conditional update did not apply — the if-conditions (or a constraint guard) no longer match the row; re-read and retry",
   E_SCOPE: "the token lacks the required scope for this surface",
   E_UNKNOWN_TOOL: "no such tool — tools/list shows the full surface",
   E_INTERNAL: "unexpected server error — not agent-repairable; retry or report",

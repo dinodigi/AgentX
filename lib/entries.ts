@@ -222,6 +222,103 @@ export async function updateEntry(
   return row;
 }
 
+export interface UpdateIfOpts {
+  /** Conditions on the CURRENT row, re-checked atomically inside the UPDATE. */
+  if?: WhereItem[];
+  /** Ordinary validated patch (merged like update_entry). */
+  data?: unknown;
+  /** Atomic increment computed in SQL from the old value — never read-modify-write. */
+  increment?: { field: string; by: number };
+  actor?: AuditActor;
+}
+
+export type UpdateIfResult =
+  | { ok: true; entry: Entry }
+  | { ok: false; reason: "not_found" | "conflict" };
+
+/**
+ * Compare-and-set in ONE SQL statement — the 80/20 of transactions
+ * (book-a-seat) with zero code execution. The if-conditions AND the field's
+ * min/max constraint guards live in the UPDATE's WHERE clause, so concurrent
+ * writers serialize on the row instead of racing validation.
+ */
+export async function updateEntryIf(
+  projectId: string,
+  collection: Collection,
+  id: string,
+  opts: UpdateIfOpts,
+): Promise<UpdateIfResult> {
+  const patch = opts.data !== undefined ? validate(collection.fields, opts.data, true) : {};
+  if (opts.data !== undefined) {
+    const { refChecks } = buildEntrySchema(collection.fields, true);
+    await verifyRefs(projectId, patch, refChecks);
+  }
+  if (Object.keys(patch).length === 0 && !opts.increment) {
+    throw new ValidationError("update_entry_if needs data and/or increment — nothing to apply");
+  }
+
+  const conditions = [
+    eq(entries.id, id),
+    eq(entries.collectionId, collection.id),
+    ...buildWhere(collection.fields, opts.if ?? []),
+  ];
+
+  let dataExpr = sql`${entries.data}`;
+  if (Object.keys(patch).length > 0) {
+    dataExpr = sql`${dataExpr} || ${JSON.stringify(patch)}::jsonb`;
+  }
+
+  let incField: FieldDef | undefined;
+  if (opts.increment) {
+    const { field, by } = opts.increment;
+    incField = collection.fields.find((f) => f.name === field);
+    if (!incField || incField.type !== "number") {
+      const numberFields = collection.fields.filter((f) => f.type === "number").map((f) => f.name);
+      throw new ValidationError(
+        `increment: needs a number field — number fields: ${numberFields.join(", ") || "(none)"}`,
+      );
+    }
+    if (field in patch) {
+      throw new ValidationError(`increment: "${field}" cannot also appear in data — pick one`);
+    }
+    const oldValue = sql`(${entries.data}->>${field})::numeric`;
+    // The field must exist to increment, and the result must respect the
+    // field's min/max constraints — violations surface as a conflict, which is
+    // exactly the book-a-seat semantic ("no seats left").
+    conditions.push(sql`${entries.data} ? ${field}`);
+    if (incField.min !== undefined) conditions.push(sql`${oldValue} + ${by} >= ${incField.min}`);
+    if (incField.max !== undefined) conditions.push(sql`${oldValue} + ${by} <= ${incField.max}`);
+    dataExpr = sql`jsonb_set(${dataExpr}, ${`{${field}}`}, to_jsonb(${oldValue} + ${by}))`;
+  }
+
+  let row: Entry | undefined;
+  try {
+    [row] = await db
+      .update(entries)
+      .set({ data: dataExpr as unknown as Record<string, unknown>, updatedAt: new Date() })
+      .where(and(...conditions))
+      .returning();
+  } catch (e) {
+    rethrowUnique(e);
+  }
+
+  if (!row) {
+    const exists = await getEntry(collection, id);
+    return { ok: false, reason: exists ? "conflict" : "not_found" };
+  }
+
+  void emitEntryEvent(collection, "updated", { id: row.id, data: row.data });
+  recordAudit({
+    projectId,
+    collectionName: collection.name,
+    entryId: row.id,
+    action: "update",
+    actor: opts.actor ?? UNKNOWN_ACTOR,
+    changedFields: [...Object.keys(patch), ...(opts.increment ? [opts.increment.field] : [])],
+  });
+  return { ok: true, entry: row };
+}
+
 export async function deleteEntry(
   collection: Collection,
   id: string,

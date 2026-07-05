@@ -21,6 +21,7 @@ import {
   encodeCursor,
   decodeCursor,
   aggregateEntries,
+  updateEntryIf,
   ValidationError,
 } from "@/lib/entries";
 import { getProject } from "@/lib/admin";
@@ -230,6 +231,37 @@ export const TOOL_DEFS: ToolDef[] = [
         data: { type: "object" },
       },
       required: ["collection", "id", "data"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "update_entry_if",
+    description:
+      "Atomic compare-and-set on one entry — conditions and change apply in ONE statement, so " +
+      "concurrent writers can't race between check and write. if: same clause shape as " +
+      "query_entries where, checked against the CURRENT row. data: ordinary validated patch. " +
+      "increment: {field, by} computes new = old + by IN SQL (never read-modify-write); the " +
+      "field's min/max constraints guard the result automatically. On a failed condition " +
+      "returns E_CONFLICT — re-read and retry. Book-a-seat: " +
+      '{if:[{field:"seats",op:"gt",value:0}], increment:{field:"seats",by:-1}}.',
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        id: { type: "string" },
+        if: { type: "array", items: WHERE_ITEM_JSON },
+        data: { type: "object" },
+        increment: {
+          type: "object",
+          properties: {
+            field: { type: "string", description: "number field" },
+            by: { type: "number", description: "delta; negative to decrement" },
+          },
+          required: ["field", "by"],
+          additionalProperties: false,
+        },
+      },
+      required: ["collection", "id"],
       additionalProperties: false,
     },
   },
@@ -729,6 +761,35 @@ export async function callTool(
         const c = await mustCollection(projectId, a.collection);
         const e = await updateEntry(projectId, c, a.id, a.data, { type: "mcp" });
         return ok({ id: e.id, data: e.data });
+      }
+
+      case "update_entry_if": {
+        const a = z
+          .object({
+            collection: z.string(),
+            id: z.string(),
+            if: z.array(whereItemSchema).optional(),
+            data: z.record(z.unknown()).optional(),
+            increment: z.object({ field: z.string(), by: z.number() }).optional(),
+          })
+          .parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        const result = await updateEntryIf(projectId, c, a.id, {
+          if: a.if,
+          data: a.data,
+          increment: a.increment,
+          actor: { type: "mcp" },
+        });
+        if (!result.ok) {
+          if (result.reason === "not_found") {
+            return err(`no entry ${a.id} in "${a.collection}"`, "E_NOT_FOUND");
+          }
+          return err(
+            "condition not met — the if clauses (or a min/max increment guard) don't match the current row; re-read and retry",
+            "E_CONFLICT",
+          );
+        }
+        return ok({ id: result.entry.id, data: result.entry.data });
       }
 
       case "delete_entry": {
