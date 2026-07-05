@@ -94,7 +94,7 @@ Three pillars:
 
 ### Round B — First-app completeness
 - [x] B1 `get_client_code` — ✅ 2026-07-05 (subsystem 03; tsc --strict + live round-trip tested)
-- [ ] B2 Public uploads — size/type-limited upload path for publicWrite forms
+- [x] B2 Public uploads — ✅ 2026-07-05 (subsystem 06: + ETags, {error,code} envelope)
 - [x] B3 Aggregations — ✅ 2026-07-05 (subsystem 04: + in/anyOf ops, select, cursor paging)
 - [x] B4 Field constraints — ✅ 2026-07-05 (subsystem 05: unique/min/max/requiredIf)
 - [x] B5 `update_entry_if` — ✅ 2026-07-05 (subsystem 05: + rename migration)
