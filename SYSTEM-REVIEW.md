@@ -95,7 +95,7 @@ Three pillars:
 ### Round B — First-app completeness
 - [x] B1 `get_client_code` — ✅ 2026-07-05 (subsystem 03; tsc --strict + live round-trip tested)
 - [ ] B2 Public uploads — size/type-limited upload path for publicWrite forms
-- [ ] B3 Aggregations — sum/avg/min/max + group-by (number/enum fields)
+- [x] B3 Aggregations — ✅ 2026-07-05 (subsystem 04: + in/anyOf ops, select, cursor paging)
 - [ ] B4 Field constraints — unique/min/max (ladder rung 1)
 - [ ] B5 `update_entry_if` — atomic compare-and-set (ladder rung 2)
 - [ ] B6 Richtext editor in admin (TipTap) + inbox mark-handled
