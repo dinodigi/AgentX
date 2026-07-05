@@ -1,22 +1,27 @@
-# 07 · Admin (grade B+)
+# 07 · Admin ✅ DONE 2026-07-05 (visual pass by a human still recommended)
 
-Purpose: the handoff artifact — the thing the client actually receives. The
-redesign landed; the gaps are the moments a client touches daily.
+Purpose: the handoff artifact — the thing the client actually receives.
+All built + typechecked + route-compile-checked; admin sits behind Clerk so
+the smoke suite can't exercise the UI — eyeball it before the next handoff.
 
 ## Sub-features
 
-- [ ] **Richtext editor** (M) — TipTap for richtext fields; the bare textarea
-      is the single weakest handoff moment today.
-- [ ] **Inbox affordances** (S/M) — one-click mark-handled on public-write
-      collections + unhandled count badge in the sidebar.
-- [ ] **Asset manager** (M) — a Media page: grid, preview, delete (with the
-      existing referenced-block), see what uses each file.
-- [ ] **Searchable relation picker** (M) — combobox with typeahead; the
-      dropdown dies past a few hundred entries.
-- [ ] **Audit log UI** (S, after 02) — "what changed, by whom" per collection.
-- [ ] **Mobile pass** (M) — collapsible rail, responsive tables; untested
-      today and clients WILL open it on phones.
-- [ ] **Onboarding polish** (S) — empty states that teach ("your agent will
-      define collections here"), first-run hints.
+- [x] **Richtext editor** (M) — TipTap StarterKit (bold/italic/H2/H3/lists/
+      quote), HTML via hidden input so form coercion is untouched.
+- [x] **Inbox affordances** (S/M) — new/handled toggle chip per submission
+      (entries.handled_at, workflow metadata — never in entry data), unhandled
+      row tint, per-inbox count badges in the sidebar.
+- [x] **Asset manager** (M) — Media page: preview grid, upload, two-click
+      delete; a referenced-file delete surfaces the data layer's hint inline.
+      ("what uses each file" = the hint names the count; per-file usage list
+      deferred.) "assets" is now a reserved slug.
+- [x] **Searchable relation picker** (M) — typeahead combobox over the
+      preloaded choices; the 500 cap is surfaced in the dropdown.
+- [x] **Audit log UI** (S) — History panel on the entry page: action, actor
+      (agent / admin / site user), changed fields, timestamps.
+- [x] **Mobile pass** (M) — ink rail becomes a slide-in drawer with hamburger
+      + scrim under md:, responsive paddings; tables already scrolled.
+- [x] **Onboarding polish** (S) — empty states teach the agent workflow
+      (Settings → token/endpoint, API reference) and the seeding/form paths.
 
 Done when: you'd hand it to a paying client without a walkthrough call.

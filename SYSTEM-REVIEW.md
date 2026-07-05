@@ -98,8 +98,8 @@ Three pillars:
 - [x] B3 Aggregations — ✅ 2026-07-05 (subsystem 04: + in/anyOf ops, select, cursor paging)
 - [x] B4 Field constraints — ✅ 2026-07-05 (subsystem 05: unique/min/max/requiredIf)
 - [x] B5 `update_entry_if` — ✅ 2026-07-05 (subsystem 05: + rename migration)
-- [ ] B6 Richtext editor in admin (TipTap) + inbox mark-handled
-- [ ] B7 Mobile pass on the admin
+- [x] B6 Richtext editor in admin (TipTap) + inbox mark-handled — ✅ 2026-07-05 (subsystem 07)
+- [x] B7 Mobile pass on the admin — ✅ 2026-07-05 (subsystem 07; human eyeball pending)
 
 ### Round C — Prove it (needs user)
 - [ ] C1 Real Clerk + Resend connected, live end-to-end auth + email
