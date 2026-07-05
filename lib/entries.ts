@@ -210,7 +210,7 @@ export async function updateEntry(
   } catch (e) {
     rethrowUnique(e);
   }
-  void emitEntryEvent(collection, "updated", { id: row.id, data: row.data });
+  void emitEntryEvent(collection, "updated", { id: row.id, data: row.data }, current.data);
   recordAudit({
     projectId,
     collectionName: collection.name,

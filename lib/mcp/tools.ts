@@ -27,6 +27,7 @@ import {
 import { getProject } from "@/lib/admin";
 import { listAssets, deleteAsset } from "@/lib/r2";
 import { listDeliveries } from "@/lib/webhook";
+import { refireDelivery } from "@/lib/events";
 import { listAuditLog } from "@/lib/audit";
 import { generateClientCode } from "@/lib/mcp/client-code";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
@@ -157,7 +158,11 @@ export const TOOL_DEFS: ToolDef[] = [
           description:
             "declarative actions on entry lifecycle: {created|updated|deleted: [{type:'webhook',url} " +
             "| {type:'email',to,subject}]}. Email needs the Resend connector; to/subject support " +
-            "{{field}} interpolation from entry data. All outcomes land in the delivery log.",
+            "{{field}} interpolation from entry data. Any action takes when: [clauses] (same shape " +
+            "as query where, evaluated against the post-change entry — e.g. fire only when " +
+            "status='confirmed') and disabled: true (paused, kept in the schema). updated events " +
+            "carry {previous, changedFields}. All outcomes land in the delivery log (get_deliveries); " +
+            "failed ones can be replayed with refire_delivery.",
           properties: {
             created: { type: "array", items: { type: "object" } },
             updated: { type: "array", items: { type: "object" } },
@@ -494,6 +499,19 @@ export const TOOL_DEFS: ToolDef[] = [
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
+    name: "refire_delivery",
+    description:
+      "Replay a delivery from the log (see get_deliveries for ids). Webhooks re-post the stored " +
+      "payload with a fresh retry cycle; emails re-send the stored render. The outcome lands in " +
+      "the log as a NEW row — the original stays as history. Returns the replay's status.",
+    inputSchema: {
+      type: "object",
+      properties: { deliveryId: { type: "string" } },
+      required: ["deliveryId"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "get_audit_log",
     description:
       "Read the entry audit trail (newest first): who changed what, from which surface. Each " +
@@ -530,11 +548,6 @@ export const TOOL_DEFS: ToolDef[] = [
   },
 ];
 
-const eventActionSchema = z.union([
-  z.object({ type: z.literal("webhook"), url: z.string() }),
-  z.object({ type: z.literal("email"), to: z.string(), subject: z.string() }),
-]);
-
 const whereClauseSchema = z.object({
   field: z.string(),
   op: z.enum(["eq", "contains", "gt", "lt", "in"]),
@@ -543,6 +556,15 @@ const whereClauseSchema = z.object({
 const whereItemSchema = z.union([
   whereClauseSchema,
   z.object({ anyOf: z.array(whereClauseSchema).min(1) }),
+]);
+
+const eventActionBase = {
+  when: z.array(whereItemSchema).optional(),
+  disabled: z.boolean().optional(),
+};
+const eventActionSchema = z.union([
+  z.object({ type: z.literal("webhook"), url: z.string(), ...eventActionBase }),
+  z.object({ type: z.literal("email"), to: z.string(), subject: z.string(), ...eventActionBase }),
 ]);
 
 const defineArgs = z.object({
@@ -1051,6 +1073,12 @@ export async function callTool(
             : {}),
           code: generated.code,
         });
+      }
+
+      case "refire_delivery": {
+        const a = z.object({ deliveryId: z.string() }).parse(rawArgs);
+        const status = await refireDelivery(projectId, a.deliveryId);
+        return ok({ refired: true, status });
       }
 
       case "get_audit_log": {

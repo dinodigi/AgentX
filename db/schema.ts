@@ -10,12 +10,21 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-/** An action fired by an entry event. Email requires the resend connector. */
-export type EventAction =
-  | { type: "webhook"; url: string }
-  | { type: "email"; to: string; subject: string };
 import type { FieldDef } from "@/lib/field-types";
 import type { WhereItem } from "@/lib/query";
+
+/** Knobs every event action shares: conditional firing + pause-without-delete. */
+interface EventActionBase {
+  /** Fire only when the entry snapshot matches ALL items (same shape as query where). */
+  when?: WhereItem[];
+  /** Paused: kept in the schema, skipped at emit time. */
+  disabled?: boolean;
+}
+
+/** An action fired by an entry event. Email requires the resend connector. */
+export type EventAction =
+  | ({ type: "webhook"; url: string } & EventActionBase)
+  | ({ type: "email"; to: string; subject: string } & EventActionBase);
 import type { InferSelectModel } from "drizzle-orm";
 
 /**

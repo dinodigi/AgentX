@@ -19,7 +19,7 @@ export async function deliverWebhook(opts: {
   url: string;
   event: string;
   payload: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<"success" | "failed"> {
   const body = JSON.stringify({ event: opts.event, ...opts.payload });
   let lastError = "";
 
@@ -49,7 +49,7 @@ export async function deliverWebhook(opts: {
       });
       if (res.ok) {
         await log(opts, "success", attempt, null);
-        return;
+        return "success";
       }
       lastError = `HTTP ${res.status}`;
     } catch (e) {
@@ -57,6 +57,7 @@ export async function deliverWebhook(opts: {
     }
   }
   await log(opts, "failed", BACKOFF_MS.length, lastError);
+  return "failed";
 }
 
 export interface DeliveryFilter {

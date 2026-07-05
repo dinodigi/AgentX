@@ -125,6 +125,8 @@ async function validateAccessAndEvents(
       } else {
         throw new ValidationError('events: action type must be "webhook" or "email"');
       }
+      // Conditional clauses get the same define-time validation as query where.
+      if (a.when?.length) buildWhere(fields, a.when);
     }
     if (all.some((a) => a.type === "email") && !(await getConnector(projectId, "resend"))) {
       throw new ValidationError(

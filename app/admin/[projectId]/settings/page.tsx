@@ -5,6 +5,7 @@ import { projects, projectTokens, projectMembers, webhookDeliveries } from "@/db
 import { getProjectRole } from "@/lib/access";
 import { listCollections } from "@/lib/collections";
 import { TokensSection, WebhookForm, MembersSection, SecretReveal } from "./sections";
+import { refireDeliveryAction } from "./actions";
 
 /**
  * Settings tab: tokens, webhooks, members, manifest, delivery log.
@@ -133,6 +134,19 @@ export default async function SettingsPage({
                     </td>
                     <td className="max-w-40 truncate px-3 py-2.5 text-xs text-red-600">
                       {d.lastError}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      {d.status === "failed" && (
+                        <form action={refireDeliveryAction.bind(null, projectId, d.id)}>
+                          <button
+                            type="submit"
+                            className="btn !px-2.5 !py-1 text-xs"
+                            title="Replay this delivery — the outcome lands as a new row"
+                          >
+                            Re-fire
+                          </button>
+                        </form>
+                      )}
                     </td>
                   </tr>
                 ))}

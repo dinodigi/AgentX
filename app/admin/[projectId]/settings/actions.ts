@@ -16,6 +16,22 @@ async function requireOperator(projectId: string): Promise<string | null> {
   return role === "operator" ? null : "You need the operator role for this";
 }
 
+/** Replay a failed delivery from the log; the outcome lands as a new row. */
+export async function refireDeliveryAction(
+  projectId: string,
+  deliveryId: string,
+): Promise<void> {
+  const role = await getProjectRole(projectId);
+  if (!role) return;
+  const { refireDelivery } = await import("@/lib/events");
+  try {
+    await refireDelivery(projectId, deliveryId);
+  } catch {
+    // Outcome (or the miss) is visible in the log itself.
+  }
+  revalidatePath(`/admin/${projectId}/settings`);
+}
+
 export async function updateBranding(
   projectId: string,
   formData: FormData,

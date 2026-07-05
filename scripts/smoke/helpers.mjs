@@ -144,23 +144,26 @@ export async function connectClerk(projectId, issuer) {
     ON CONFLICT (project_id, type) DO UPDATE SET config = EXCLUDED.config`;
 }
 
-/** Local webhook receiver capturing POST bodies + headers — deterministic, no httpbin. */
+/** Local webhook receiver capturing POST bodies + headers — deterministic, no httpbin.
+ * setStatus(500) makes it fail deliveries until flipped back (re-fire tests). */
 export async function startWebhookReceiver() {
   const received = [];
+  let respondWith = 200;
   const server = http.createServer((req, res) => {
     let data = "";
     req.on("data", (c) => (data += c));
     req.on("end", () => {
       // Parsed payload at top level (event tests), raw body+headers for signature tests.
       received.push({ ...JSON.parse(data || "{}"), raw: { headers: req.headers, body: data } });
-      res.writeHead(200);
-      res.end("ok");
+      res.writeHead(respondWith);
+      res.end(respondWith === 200 ? "ok" : "nope");
     });
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   return {
     url: `http://127.0.0.1:${server.address().port}/hook`,
     received,
+    setStatus: (n) => (respondWith = n),
     close: () => new Promise((r) => server.close(r)),
   };
 }
