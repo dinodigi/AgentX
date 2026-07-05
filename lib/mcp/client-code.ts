@@ -63,12 +63,14 @@ interface CollectionPlan {
   canRead: boolean;
   canCreate: boolean;
   canMutate: boolean;
+  canUpload: boolean;
   needsUser: boolean;
 }
 
 function plan(c: Collection): CollectionPlan {
   const publicFieldDefs = c.fields.filter((f) => f.publicRead);
   const write = c.access?.write ?? "none";
+  const canCreate = Boolean(c.publicWrite) || write !== "none";
   return {
     slug: c.name,
     typeName: pascal(c.name),
@@ -76,8 +78,9 @@ function plan(c: Collection): CollectionPlan {
     publicFields: publicFieldDefs,
     ownerField: c.access?.ownerField ?? null,
     canRead: publicFieldDefs.length > 0,
-    canCreate: Boolean(c.publicWrite) || write !== "none",
+    canCreate,
     canMutate: write === "owner",
+    canUpload: canCreate && c.fields.some((f) => f.type === "asset"),
     needsUser: (c.access?.read ?? "public") !== "public" || write !== "none",
   };
 }
@@ -150,6 +153,23 @@ function accessorBlock(p: CollectionPlan): string {
       },`,
     );
   }
+  if (p.canUpload) {
+    methods.push(
+      `      /** Upload a file, then reference the returned id in an asset field. */
+      async upload(file: Blob, filename = "upload"): Promise<{ id: string; url: string }> {
+        const fd = new FormData();
+        fd.append("file", file, filename);
+        const headers: Record<string, string> = { authorization: "Bearer " + options.token };
+        if (userToken) headers["x-user-token"] = userToken;
+        const res = await fetch(baseUrl + "/${p.slug}/uploads", { method: "POST", headers, body: fd });
+        const json = (await res.json().catch(() => null)) as
+          | { id?: string; url?: string; error?: string; code?: string }
+          | null;
+        if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status, json?.code);
+        return json as { id: string; url: string };
+      },`,
+    );
+  }
   if (p.canMutate) {
     methods.push(
       `      async update(id: string, patch: ${p.typeName}Update): Promise<${p.typeName}> {
@@ -185,7 +205,8 @@ export function generateClientCode(opts: {
  * The token is a delivery-scoped project token — keep it server-side.
  * Collections with authenticated/owner access rules also need the signed-in
  * user's JWT: call ax.setUserToken(jwt) (sent as X-User-Token).
- * Errors throw AgentXError with the HTTP status and the server's message.
+ * Errors throw AgentXError with the HTTP status, the server's message, and a
+ * stable machine code (E_VALIDATION, E_AUTH, E_NOT_FOUND, E_RATE_LIMITED, …).
  */
 
 const DEFAULT_BASE_URL = ${JSON.stringify(opts.deliveryBase)};
@@ -200,7 +221,7 @@ export interface AgentXClientOptions {
 }
 
 export class AgentXError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly code?: string) {
     super(message);
     this.name = "AgentXError";
   }
@@ -229,8 +250,8 @@ export class AgentXError extends Error {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.status === 204) return undefined as T;
-    const json = (await res.json().catch(() => null)) as { error?: string } | null;
-    if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status);
+    const json = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+    if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status, json?.code);
     return json as T;
   }
 

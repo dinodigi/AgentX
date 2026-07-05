@@ -7,7 +7,8 @@
 export const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, PATCH, DELETE, OPTIONS",
-  "access-control-allow-headers": "authorization, content-type, x-user-token",
+  "access-control-allow-headers": "authorization, content-type, x-user-token, if-none-match",
+  "access-control-expose-headers": "etag, retry-after",
   "access-control-max-age": "86400",
 };
 

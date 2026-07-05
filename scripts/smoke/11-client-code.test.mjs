@@ -35,6 +35,7 @@ describe("get_client_code: generated client compiles and runs", () => {
       fields: [
         { name: "email", label: "Email", type: "text", required: true },
         { name: "body", label: "Body", type: "text" },
+        { name: "attachment", label: "Attachment", type: "asset" },
       ],
     });
     await mcp(p.mcpToken, "define_collection", {
@@ -84,7 +85,8 @@ export async function main(): Promise<void> {
   const one: Posts = await ax.posts.get(rows[0].id);
   const msg: MessagesCreate = { email: "a@b.c", body: "hi" };
   const created: { id: string } = await ax.messages.create(msg);
-  if (!(one.title.length > 0 && created.id)) throw new AgentXError(500, "unreachable");
+  const up: { id: string; url: string } = await ax.messages.upload(new Blob(["x"]), "x.txt");
+  if (!(one.title.length > 0 && created.id && up.id)) throw new AgentXError(500, "unreachable");
 }
 `,
     );
@@ -122,11 +124,18 @@ export async function main(): Promise<void> {
     const check = await mcp(p.mcpToken, "get_entry", { collection: "messages", id: created.id });
     assert.equal(check.value.data.email, "a@b.c");
 
+    const up = await ax.messages.upload(new Blob(["ping"], { type: "text/plain" }), "ping.txt");
+    assert.ok(up.id && up.url, "generated upload() must return {id, url}");
+
     // Filtering on a private field is a type error in TS; forced via JS it must
-    // throw AgentXError carrying the server's 422 + hint.
+    // throw AgentXError carrying the server's 422 + hint and machine code.
     await assert.rejects(
       () => ax.posts.list({ filter: { internal: "x" } }),
-      (e) => e.name === "AgentXError" && e.status === 422 && /non-public/.test(e.message),
+      (e) =>
+        e.name === "AgentXError" &&
+        e.status === 422 &&
+        e.code === "E_VALIDATION" &&
+        /non-public/.test(e.message),
     );
   });
 });

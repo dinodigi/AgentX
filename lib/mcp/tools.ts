@@ -664,6 +664,13 @@ export async function callTool(
             write:
               "POST {deliveryBase}/{collection} — anonymous when publicWrite, or " +
               "authenticated per access rules; validated like create_entry; fires events",
+            uploads:
+              "POST {deliveryBase}/{collection}/uploads — multipart/form-data 'file' part; " +
+              "same gates as write plus the collection needs an asset field; returns {id,url} " +
+              "to reference in the submission. 10 MB / image, pdf, text, csv, json only.",
+            conventions:
+              "errors are {error, code} with stable E_* codes; GETs carry ETags " +
+              "(send If-None-Match, get 304)",
             userAuth:
               "collections with access rules need the end-user's JWT in the X-User-Token " +
               "header (issued by the project's connected Clerk instance). " +

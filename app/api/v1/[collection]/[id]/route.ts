@@ -13,6 +13,7 @@ import {
 import { matchesClauses } from "@/lib/query";
 import { gateRead, gateMutate } from "@/lib/access-rules";
 import { CORS_HEADERS, preflight } from "@/lib/cors";
+import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
 
 /**
  * Single-entry delivery endpoints (Phase 4).
@@ -33,8 +34,12 @@ async function resolve(req: NextRequest, name: string) {
 
 type Params = { params: Promise<{ collection: string; id: string }> };
 
+// Non-uuid ids (including stray GETs to /uploads) 404 before touching the DB.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(req: NextRequest, { params }: Params) {
   const { collection: name, id } = await params;
+  if (!UUID_RE.test(id)) return err(404, "not found");
   const r = await resolve(req, name);
   if ("error" in r) return r.error;
   const { projectId, collection } = r;
@@ -55,11 +60,12 @@ export async function GET(req: NextRequest, { params }: Params) {
   }
 
   const [resolved] = await resolveRefsForRead(projectId, collection, [entry]);
-  return corsJson({ data: toPublicView(collection, resolved) });
+  return cachedJson(req, { data: toPublicView(collection, resolved) });
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   const { collection: name, id } = await params;
+  if (!UUID_RE.test(id)) return err(404, "not found");
   const r = await resolve(req, name);
   if ("error" in r) return r.error;
   const { projectId, collection } = r;
@@ -98,6 +104,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
 export async function DELETE(req: NextRequest, { params }: Params) {
   const { collection: name, id } = await params;
+  if (!UUID_RE.test(id)) return err(404, "not found");
   const r = await resolve(req, name);
   if ("error" in r) return r.error;
   const { projectId, collection } = r;
@@ -113,16 +120,9 @@ export async function DELETE(req: NextRequest, { params }: Params) {
 }
 
 function err(status: number, error: string) {
-  return corsJson({ error }, { status });
+  return deliveryError(status, error);
 }
 
 export function OPTIONS() {
   return preflight();
-}
-
-function corsJson(body: unknown, init?: ResponseInit) {
-  return Response.json(body, {
-    ...init,
-    headers: { ...CORS_HEADERS, ...(init?.headers ?? {}) },
-  });
 }

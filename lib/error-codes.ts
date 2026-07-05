@@ -17,7 +17,9 @@ export const ERROR_CODES = {
     "a required connector is not connected — the operator connects it in project settings (not over MCP)",
   E_CONFLICT:
     "conditional update did not apply — the if-conditions (or a constraint guard) no longer match the row; re-read and retry",
-  E_SCOPE: "the token lacks the required scope for this surface",
+  E_AUTH: "missing or invalid credentials — project token or X-User-Token",
+  E_RATE_LIMITED: "too many requests — wait for the retry-after header, then retry",
+  E_SCOPE: "the token lacks the required scope for this operation",
   E_UNKNOWN_TOOL: "no such tool — tools/list shows the full surface",
   E_INTERNAL: "unexpected server error — not agent-repairable; retry or report",
 } as const;

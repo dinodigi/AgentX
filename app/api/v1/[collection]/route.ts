@@ -2,7 +2,8 @@ import { NextRequest } from "next/server";
 import { bearerFrom, resolveProjectId } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
 import { rateLimit } from "@/lib/ratelimit";
-import { CORS_HEADERS, preflight } from "@/lib/cors";
+import { preflight } from "@/lib/cors";
+import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
 import { gateRead, gateCreate, stampOwner } from "@/lib/access-rules";
 import {
   createEntry,
@@ -50,7 +51,7 @@ export async function GET(
 
   // Identity gate (Phase 4): public / authenticated / owner.
   const gate = await gateRead(projectId, collection, req.headers.get("x-user-token"));
-  if (!gate.ok) return corsJson({ error: gate.error }, { status: gate.status });
+  if (!gate.ok) return deliveryError(gate.status, gate.error);
 
   const url = new URL(req.url);
   const limit = Number(url.searchParams.get("limit") ?? 100);
@@ -63,11 +64,9 @@ export async function GET(
     select = selectParam.split(",").map((s) => s.trim()).filter(Boolean);
     const bad = select.find((name) => !pub.some((f) => f.name === name));
     if (select.length === 0 || bad !== undefined) {
-      return corsJson(
-        {
-          error: `unknown or non-public select field "${bad ?? ""}" — selectable: ${pub.map((f) => f.name).join(", ")}`,
-        },
-        { status: 422 },
+      return deliveryError(
+        422,
+        `unknown or non-public select field "${bad ?? ""}" — selectable: ${pub.map((f) => f.name).join(", ")}`,
       );
     }
   }
@@ -79,11 +78,9 @@ export async function GET(
     if (key === "limit" || key === "offset" || key === "sort" || key === "select") continue;
     const field = pub.find((f) => f.name === key);
     if (!field) {
-      return corsJson(
-        {
-          error: `unknown or non-public filter field "${key}" — filterable: ${pub.map((f) => f.name).join(", ")}`,
-        },
-        { status: 422 },
+      return deliveryError(
+        422,
+        `unknown or non-public filter field "${key}" — filterable: ${pub.map((f) => f.name).join(", ")}`,
       );
     }
     where.push({ field: key, op: "eq", value: coerceParam(field.type, value) });
@@ -94,9 +91,9 @@ export async function GET(
   if (sort) {
     const [field, dir = "asc"] = sort.split(":");
     if (!pub.some((f) => f.name === field) || (dir !== "asc" && dir !== "desc")) {
-      return corsJson(
-        { error: `sort must be "<public-field>:asc|desc" — sortable: ${pub.map((f) => f.name).join(", ")}` },
-        { status: 422 },
+      return deliveryError(
+        422,
+        `sort must be "<public-field>:asc|desc" — sortable: ${pub.map((f) => f.name).join(", ")}`,
       );
     }
     orderBy = { field, dir };
@@ -118,10 +115,10 @@ export async function GET(
       for (const name of select) if (name in view) picked[name] = view[name];
       return picked;
     });
-    return corsJson({ data });
+    return cachedJson(req, { data });
   } catch (e) {
     if (e instanceof ValidationError) {
-      return corsJson({ error: e.message }, { status: 422 });
+      return deliveryError(422, e.message);
     }
     throw e;
   }
@@ -144,22 +141,21 @@ export async function POST(
 
   // Identity gate: anonymous forms (publicWrite) or authenticated/owner creates.
   const gate = await gateCreate(projectId, collection, req.headers.get("x-user-token"));
-  if (!gate.ok) return corsJson({ error: gate.error }, { status: gate.status });
+  if (!gate.ok) return deliveryError(gate.status, gate.error);
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
   const limit = rateLimit(`${projectId}:${ip}`);
   if (!limit.allowed) {
-    return corsJson(
-      { error: "too many submissions — try again shortly" },
-      { status: 429, headers: { "retry-after": String(limit.retryAfterSec) } },
-    );
+    return deliveryError(429, "too many submissions — try again shortly", {
+      headers: { "retry-after": String(limit.retryAfterSec) },
+    });
   }
 
   let body: unknown;
   try {
     body = await req.json();
   } catch {
-    return corsJson({ error: "invalid JSON body" }, { status: 400 });
+    return deliveryError(400, "invalid JSON body");
   }
 
   try {
@@ -176,26 +172,19 @@ export async function POST(
     return corsJson({ id: entry.id }, { status: 201 });
   } catch (e) {
     if (e instanceof ValidationError) {
-      return corsJson({ error: e.message }, { status: 422 });
+      return deliveryError(422, e.message);
     }
-    return corsJson({ error: "internal error" }, { status: 500 });
+    return deliveryError(500, "internal error");
   }
 }
 
 function unauthorized() {
-  return corsJson({ error: "invalid or missing project token" }, { status: 401 });
+  return deliveryError(401, "invalid or missing project token");
 }
 function notFound() {
-  return corsJson({ error: "not found" }, { status: 404 });
+  return deliveryError(404, "not found");
 }
 
 export function OPTIONS() {
   return preflight();
-}
-
-function corsJson(body: unknown, init?: ResponseInit) {
-  return Response.json(body, {
-    ...init,
-    headers: { ...CORS_HEADERS, ...(init?.headers ?? {}) },
-  });
 }
