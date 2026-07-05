@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import { createRemoteJWKSet, decodeJwt, jwtVerify, type JWTPayload } from "jose";
 import { getAuthConfig } from "./connectors";
 
 /**
@@ -35,7 +35,15 @@ export type UserAuthResult =
   | { status: "invalid"; reason: string }
   | { status: "unconfigured" }; // collection needs auth but project has no issuer
 
-/** Verify the X-User-Token header value against the project's issuer. */
+/** Absorbs minor clock drift between the issuer and this server. */
+const CLOCK_TOLERANCE_SEC = 30;
+
+/**
+ * Verify the X-User-Token header value against the project's accepted
+ * issuer(s). Multi-issuer (staging + prod Clerk) routes by the token's own
+ * iss claim — the claim is untrusted until the signature verifies against
+ * that issuer's JWKS, so a forged iss only selects which key set rejects it.
+ */
 export async function verifyEndUser(
   projectId: string,
   userToken: string | null,
@@ -44,8 +52,23 @@ export async function verifyEndUser(
   const auth = await getAuthConfig(projectId);
   if (!auth) return { status: "unconfigured" };
   try {
-    const { payload } = await jwtVerify(userToken, jwksFor(auth.jwksUrl), {
-      issuer: auth.issuer,
+    let claimedIssuer: string | undefined;
+    try {
+      claimedIssuer = decodeJwt(userToken).iss?.replace(/\/$/, "");
+    } catch {
+      return { status: "invalid", reason: "malformed token" };
+    }
+    const match = auth.issuers.find((i) => i.issuer === claimedIssuer);
+    if (!match) {
+      return {
+        status: "invalid",
+        reason: `issuer not accepted — accepted: ${auth.issuers.map((i) => i.issuer).join(", ")}`,
+      };
+    }
+    const { payload } = await jwtVerify(userToken, jwksFor(match.jwksUrl), {
+      issuer: match.issuer,
+      clockTolerance: CLOCK_TOLERANCE_SEC,
+      ...(auth.audience ? { audience: auth.audience } : {}),
     });
     if (!payload.sub) return { status: "invalid", reason: "token has no sub claim" };
     return { status: "ok", user: { id: payload.sub, claims: payload } };

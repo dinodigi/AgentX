@@ -13,6 +13,7 @@ import {
   saveConnector,
   disconnectConnector,
   testConnector,
+  rotateConnectorSecretAction,
 } from "./actions";
 
 const inputClass = "field-input";
@@ -295,6 +296,8 @@ export function ConnectorCard(p: ConnectorCardProps) {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [rotating, setRotating] = useState(false);
+  const [newKey, setNewKey] = useState("");
 
   return (
     <form
@@ -358,6 +361,19 @@ export function ConnectorCard(p: ConnectorCardProps) {
             >
               Test
             </button>
+            {p.hasSecret && p.secretLabel && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setRotating((v) => !v);
+                  setNote(null);
+                  setError(null);
+                }}
+              >
+                Rotate key
+              </button>
+            )}
             <button
               type="button"
               className="btn btn-danger-ghost"
@@ -372,6 +388,41 @@ export function ConnectorCard(p: ConnectorCardProps) {
         )}
         {note && <span className="text-xs text-[--color-ink-mute]">{note}</span>}
       </div>
+      {rotating && (
+        <div className="mt-3 rounded-lg border border-[--color-line] bg-[--color-paper] p-3">
+          <label className="mb-1 block text-xs text-[--color-ink-mute]">
+            New {p.secretLabel?.toLowerCase()} — validated against the provider before the old
+            one is replaced
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              value={newKey}
+              onChange={(e) => setNewKey(e.target.value)}
+              placeholder="re_…"
+              className={inputClass}
+            />
+            <button
+              type="button"
+              disabled={busy || !newKey.trim()}
+              className={`${buttonClass} shrink-0`}
+              onClick={async () => {
+                setBusy(true);
+                const res = await rotateConnectorSecretAction(p.projectId, p.type, newKey);
+                setBusy(false);
+                setError(res.error ?? (res.ok ? null : res.detail));
+                if (res.ok) {
+                  setNote(res.detail);
+                  setRotating(false);
+                  setNewKey("");
+                }
+              }}
+            >
+              {busy ? "Validating…" : "Rotate"}
+            </button>
+          </div>
+        </div>
+      )}
       <ErrorLine error={error} />
     </form>
   );

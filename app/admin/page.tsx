@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { Plus, Table2, FileText } from "lucide-react";
 import { UserButton } from "@clerk/nextjs";
-import { count, eq } from "drizzle-orm";
+import { count } from "drizzle-orm";
 import { db } from "@/db";
-import { collections, entries } from "@/db/schema";
+import { collections, entries, projectConnectors } from "@/db/schema";
 import { accessibleProjects } from "@/lib/access";
 
 /**
@@ -14,8 +14,8 @@ import { accessibleProjects } from "@/lib/access";
 export default async function AdminHome() {
   const projects = await accessibleProjects();
 
-  // Counts in two grouped queries, not 2×N.
-  const [collectionCounts, entryCounts] = await Promise.all([
+  // Counts in grouped queries, not N-per-project.
+  const [collectionCounts, entryCounts, connectorRows] = await Promise.all([
     db
       .select({ projectId: collections.projectId, n: count() })
       .from(collections)
@@ -24,9 +24,22 @@ export default async function AdminHome() {
       .select({ projectId: entries.projectId, n: count() })
       .from(entries)
       .groupBy(entries.projectId),
+    db
+      .select({
+        projectId: projectConnectors.projectId,
+        type: projectConnectors.type,
+        status: projectConnectors.status,
+      })
+      .from(projectConnectors),
   ]);
   const colsById = new Map(collectionCounts.map((c) => [c.projectId, c.n]));
   const entriesById = new Map(entryCounts.map((c) => [c.projectId, c.n]));
+  const connectorsById = new Map<string, { type: string; status: string }[]>();
+  for (const c of connectorRows) {
+    const list = connectorsById.get(c.projectId) ?? [];
+    list.push({ type: c.type, status: c.status });
+    connectorsById.set(c.projectId, list);
+  }
 
   return (
     <div className="min-h-screen">
@@ -114,8 +127,24 @@ export default async function AdminHome() {
                       <FileText className="h-3.5 w-3.5" />
                       {entriesById.get(p.id) ?? 0} entries
                     </span>
-                    <span className="ml-auto">
-                      {p.createdAt.toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                    <span className="ml-auto inline-flex items-center gap-2">
+                      {(connectorsById.get(p.id) ?? []).map((c) => (
+                        <span
+                          key={c.type}
+                          className="inline-flex items-center gap-1"
+                          title={`${c.type}: ${c.status}`}
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 rounded-full ${
+                              c.status === "connected" ? "bg-emerald-500" : "bg-red-500"
+                            }`}
+                          />
+                          {c.type}
+                        </span>
+                      ))}
+                      <span>
+                        {p.createdAt.toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                      </span>
                     </span>
                   </div>
                 </div>

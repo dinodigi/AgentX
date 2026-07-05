@@ -125,22 +125,25 @@ export async function startMockIssuer() {
 
   return {
     issuer,
-    tokenFor: (sub) =>
-      new SignJWT({})
+    tokenFor: (sub, opts = {}) => {
+      let jwt = new SignJWT({})
         .setProtectedHeader({ alg: "RS256", kid: "smoke-key" })
-        .setIssuer(issuer)
+        .setIssuer(opts.issuer ?? issuer)
         .setSubject(sub)
         .setIssuedAt()
-        .setExpirationTime("15m")
-        .sign(privateKey),
+        .setExpirationTime("15m");
+      if (opts.aud) jwt = jwt.setAudience(opts.aud);
+      return jwt.sign(privateKey);
+    },
     close: () => new Promise((r) => server.close(r)),
   };
 }
 
 /** Attach the project's clerk connector to a mock issuer (direct SQL). */
-export async function connectClerk(projectId, issuer) {
+export async function connectClerk(projectId, issuer, extraConfig = {}) {
+  const config = { issuer, ...extraConfig };
   await sql`INSERT INTO project_connectors (project_id, type, config)
-    VALUES (${projectId}, 'clerk', ${JSON.stringify({ issuer })}::jsonb)
+    VALUES (${projectId}, 'clerk', ${JSON.stringify(config)}::jsonb)
     ON CONFLICT (project_id, type) DO UPDATE SET config = EXCLUDED.config`;
 }
 

@@ -80,6 +80,67 @@ describe("identity: rules, stamping, owner endpoints", () => {
     }
   });
 
+  // Verification-option tests get their OWN ephemeral projects: connectClerk
+  // writes config via direct SQL, which bypasses tag revalidation — a fresh
+  // project guarantees a cold connector cache instead of stale reconfigs.
+  it("multi-issuer: tokens from any accepted issuer verify; strangers get 401", async () => {
+    const p2 = await createEphemeralProject("identity-issuers");
+    const staging = await startMockIssuer();
+    try {
+      await connectClerk(p2.id, issuer.issuer, { additionalIssuers: staging.issuer });
+      await mcp(p2.mcpToken, "define_collection", {
+        name: "notes",
+        fields: [{ name: "body", label: "Body", type: "text", publicRead: true }],
+        access: { read: "authenticated" },
+      });
+
+      const fromPrimary = await delivery(p2.deliveryToken, "/notes", {
+        userToken: await issuer.tokenFor("user_a"),
+      });
+      assert.equal(fromPrimary.status, 200, JSON.stringify(fromPrimary.json));
+
+      const fromStaging = await delivery(p2.deliveryToken, "/notes", {
+        userToken: await staging.tokenFor("user_carol"),
+      });
+      assert.equal(fromStaging.status, 200, JSON.stringify(fromStaging.json));
+
+      // Same KEY as the primary issuer but an unlisted iss claim — rejected by
+      // the accepted-issuer list before any JWKS is even consulted.
+      const stranger = await delivery(p2.deliveryToken, "/notes", {
+        userToken: await issuer.tokenFor("user_x", { issuer: "https://evil.example" }),
+      });
+      assert.equal(stranger.status, 401);
+      assert.match(stranger.json.error, /issuer not accepted/);
+    } finally {
+      await staging.close();
+      await p2.destroy();
+    }
+  });
+
+  it("audience: when configured, tokens minted for other apps are rejected", async () => {
+    const p2 = await createEphemeralProject("identity-aud");
+    try {
+      await connectClerk(p2.id, issuer.issuer, { audience: "currents-site" });
+      await mcp(p2.mcpToken, "define_collection", {
+        name: "notes",
+        fields: [{ name: "body", label: "Body", type: "text", publicRead: true }],
+        access: { read: "authenticated" },
+      });
+
+      const wrongAud = await delivery(p2.deliveryToken, "/notes", {
+        userToken: await issuer.tokenFor("user_a"),
+      });
+      assert.equal(wrongAud.status, 401, "token without the aud claim must fail");
+
+      const rightAud = await delivery(p2.deliveryToken, "/notes", {
+        userToken: await issuer.tokenFor("user_a", { aud: "currents-site" }),
+      });
+      assert.equal(rightAud.status, 200, JSON.stringify(rightAud.json));
+    } finally {
+      await p2.destroy();
+    }
+  });
+
   it("owner PATCH succeeds and ownership is immutable; owner DELETE 204", async () => {
     const patch = await delivery(p.deliveryToken, `/bookings/${entryId}`, {
       method: "PATCH",

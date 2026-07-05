@@ -29,6 +29,16 @@ export const CONNECTOR_SPECS: Record<
         label: "Publishable key (safe to expose; sites use it for sign-in UI)",
         placeholder: "pk_test_…",
       },
+      {
+        key: "additionalIssuers",
+        label: "Additional accepted issuers (optional, comma-separated — e.g. staging + prod)",
+        placeholder: "https://staging-app.clerk.accounts.dev",
+      },
+      {
+        key: "audience",
+        label: "Required audience claim (optional; rejects tokens minted for other apps)",
+        placeholder: "my-app",
+      },
     ],
     secretLabel: null, // JWT verification only needs the public JWKS
   },
@@ -115,14 +125,74 @@ export async function connectorSecret(
   return decryptSecret(c.secretEnc);
 }
 
+export interface AuthConfig {
+  issuer: string;
+  jwksUrl: string;
+  /** All accepted issuers (primary + additional, e.g. staging + prod Clerk). */
+  issuers: { issuer: string; jwksUrl: string }[];
+  /** When set, tokens must carry this aud claim. */
+  audience?: string;
+}
+
 /** End-user auth config: the Clerk connector is the source of truth. */
-export async function getAuthConfig(
-  projectId: string,
-): Promise<{ issuer: string; jwksUrl: string } | null> {
+export async function getAuthConfig(projectId: string): Promise<AuthConfig | null> {
   const c = await getConnector(projectId, "clerk");
-  const issuer = c?.config.issuer?.replace(/\/$/, "");
-  if (!issuer) return null;
-  return { issuer, jwksUrl: `${issuer}/.well-known/jwks.json` };
+  const primary = c?.config.issuer?.replace(/\/$/, "");
+  if (!primary) return null;
+  const additional = (c?.config.additionalIssuers ?? "")
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+  const issuers = [primary, ...additional].map((issuer) => ({
+    issuer,
+    jwksUrl: `${issuer}/.well-known/jwks.json`,
+  }));
+  return {
+    issuer: primary,
+    jwksUrl: issuers[0].jwksUrl,
+    issuers,
+    audience: c?.config.audience?.trim() || undefined,
+  };
+}
+
+/**
+ * Rotate a connector secret with validation-before-save: the candidate key is
+ * probed against the live provider FIRST, and the old key stays in place
+ * unless the new one passes — rotation stops being "retype and hope".
+ */
+export async function rotateConnectorSecret(
+  projectId: string,
+  type: ConnectorType,
+  newSecret: string,
+): Promise<{ ok: boolean; detail: string }> {
+  if (!CONNECTOR_SPECS[type].secretLabel) {
+    return { ok: false, detail: "this connector has no secret to rotate" };
+  }
+  if (!newSecret.trim()) return { ok: false, detail: "enter the new key" };
+  const existing = await getConnector(projectId, type);
+  if (!existing) return { ok: false, detail: "connector not connected" };
+
+  if (type === "resend") {
+    try {
+      const res = await fetch("https://api.resend.com/domains", {
+        headers: { Authorization: `Bearer ${newSecret.trim()}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        return { ok: false, detail: `Resend rejected the new key (HTTP ${res.status}) — old key kept` };
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ok: false, detail: `could not validate the new key (${msg}) — old key kept` };
+    }
+  }
+
+  await db
+    .update(projectConnectors)
+    .set({ secretEnc: encryptSecret(newSecret.trim()), status: "connected", updatedAt: new Date() })
+    .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, type)));
+  revalidateTag(tag(projectId));
+  return { ok: true, detail: "new key validated and swapped in" };
 }
 
 /** Reachability probe per connector type; updates stored status. */

@@ -16,6 +16,20 @@ async function requireOperator(projectId: string): Promise<string | null> {
   return role === "operator" ? null : "You need the operator role for this";
 }
 
+/** Rotate a connector secret — the new key is validated BEFORE the old one is replaced. */
+export async function rotateConnectorSecretAction(
+  projectId: string,
+  type: "clerk" | "resend",
+  newSecret: string,
+): Promise<{ ok: boolean; detail: string; error?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { ok: false, detail: "", error: denied };
+  const { rotateConnectorSecret } = await import("@/lib/connectors");
+  const res = await rotateConnectorSecret(projectId, type, newSecret);
+  revalidatePath(`/admin/${projectId}/connectors`);
+  return res;
+}
+
 /** Replay a failed delivery from the log; the outcome lands as a new row. */
 export async function refireDeliveryAction(
   projectId: string,
