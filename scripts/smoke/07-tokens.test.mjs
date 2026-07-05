@@ -46,7 +46,7 @@ describe("token scopes", () => {
     });
     await mcp(p.mcpToken, "create_entry", { collection: "notes", data: { body: "b", secret: "s" } });
     const rows = await mcp(p.mcpToken, "query_entries", { collection: "notes" });
-    assert.equal(rows.value[0].data.secret, "s");
+    assert.equal(rows.value.entries[0].data.secret, "s");
     const pub = await delivery(p.deliveryToken, "/notes");
     assert.ok(!("secret" in pub.json.data[0]));
   });

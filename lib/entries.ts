@@ -306,10 +306,26 @@ export interface QueryOpts {
   orderBy?: OrderByClause;
 }
 
-export async function queryEntries(
+export const MAX_QUERY_LIMIT = 500;
+
+export interface EntryPage {
+  rows: Entry[];
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+}
+
+/**
+ * Page-aware query: fetches limit+1 rows so hasMore is exact, never a guess.
+ * Without an explicit orderBy, rows are ordered by (createdAt, id) — pagination
+ * needs a total order or pages can overlap/skip.
+ */
+export async function queryEntriesPage(
   collection: Collection,
   opts: QueryOpts = {},
-): Promise<Entry[]> {
+): Promise<EntryPage> {
+  const limit = Math.max(1, Math.min(opts.limit ?? 100, MAX_QUERY_LIMIT));
+  const offset = Math.max(0, opts.offset ?? 0);
   const conditions = [
     eq(entries.collectionId, collection.id),
     ...buildWhere(collection.fields, opts.where ?? []),
@@ -317,8 +333,16 @@ export async function queryEntries(
   const order = buildOrderBy(collection.fields, opts.orderBy);
 
   let q = db.select().from(entries).where(and(...conditions)).$dynamic();
-  if (order) q = q.orderBy(order);
-  return q.limit(Math.min(opts.limit ?? 100, 500)).offset(opts.offset ?? 0);
+  q = order ? q.orderBy(order, entries.id) : q.orderBy(entries.createdAt, entries.id);
+  const rows = await q.limit(limit + 1).offset(offset);
+  return { rows: rows.slice(0, limit), limit, offset, hasMore: rows.length > limit };
+}
+
+export async function queryEntries(
+  collection: Collection,
+  opts: QueryOpts = {},
+): Promise<Entry[]> {
+  return (await queryEntriesPage(collection, opts)).rows;
 }
 
 /**

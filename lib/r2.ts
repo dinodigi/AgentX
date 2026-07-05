@@ -75,8 +75,18 @@ function sanitize(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
 }
 
-export async function listAssets(projectId: string): Promise<Asset[]> {
-  return db.select().from(assets).where(eq(assets.projectId, projectId));
+export async function listAssets(
+  projectId: string,
+  page?: { limit: number; offset: number },
+): Promise<Asset[]> {
+  let q = db
+    .select()
+    .from(assets)
+    .where(eq(assets.projectId, projectId))
+    .orderBy(assets.createdAt, assets.id)
+    .$dynamic();
+  if (page) q = q.limit(page.limit).offset(page.offset);
+  return q;
 }
 
 /**

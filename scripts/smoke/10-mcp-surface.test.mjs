@@ -79,6 +79,48 @@ describe("mcp surface: error codes", () => {
     assert.ok(!r.ok && /\[E_CONNECTOR_REQUIRED\]/.test(r.errorText), r.errorText);
   });
 
+  it("query_entries pages with hasMore/nextOffset until exhausted", async () => {
+    await mcp(p.mcpToken, "define_collection", {
+      name: "items",
+      fields: [{ name: "n", label: "N", type: "number" }],
+    });
+    await mcp(p.mcpToken, "bulk_create_entries", {
+      collection: "items",
+      entries: [{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }, { n: 5 }],
+    });
+
+    const seen = [];
+    let offset = 0;
+    let pages = 0;
+    for (;;) {
+      const r = await mcp(p.mcpToken, "query_entries", {
+        collection: "items",
+        limit: 2,
+        offset,
+        orderBy: { field: "n", dir: "asc" },
+      });
+      assert.ok(r.ok, r.errorText);
+      seen.push(...r.value.entries.map((e) => e.data.n));
+      pages++;
+      if (!r.value.hasMore) {
+        assert.equal(r.value.nextOffset, null);
+        break;
+      }
+      assert.equal(r.value.nextOffset, offset + 2);
+      offset = r.value.nextOffset;
+    }
+    assert.deepEqual(seen, [1, 2, 3, 4, 5]); // no overlaps, no gaps
+    assert.equal(pages, 3);
+  });
+
+  it("list_assets returns the page envelope", async () => {
+    const r = await mcp(p.mcpToken, "list_assets", { limit: 10 });
+    assert.ok(r.ok, r.errorText);
+    assert.ok(Array.isArray(r.value.assets));
+    assert.equal(r.value.hasMore, false);
+    assert.equal(r.value.nextOffset, null);
+  });
+
   it("scope rejection carries E_SCOPE; GET exposes the code registry", async () => {
     const r = await mcp(p.deliveryToken, "list_collections", {});
     assert.ok(!r.ok && /\[E_SCOPE\]/.test(r.errorText), r.errorText);

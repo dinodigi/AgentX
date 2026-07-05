@@ -14,7 +14,7 @@ import {
   getEntry,
   countEntries,
   bulkCreateEntries,
-  queryEntries,
+  queryEntriesPage,
   resolveRefsForRead,
   ValidationError,
 } from "@/lib/entries";
@@ -223,9 +223,11 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "query_entries",
     description:
-      "List entries in a collection (relations resolved to {id,label}). Supports limit/offset, " +
-      "where filters [{field, op: eq|contains|gt|lt, value}] and orderBy {field, dir: asc|desc}. " +
-      "Ops are type-checked: contains=text/richtext, gt/lt=number/date. No full-text search service.",
+      "List entries in a collection (relations resolved to {id,label}). Supports limit/offset " +
+      "(default 100, max 500), where filters [{field, op: eq|contains|gt|lt, value}] and orderBy " +
+      "{field, dir: asc|desc}. Ops are type-checked: contains=text/richtext, gt/lt=number/date. " +
+      "Returns {entries, limit, offset, hasMore, nextOffset} — when hasMore is true, re-call with " +
+      "offset: nextOffset for the next page. No full-text search service.",
     inputSchema: {
       type: "object",
       properties: {
@@ -311,8 +313,17 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "list_assets",
-    description: "List uploaded assets (id, filename, contentType, size, url).",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    description:
+      "List uploaded assets (id, filename, contentType, size, url). Supports limit/offset " +
+      "(default 100, max 500); returns {assets, limit, offset, hasMore, nextOffset}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number" },
+        offset: { type: "number" },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: "delete_asset",
@@ -641,14 +652,20 @@ export async function callTool(
       case "query_entries": {
         const a = queryArgs.parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
-        const rows = await queryEntries(c, {
+        const page = await queryEntriesPage(c, {
           limit: a.limit,
           offset: a.offset,
           where: a.where,
           orderBy: a.orderBy,
         });
-        const resolved = await resolveRefsForRead(projectId, c, rows);
-        return ok(resolved.map((r) => ({ id: r.id, data: r.data })));
+        const resolved = await resolveRefsForRead(projectId, c, page.rows);
+        return ok({
+          entries: resolved.map((r) => ({ id: r.id, data: r.data })),
+          limit: page.limit,
+          offset: page.offset,
+          hasMore: page.hasMore,
+          nextOffset: page.hasMore ? page.offset + page.limit : null,
+        });
       }
 
       case "get_entry": {
@@ -677,16 +694,26 @@ export async function callTool(
       }
 
       case "list_assets": {
-        const rows = await listAssets(projectId);
-        return ok(
-          rows.map((r) => ({
+        const a = z
+          .object({ limit: z.number().optional(), offset: z.number().optional() })
+          .parse(rawArgs ?? {});
+        const limit = Math.max(1, Math.min(a.limit ?? 100, 500));
+        const offset = Math.max(0, a.offset ?? 0);
+        const rows = await listAssets(projectId, { limit: limit + 1, offset });
+        const hasMore = rows.length > limit;
+        return ok({
+          assets: rows.slice(0, limit).map((r) => ({
             id: r.id,
             filename: r.filename,
             contentType: r.contentType,
             size: Number(r.size),
             url: r.url,
           })),
-        );
+          limit,
+          offset,
+          hasMore,
+          nextOffset: hasMore ? offset + limit : null,
+        });
       }
 
       case "delete_asset": {

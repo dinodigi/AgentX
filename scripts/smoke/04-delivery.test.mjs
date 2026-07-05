@@ -56,7 +56,7 @@ describe("delivery API projection + gates", () => {
 
   it("single-entry GET respects publicFilter with 404", async () => {
     const all = await mcp(p.mcpToken, "query_entries", { collection: "posts" });
-    const hidden = all.value.find((r) => r.data.title === "Hidden pending");
+    const hidden = all.value.entries.find((r) => r.data.title === "Hidden pending");
     const r = await delivery(p.deliveryToken, `/posts/${hidden.id}`);
     assert.equal(r.status, 404);
   });

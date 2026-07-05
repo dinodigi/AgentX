@@ -32,25 +32,25 @@ describe("query filters + sorting", () => {
       collection: "trips",
       where: [{ field: "level", op: "eq", value: "easy" }],
     });
-    assert.equal(eq.value.length, 2);
+    assert.equal(eq.value.entries.length, 2);
 
     const contains = await mcp(p.mcpToken, "query_entries", {
       collection: "trips",
       where: [{ field: "title", op: "contains", value: "rapids" }],
     });
-    assert.equal(contains.value.length, 1);
+    assert.equal(contains.value.entries.length, 1);
 
     const gt = await mcp(p.mcpToken, "query_entries", {
       collection: "trips",
       where: [{ field: "price", op: "gt", value: 80 }],
     });
-    assert.equal(gt.value.length, 2);
+    assert.equal(gt.value.entries.length, 2);
 
     const lt = await mcp(p.mcpToken, "query_entries", {
       collection: "trips",
       where: [{ field: "price", op: "lt", value: 60 }],
     });
-    assert.equal(lt.value.length, 1);
+    assert.equal(lt.value.entries.length, 1);
   });
 
   it("rejects op/type mismatch with an allowed-ops hint", async () => {
@@ -75,14 +75,14 @@ describe("query filters + sorting", () => {
       orderBy: { field: "price", dir: "asc" },
     });
     assert.deepEqual(
-      asc.value.map((r) => r.data.price),
+      asc.value.entries.map((r) => r.data.price),
       [50, 90, 150],
     );
     const desc = await mcp(p.mcpToken, "query_entries", {
       collection: "trips",
       orderBy: { field: "price", dir: "desc" },
     });
-    assert.equal(desc.value[0].data.price, 150);
+    assert.equal(desc.value.entries[0].data.price, 150);
   });
 
   it("delivery filters are restricted to public fields (422 on private)", async () => {
