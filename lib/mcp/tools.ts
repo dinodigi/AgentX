@@ -18,6 +18,8 @@ import {
   resolveRefsForRead,
   validateSelect,
   projectData,
+  encodeCursor,
+  decodeCursor,
   ValidationError,
 } from "@/lib/entries";
 import { getProject } from "@/lib/admin";
@@ -250,14 +252,17 @@ export const TOOL_DEFS: ToolDef[] = [
       "in=text/enum/relation with value: string[]. Where items AND together; an item may be an OR " +
       "group {anyOf: [clauses]} (one level, no nesting). select: [fields] trims each entry's data " +
       "to those fields (id always included). " +
-      "Returns {entries, limit, offset, hasMore, nextOffset} — when hasMore is true, re-call with " +
-      "offset: nextOffset for the next page. No full-text search service.",
+      "Returns {entries, limit, offset, hasMore, nextOffset, nextCursor} — page with offset: " +
+      "nextOffset, or (preferred for deep/chronological paging) pass cursor: nextCursor, which " +
+      "uses the stable default ordering and stays exact past thousands of rows. cursor excludes " +
+      "offset/orderBy. No full-text search service.",
     inputSchema: {
       type: "object",
       properties: {
         collection: { type: "string" },
         limit: { type: "number" },
         offset: { type: "number" },
+        cursor: { type: "string", description: "nextCursor from a previous page" },
         where: { type: "array", items: WHERE_ITEM_JSON },
         select: { type: "array", items: { type: "string" } },
         orderBy: {
@@ -498,6 +503,7 @@ const queryArgs = z.object({
   offset: z.number().optional(),
   where: z.array(whereItemSchema).optional(),
   select: z.array(z.string()).optional(),
+  cursor: z.string().optional(),
   orderBy: z
     .object({ field: z.string(), dir: z.enum(["asc", "desc"]) })
     .optional(),
@@ -699,23 +705,37 @@ export async function callTool(
         const a = queryArgs.parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         if (a.select) validateSelect(c.fields, a.select);
+        if (a.cursor !== undefined && a.offset !== undefined) {
+          return err(
+            "pass either cursor or offset, not both — cursor supersedes offset paging",
+            "E_VALIDATION",
+          );
+        }
         const page = await queryEntriesPage(c, {
           limit: a.limit,
           offset: a.offset,
           where: a.where,
           orderBy: a.orderBy,
+          after: a.cursor !== undefined ? decodeCursor(a.cursor) : undefined,
         });
         // Project before resolving refs so unselected relations cost nothing.
         const rows = a.select
           ? page.rows.map((r) => ({ ...r, data: projectData(r.data, a.select!) }))
           : page.rows;
         const resolved = await resolveRefsForRead(projectId, c, rows);
+        const last = page.rows[page.rows.length - 1];
         return ok({
           entries: resolved.map((r) => ({ id: r.id, data: r.data })),
           limit: page.limit,
-          offset: page.offset,
           hasMore: page.hasMore,
-          nextOffset: page.hasMore ? page.offset + page.limit : null,
+          // Offset paging (breaks past a few thousand rows)…
+          ...(a.cursor === undefined
+            ? { offset: page.offset, nextOffset: page.hasMore ? page.offset + page.limit : null }
+            : {}),
+          // …and keyset paging over the default ordering (always exact).
+          ...(a.orderBy === undefined
+            ? { nextCursor: page.hasMore && last ? encodeCursor(last) : null }
+            : {}),
         });
       }
 
@@ -730,7 +750,7 @@ export async function callTool(
 
       case "count_entries": {
         const a = queryArgs
-          .omit({ limit: true, offset: true, orderBy: true, select: true })
+          .omit({ limit: true, offset: true, orderBy: true, select: true, cursor: true })
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         return ok({ count: await countEntries(c, a.where ?? []) });

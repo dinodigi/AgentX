@@ -1,4 +1,4 @@
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { entries, assets, collections, type Collection, type Entry } from "@/db/schema";
 import { buildEntrySchema, formatZodError, ValidationError, type RefCheck } from "./validation";
@@ -304,6 +304,33 @@ export interface QueryOpts {
   offset?: number;
   where?: WhereItem[];
   orderBy?: OrderByClause;
+  /** Keyset position from decodeCursor — only valid with the default ordering. */
+  after?: { createdAt: Date; id: string };
+}
+
+/** Opaque cursor over the default (createdAt, id) ordering. */
+export function encodeCursor(row: Entry): string {
+  return Buffer.from(
+    JSON.stringify({ t: row.createdAt.toISOString(), id: row.id }),
+  ).toString("base64url");
+}
+
+export function decodeCursor(cursor: string): { createdAt: Date; id: string } {
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString()) as {
+      t?: unknown;
+      id?: unknown;
+    };
+    const createdAt = new Date(String(parsed.t));
+    if (Number.isNaN(createdAt.getTime()) || typeof parsed.id !== "string" || !parsed.id) {
+      throw new Error("bad cursor");
+    }
+    return { createdAt, id: parsed.id };
+  } catch {
+    throw new ValidationError(
+      "invalid cursor — pass the nextCursor returned by a previous query_entries page",
+    );
+  }
 }
 
 export const MAX_QUERY_LIMIT = 500;
@@ -330,10 +357,24 @@ export async function queryEntriesPage(
     eq(entries.collectionId, collection.id),
     ...buildWhere(collection.fields, opts.where ?? []),
   ];
+  // Cursor keys truncate to milliseconds because JS Dates lose Postgres's
+  // microseconds — both sides of the keyset comparison must share a precision,
+  // and the default ordering must sort by the exact same key.
+  const createdMs = sql`date_trunc('milliseconds', ${entries.createdAt})`;
+  if (opts.after) {
+    if (opts.orderBy) {
+      throw new ValidationError(
+        "cursor pagination uses the default (createdAt, id) ordering — drop orderBy, or page with offset instead",
+      );
+    }
+    conditions.push(
+      sql`(${createdMs}, ${entries.id}) > (${opts.after.createdAt.toISOString()}::timestamptz, ${opts.after.id}::uuid)`,
+    );
+  }
   const order = buildOrderBy(collection.fields, opts.orderBy);
 
   let q = db.select().from(entries).where(and(...conditions)).$dynamic();
-  q = order ? q.orderBy(order, entries.id) : q.orderBy(entries.createdAt, entries.id);
+  q = order ? q.orderBy(order, entries.id) : q.orderBy(createdMs, entries.id);
   const rows = await q.limit(limit + 1).offset(offset);
   return { rows: rows.slice(0, limit), limit, offset, hasMore: rows.length > limit };
 }

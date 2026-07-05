@@ -190,6 +190,52 @@ describe("query filters + sorting", () => {
     assert.ok(!bad.ok && /valid fields:/.test(bad.errorText), bad.errorText);
   });
 
+  it("cursor: keyset pages walk every row exactly once", async () => {
+    const seen = [];
+    let cursor;
+    let guard = 0;
+    for (;;) {
+      const r = await mcp(p.mcpToken, "query_entries", {
+        collection: "trips",
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      });
+      assert.ok(r.ok, r.errorText);
+      seen.push(...r.value.entries.map((e) => e.data.title));
+      if (!r.value.hasMore) {
+        assert.equal(r.value.nextCursor, null);
+        break;
+      }
+      assert.ok(typeof r.value.nextCursor === "string" && r.value.nextCursor.length > 0);
+      cursor = r.value.nextCursor;
+      assert.ok(++guard < 10, "cursor loop never terminated");
+    }
+    assert.deepEqual(seen.sort(), ["Alpha paddle", "Beta rapids", "Gamma glide"]);
+  });
+
+  it("cursor: mode guards and garbage cursors get fix hints", async () => {
+    const both = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      cursor: "abc",
+      offset: 2,
+    });
+    assert.ok(!both.ok && /not both/.test(both.errorText), both.errorText);
+
+    const first = await mcp(p.mcpToken, "query_entries", { collection: "trips", limit: 1 });
+    const withOrder = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      cursor: first.value.nextCursor,
+      orderBy: { field: "price", dir: "asc" },
+    });
+    assert.ok(!withOrder.ok && /default .*ordering/.test(withOrder.errorText), withOrder.errorText);
+
+    const garbage = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      cursor: "not-a-cursor",
+    });
+    assert.ok(!garbage.ok && /invalid cursor/.test(garbage.errorText), garbage.errorText);
+  });
+
   it("delivery ?select= trims public rows; private select is 422", async () => {
     const r = await delivery(p.deliveryToken, "/trips?select=title&sort=price:asc");
     assert.equal(r.status, 200);
