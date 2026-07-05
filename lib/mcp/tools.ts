@@ -21,6 +21,7 @@ import {
 import { getProject } from "@/lib/admin";
 import { listAssets, deleteAsset } from "@/lib/r2";
 import { listDeliveries } from "@/lib/webhook";
+import { listAuditLog } from "@/lib/audit";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
 import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
@@ -389,6 +390,25 @@ export const TOOL_DEFS: ToolDef[] = [
         collection: { type: "string" },
         status: { type: "string", enum: ["success", "failed"] },
         event: { type: "string" },
+        limit: { type: "number" },
+        offset: { type: "number" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_audit_log",
+    description:
+      "Read the entry audit trail (newest first): who changed what, from which surface. Each " +
+      "row: {entryId, collection, action: create|update|delete, actor: {type: mcp|admin|delivery, " +
+      "userId?}, changedFields, createdAt}. Optional filters: collection (slug), entryId, action. " +
+      "Supports limit/offset (default 20, max 200); returns {audit, limit, offset, hasMore, nextOffset}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        entryId: { type: "string" },
+        action: { type: "string", enum: ["create", "update", "delete"] },
         limit: { type: "number" },
         offset: { type: "number" },
       },
@@ -796,6 +816,44 @@ export async function callTool(
             attempts: Number(r.attempts),
             lastError: r.lastError,
             payload: r.payload,
+            createdAt: r.createdAt,
+          })),
+          limit,
+          offset,
+          hasMore,
+          nextOffset: hasMore ? offset + limit : null,
+        });
+      }
+
+      case "get_audit_log": {
+        const a = z
+          .object({
+            collection: z.string().optional(),
+            entryId: z.string().optional(),
+            action: z.enum(["create", "update", "delete"]).optional(),
+            limit: z.number().optional(),
+            offset: z.number().optional(),
+          })
+          .parse(rawArgs ?? {});
+        const limit = Math.max(1, Math.min(a.limit ?? 20, 200));
+        const offset = Math.max(0, a.offset ?? 0);
+        // Audit rows key on the collection slug (they outlive the collection),
+        // so an unknown slug is not an error — it just matches nothing.
+        const rows = await listAuditLog(projectId, {
+          collectionName: a.collection,
+          entryId: a.entryId,
+          action: a.action,
+          limit,
+          offset,
+        });
+        const hasMore = rows.length > limit;
+        return ok({
+          audit: rows.slice(0, limit).map((r) => ({
+            entryId: r.entryId,
+            collection: r.collectionName,
+            action: r.action,
+            actor: r.actor,
+            changedFields: r.changedFields,
             createdAt: r.createdAt,
           })),
           limit,

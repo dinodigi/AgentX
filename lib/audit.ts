@@ -1,5 +1,6 @@
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, type AuditActor } from "@/db/schema";
+import { auditLog, type AuditActor, type AuditLogRow } from "@/db/schema";
 
 /**
  * Light audit trail: one row per entry mutation, recording which surface
@@ -25,4 +26,30 @@ export function recordAudit(opts: {
       changedFields: opts.changedFields ?? null,
     })
     .catch(() => {});
+}
+
+export interface AuditFilter {
+  collectionName?: string;
+  entryId?: string;
+  action?: "create" | "update" | "delete";
+  limit: number;
+  offset: number;
+}
+
+/** Newest-first page of the audit trail, limit+1 probe row included. */
+export async function listAuditLog(
+  projectId: string,
+  f: AuditFilter,
+): Promise<AuditLogRow[]> {
+  const conditions = [eq(auditLog.projectId, projectId)];
+  if (f.collectionName) conditions.push(eq(auditLog.collectionName, f.collectionName));
+  if (f.entryId) conditions.push(eq(auditLog.entryId, f.entryId));
+  if (f.action) conditions.push(eq(auditLog.action, f.action));
+  return db
+    .select()
+    .from(auditLog)
+    .where(and(...conditions))
+    .orderBy(desc(auditLog.createdAt), desc(auditLog.id))
+    .limit(f.limit + 1)
+    .offset(f.offset);
 }

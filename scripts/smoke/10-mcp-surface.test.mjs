@@ -167,6 +167,44 @@ describe("mcp surface: error codes", () => {
     }
   });
 
+  it("get_audit_log: mutations show up with actor + filters + paging", async () => {
+    await mcp(p.mcpToken, "define_collection", {
+      name: "logs",
+      fields: [{ name: "msg", label: "Msg", type: "text" }],
+    });
+    const e1 = await mcp(p.mcpToken, "create_entry", { collection: "logs", data: { msg: "a" } });
+    await mcp(p.mcpToken, "update_entry", {
+      collection: "logs",
+      id: e1.value.id,
+      data: { msg: "b" },
+    });
+    await mcp(p.mcpToken, "delete_entry", { collection: "logs", id: e1.value.id });
+
+    // Audit writes are fire-and-forget, so poll until all three rows land.
+    const full = await waitFor(async () => {
+      const r = await mcp(p.mcpToken, "get_audit_log", { collection: "logs" });
+      return r.ok && r.value.audit.length >= 3 ? r.value : null;
+    });
+    assert.ok(full, "expected 3 audit rows for logs");
+    assert.deepEqual(
+      full.audit.map((r) => r.action),
+      ["delete", "update", "create"], // newest first
+    );
+    assert.ok(full.audit.every((r) => r.actor.type === "mcp" && r.entryId === e1.value.id));
+    assert.deepEqual(full.audit[1].changedFields, ["msg"]);
+
+    const updates = await mcp(p.mcpToken, "get_audit_log", {
+      collection: "logs",
+      action: "update",
+    });
+    assert.equal(updates.value.audit.length, 1);
+
+    const page = await mcp(p.mcpToken, "get_audit_log", { collection: "logs", limit: 2 });
+    assert.equal(page.value.audit.length, 2);
+    assert.equal(page.value.hasMore, true);
+    assert.equal(page.value.nextOffset, 2);
+  });
+
   it("scope rejection carries E_SCOPE; GET exposes the code registry", async () => {
     const r = await mcp(p.deliveryToken, "list_collections", {});
     assert.ok(!r.ok && /\[E_SCOPE\]/.test(r.errorText), r.errorText);
