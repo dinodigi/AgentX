@@ -81,7 +81,7 @@ export async function exportProject(projectId: string): Promise<ProjectManifest>
     getProject(projectId),
     listCollections(projectId),
   ]);
-  if (!project) throw new ValidationError("project not found");
+  if (!project) throw new ValidationError("project not found", "E_NOT_FOUND");
 
   return {
     version: 1,

@@ -124,6 +124,7 @@ async function validateAccessAndEvents(
     if (all.some((a) => a.type === "email") && !(await getConnector(projectId, "resend"))) {
       throw new ValidationError(
         "events: email actions need the Resend connector — connect it in project settings first",
+        "E_CONNECTOR_REQUIRED",
       );
     }
   }

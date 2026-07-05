@@ -25,6 +25,7 @@ import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
 import { exportEntries } from "@/lib/export";
 import { formatZodError } from "@/lib/validation";
+import type { ErrorCode } from "@/lib/error-codes";
 
 /**
  * The MCP tool surface. Terse on purpose — the brief values terseness over
@@ -459,13 +460,13 @@ export interface ToolResult {
 function ok(data: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
-function err(message: string): ToolResult {
-  return { content: [{ type: "text", text: `Error: ${message}` }], isError: true };
+function err(message: string, code: ErrorCode): ToolResult {
+  return { content: [{ type: "text", text: `Error [${code}]: ${message}` }], isError: true };
 }
 
 async function mustCollection(projectId: string, name: string) {
   const c = await getCollection(projectId, name);
-  if (!c) throw new ValidationError(`collection "${name}" not found`);
+  if (!c) throw new ValidationError(`collection "${name}" not found`, "E_NOT_FOUND");
   return c;
 }
 
@@ -496,7 +497,7 @@ export async function callTool(
           getAuthConfig(projectId),
           listConnectorRows(projectId),
         ]);
-        if (!project) return err("project not found");
+        if (!project) return err("project not found", "E_NOT_FOUND");
         return ok({
           project: {
             name: project.name,
@@ -547,6 +548,7 @@ export async function callTool(
         if (!result.applied) {
           return ok({
             requiresConfirmation: true,
+            code: "E_CONFIRM_REQUIRED",
             plan: result.diff,
             hint: result.hint,
           });
@@ -591,17 +593,19 @@ export async function callTool(
           .object({ name: z.string(), confirm: z.boolean().optional() })
           .parse(rawArgs);
         const plan = await planDeleteCollection(projectId, a.name);
-        if (!plan) return err(`collection "${a.name}" not found`);
+        if (!plan) return err(`collection "${a.name}" not found`, "E_NOT_FOUND");
         if (plan.inboundRelations.length > 0) {
           return err(
             `blocked: relation fields still target "${a.name}": ` +
               plan.inboundRelations.map((r) => `${r.collection}.${r.field}`).join(", ") +
               ". Redefine those collections without these fields first.",
+            "E_BLOCKED",
           );
         }
         if (!a.confirm) {
           return ok({
             requiresConfirmation: true,
+            code: "E_CONFIRM_REQUIRED",
             plan: { wouldDeleteEntries: plan.entryCount },
             hint: "re-run with confirm: true to delete permanently",
           });
@@ -651,7 +655,7 @@ export async function callTool(
         const a = z.object({ collection: z.string(), id: z.string() }).parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         const row = await getEntry(c, a.id);
-        if (!row) return err(`no entry ${a.id} in "${a.collection}"`);
+        if (!row) return err(`no entry ${a.id} in "${a.collection}"`, "E_NOT_FOUND");
         const [resolved] = await resolveRefsForRead(projectId, c, [row]);
         return ok({ id: resolved.id, data: resolved.data });
       }
@@ -707,6 +711,9 @@ export async function callTool(
           .object({ manifest: z.record(z.unknown()), confirm: z.boolean().optional() })
           .parse(rawArgs);
         const result = await importProject(projectId, a.manifest, a.confirm ?? false);
+        if (result.pendingPlans.length > 0) {
+          return ok({ ...result, code: "E_CONFIRM_REQUIRED" });
+        }
         return ok(result);
       }
 
@@ -722,11 +729,11 @@ export async function callTool(
       }
 
       default:
-        return err(`unknown tool "${name}"`);
+        return err(`unknown tool "${name}"`, "E_UNKNOWN_TOOL");
     }
   } catch (e) {
-    if (e instanceof z.ZodError) return err(formatZodError(e));
-    if (e instanceof ValidationError) return err(e.message);
-    return err(e instanceof Error ? e.message : String(e));
+    if (e instanceof z.ZodError) return err(formatZodError(e), "E_VALIDATION");
+    if (e instanceof ValidationError) return err(e.message, e.code);
+    return err(e instanceof Error ? e.message : String(e), "E_INTERNAL");
   }
 }

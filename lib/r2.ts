@@ -90,7 +90,7 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
     .from(assets)
     .where(and(eq(assets.id, assetId), eq(assets.projectId, projectId)))
     .limit(1);
-  if (!asset) throw new ValidationError(`asset ${assetId} not found`);
+  if (!asset) throw new ValidationError(`asset ${assetId} not found`, "E_NOT_FOUND");
 
   const [ref] = await db
     .select({ n: sql<number>`count(*)` })
@@ -101,6 +101,7 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
   if (Number(ref.n) > 0) {
     throw new ValidationError(
       `blocked: ${ref.n} entries still reference asset ${assetId} — clear those fields first`,
+      "E_BLOCKED",
     );
   }
 

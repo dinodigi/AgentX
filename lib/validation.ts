@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { FIELD_TYPES, type FieldDef } from "./field-types";
+import type { ErrorCode } from "./error-codes";
 
 /**
  * The validation core — the single guard that keeps an AI (or a public form)
@@ -25,9 +26,11 @@ const NAME_RE = /^[a-z][a-z0-9_]*$/;
 
 /** Thrown for any agent-repairable input problem; message doubles as the fix hint. */
 export class ValidationError extends Error {
-  constructor(message: string) {
+  readonly code: ErrorCode;
+  constructor(message: string, code: ErrorCode = "E_VALIDATION") {
     super(message);
     this.name = "ValidationError";
+    this.code = code;
   }
 }
 

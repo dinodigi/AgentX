@@ -176,7 +176,7 @@ export async function updateEntry(
       .limit(1)
       .then((rows) => rows[0]),
   ]);
-  if (!current) throw new ValidationError(`entry ${id} not found`);
+  if (!current) throw new ValidationError(`entry ${id} not found`, "E_NOT_FOUND");
 
   const merged = { ...current.data, ...patch };
   const [row] = await db

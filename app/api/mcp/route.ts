@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { bearerFrom, resolveToken } from "@/lib/tokens";
 import { TOOL_DEFS, callTool } from "@/lib/mcp/tools";
+import { ERROR_CODES } from "@/lib/error-codes";
 
 /**
  * MCP endpoint (Streamable HTTP, JSON responses). ONE server for all projects —
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
   }
   if (info.scope !== "mcp") {
     return new Response(
-      "Unauthorized: this token is delivery-scoped (public read/write only). MCP needs an mcp-scoped token.",
+      "Unauthorized [E_SCOPE]: this token is delivery-scoped (public read/write only). MCP needs an mcp-scoped token.",
       { status: 401 },
     );
   }
@@ -97,5 +98,6 @@ export async function GET(req: NextRequest) {
     authenticated: info?.scope === "mcp",
     scope: info?.scope ?? null,
     tools: TOOL_DEFS.map((t) => t.name),
+    errorCodes: ERROR_CODES,
   });
 }
