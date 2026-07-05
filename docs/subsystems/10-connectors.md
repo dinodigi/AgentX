@@ -1,14 +1,15 @@
-# 10 · Connectors (grade B-)
+# 10 · Connectors — ungated items done 2026-07-05; rest is platform-phase
 
 Purpose: BYO infrastructure — the control-plane bet. Encrypted secrets, Clerk
 + Resend, health checks exist. Most of what remains is platform-phase work.
 
 ## Sub-features
 
-- [ ] **Secret rotation UX** (S) — replace-in-place with old-value grace
-      window; today rotation = retype and hope.
-- [ ] **Dashboard health badges** (S) — connector status dots on the studio
-      project cards; a dead issuer should be visible before a client hits it.
+- [x] **Secret rotation UX** (S) — ✅ rotate-with-validation: the candidate
+      key is probed against the live provider BEFORE the old key is replaced
+      (Rotate-key flow in the connector card). Old key kept on any failure.
+- [x] **Dashboard health badges** (S) — ✅ connector status dots on the studio
+      project cards; a dead issuer is visible before a client hits it.
 - [ ] **Scheduled health checks** (S, post-deploy) — cron the existing probe;
       flip status + surface failures in the delivery log.
 - [ ] **OAuth connect flows** (M/L, platform-gated) — "Connect Clerk" as a
