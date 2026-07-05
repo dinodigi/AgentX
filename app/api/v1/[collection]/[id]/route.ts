@@ -12,6 +12,7 @@ import {
 } from "@/lib/entries";
 import { matchesClauses } from "@/lib/query";
 import { gateRead, gateMutate } from "@/lib/access-rules";
+import { CORS_HEADERS, preflight } from "@/lib/cors";
 
 /**
  * Single-entry delivery endpoints (Phase 4).
@@ -54,7 +55,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   }
 
   const [resolved] = await resolveRefsForRead(projectId, collection, [entry]);
-  return Response.json({ data: toPublicView(collection, resolved) });
+  return corsJson({ data: toPublicView(collection, resolved) });
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
@@ -83,9 +84,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   }
 
   try {
-    const updated = await updateEntry(projectId, collection, id, body);
+    const updated = await updateEntry(projectId, collection, id, body, {
+      type: "delivery",
+      userSub: gate.user?.id,
+    });
     const [resolved] = await resolveRefsForRead(projectId, collection, [updated]);
-    return Response.json({ data: toPublicView(collection, resolved) });
+    return corsJson({ data: toPublicView(collection, resolved) });
   } catch (e) {
     if (e instanceof ValidationError) return err(422, e.message);
     throw e;
@@ -104,10 +108,21 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   const gate = await gateMutate(projectId, collection, req.headers.get("x-user-token"), entry.data);
   if (!gate.ok) return err(gate.status, gate.error);
 
-  await deleteEntry(collection, id);
-  return new Response(null, { status: 204 });
+  await deleteEntry(collection, id, { type: "delivery", userSub: gate.user?.id });
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
 }
 
 function err(status: number, error: string) {
-  return Response.json({ error }, { status });
+  return corsJson({ error }, { status });
+}
+
+export function OPTIONS() {
+  return preflight();
+}
+
+function corsJson(body: unknown, init?: ResponseInit) {
+  return Response.json(body, {
+    ...init,
+    headers: { ...CORS_HEADERS, ...(init?.headers ?? {}) },
+  });
 }

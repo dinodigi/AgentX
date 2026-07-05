@@ -26,6 +26,8 @@ export const projects = pgTable("projects", {
   name: text("name").notNull(),
   /** Branding handed to the client: { displayName, logoUrl, primaryColor, ... } */
   branding: jsonb("branding").$type<Branding>().notNull().default({}),
+  /** Signs outgoing webhooks (X-AgentX-Signature); revealed to operators in settings. */
+  webhookSigningSecret: text("webhook_signing_secret"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -43,6 +45,8 @@ export const projectTokens = pgTable(
     tokenHash: text("token_hash").notNull(),
     scope: text("scope").notNull().default("mcp"),
     label: text("label"),
+    /** ≤5-min granularity (token cache TTL); null = never used. */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("project_tokens_hash_idx").on(t.tokenHash)],
@@ -181,6 +185,31 @@ export const webhookDeliveries = pgTable(
   },
   (t) => [index("webhook_deliveries_project_idx").on(t.projectId)],
 );
+
+/** Who changed what: one row per entry mutation, from any surface. */
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    collectionName: text("collection_name").notNull(),
+    entryId: uuid("entry_id").notNull(),
+    action: text("action").notNull(), // 'create' | 'update' | 'delete'
+    actor: jsonb("actor").$type<AuditActor>().notNull().default({ type: "unknown" }),
+    changedFields: jsonb("changed_fields").$type<string[]>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("audit_log_project_time_idx").on(t.projectId, t.createdAt)],
+);
+
+/** Which surface performed a mutation, and as whom. */
+export type AuditActor =
+  | { type: "mcp" }
+  | { type: "admin"; userId?: string }
+  | { type: "delivery"; userSub?: string }
+  | { type: "unknown" };
 
 /** Uploaded file metadata; bytes live in R2 under `r2Key`. */
 export const assets = pgTable("assets", {

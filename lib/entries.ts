@@ -4,6 +4,10 @@ import { entries, assets, collections, type Collection, type Entry } from "@/db/
 import { buildEntrySchema, formatZodError, ValidationError, type RefCheck } from "./validation";
 import { buildWhere, buildOrderBy, type WhereClause, type OrderByClause } from "./query";
 import { emitEntryEvent } from "./events";
+import { recordAudit } from "./audit";
+import type { AuditActor } from "@/db/schema";
+
+const UNKNOWN_ACTOR: AuditActor = { type: "unknown" };
 import type { FieldDef } from "./field-types";
 import { z } from "zod";
 
@@ -109,7 +113,7 @@ export async function createEntry(
   projectId: string,
   collection: Collection,
   data: unknown,
-  opts: { idempotencyKey?: string } = {},
+  opts: { idempotencyKey?: string; actor?: AuditActor } = {},
 ): Promise<Entry> {
   const clean = validate(collection.fields, data, false);
   const { refChecks } = buildEntrySchema(collection.fields);
@@ -127,6 +131,14 @@ export async function createEntry(
     .returning();
   if (row) {
     void emitEntryEvent(collection, "created", { id: row.id, data: row.data });
+    recordAudit({
+      projectId,
+      collectionName: collection.name,
+      entryId: row.id,
+      action: "create",
+      actor: opts.actor ?? UNKNOWN_ACTOR,
+      changedFields: Object.keys(clean),
+    });
     return row;
   }
 
@@ -149,6 +161,7 @@ export async function updateEntry(
   collection: Collection,
   id: string,
   data: unknown,
+  actor: AuditActor = UNKNOWN_ACTOR,
 ): Promise<Entry> {
   const patch = validate(collection.fields, data, true);
   const { refChecks } = buildEntrySchema(collection.fields, true);
@@ -172,15 +185,36 @@ export async function updateEntry(
     .where(eq(entries.id, id))
     .returning();
   void emitEntryEvent(collection, "updated", { id: row.id, data: row.data });
+  recordAudit({
+    projectId,
+    collectionName: collection.name,
+    entryId: row.id,
+    action: "update",
+    actor,
+    changedFields: Object.keys(patch),
+  });
   return row;
 }
 
-export async function deleteEntry(collection: Collection, id: string): Promise<void> {
+export async function deleteEntry(
+  collection: Collection,
+  id: string,
+  actor: AuditActor = UNKNOWN_ACTOR,
+): Promise<void> {
   const [row] = await db
     .delete(entries)
     .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
     .returning();
-  if (row) void emitEntryEvent(collection, "deleted", { id: row.id, data: row.data });
+  if (row) {
+    void emitEntryEvent(collection, "deleted", { id: row.id, data: row.data });
+    recordAudit({
+      projectId: collection.projectId,
+      collectionName: collection.name,
+      entryId: row.id,
+      action: "delete",
+      actor,
+    });
+  }
 }
 
 export async function getEntry(collection: Collection, id: string): Promise<Entry | null> {
@@ -223,6 +257,7 @@ export async function bulkCreateEntries(
   projectId: string,
   collection: Collection,
   items: unknown[],
+  actor: AuditActor = UNKNOWN_ACTOR,
 ): Promise<BulkItemResult[]> {
   if (items.length > 100) throw new ValidationError("max 100 entries per bulk call");
   const { refChecks } = buildEntrySchema(collection.fields);
@@ -251,6 +286,14 @@ export async function bulkCreateEntries(
     valid.forEach((v, i) => {
       results.push({ index: v.index, ok: true, id: rows[i].id });
       void emitEntryEvent(collection, "created", { id: rows[i].id, data: rows[i].data });
+      recordAudit({
+        projectId,
+        collectionName: collection.name,
+        entryId: rows[i].id,
+        action: "create",
+        actor,
+        changedFields: Object.keys(v.clean),
+      });
     });
   }
   return results.sort((a, b) => a.index - b.index);

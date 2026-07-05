@@ -615,6 +615,7 @@ export async function callTool(
         const c = await mustCollection(projectId, a.collection);
         const e = await createEntry(projectId, c, a.data, {
           idempotencyKey: a.idempotencyKey,
+          actor: { type: "mcp" },
         });
         return ok({ id: e.id, data: e.data });
       }
@@ -622,14 +623,14 @@ export async function callTool(
       case "update_entry": {
         const a = updateArgs.parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
-        const e = await updateEntry(projectId, c, a.id, a.data);
+        const e = await updateEntry(projectId, c, a.id, a.data, { type: "mcp" });
         return ok({ id: e.id, data: e.data });
       }
 
       case "delete_entry": {
         const a = updateArgs.omit({ data: true }).parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
-        await deleteEntry(c, a.id);
+        await deleteEntry(c, a.id, { type: "mcp" });
         return ok({ deleted: a.id });
       }
 
@@ -666,7 +667,7 @@ export async function callTool(
           .object({ collection: z.string(), entries: z.array(z.record(z.unknown())).max(100) })
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
-        const results = await bulkCreateEntries(projectId, c, a.entries);
+        const results = await bulkCreateEntries(projectId, c, a.entries, { type: "mcp" });
         const created = results.filter((r) => r.ok).length;
         return ok({ created, failed: results.length - created, results });
       }

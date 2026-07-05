@@ -32,6 +32,17 @@ export default async function ApiReference({
         — issued by this project&apos;s connected Clerk instance.
       </p>
 
+      <div className="card mb-6 max-w-2xl p-4">
+        <p className="mb-1 text-sm font-medium">Verifying webhooks</p>
+        <p className="text-xs leading-relaxed text-[--color-ink-mute]">
+          Every webhook carries{" "}
+          <code className="font-mono">X-AgentX-Signature: t=&lt;unix&gt;,v1=&lt;hex&gt;</code>{" "}
+          where <code className="font-mono">v1 = HMAC_SHA256(secret, t + &quot;.&quot; + body)</code>.
+          Recompute with the signing secret from Settings, compare constant-time, and
+          reject stale timestamps (&gt;5 min).
+        </p>
+      </div>
+
       {collections.length === 0 && (
         <p className="rounded-lg border border-[--color-line] p-4 text-sm text-[--color-ink-mute]">
           No collections defined yet.

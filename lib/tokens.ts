@@ -41,6 +41,12 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
         .where(eq(projectTokens.tokenHash, hash))
         .limit(1);
       if (!rows[0]) return null;
+      // Cache-miss path = first sighting in ≥TTL — cheap last-used heartbeat.
+      void db
+        .update(projectTokens)
+        .set({ lastUsedAt: new Date() })
+        .where(eq(projectTokens.tokenHash, hash))
+        .catch(() => {});
       return { projectId: rows[0].projectId, scope: rows[0].scope as TokenInfo["scope"] };
     },
     ["token-v2", hash],

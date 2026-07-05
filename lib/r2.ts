@@ -32,7 +32,20 @@ export interface UploadInput {
   bytes: Buffer;
 }
 
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const ALLOWED_TYPE_PREFIXES = ["image/", "application/pdf", "text/plain", "text/csv", "application/json"];
+
 export async function uploadAsset(input: UploadInput): Promise<Asset> {
+  if (input.bytes.length > MAX_UPLOAD_BYTES) {
+    throw new ValidationError(
+      `file too large: ${input.bytes.length} bytes (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)`,
+    );
+  }
+  if (!ALLOWED_TYPE_PREFIXES.some((p) => input.contentType.startsWith(p))) {
+    throw new ValidationError(
+      `content type "${input.contentType}" not allowed — allowed: ${ALLOWED_TYPE_PREFIXES.join(", ")}`,
+    );
+  }
   const key = `${input.projectId}/${randomUUID()}/${sanitize(input.filename)}`;
   await client().send(
     new PutObjectCommand({

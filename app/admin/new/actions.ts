@@ -1,5 +1,6 @@
 "use server";
 
+import { randomBytes } from "node:crypto";
 import { db } from "@/db";
 import { projects, projectTokens, projectMembers } from "@/db/schema";
 import { generateToken, hashToken } from "@/lib/tokens";
@@ -27,7 +28,11 @@ export async function createProject(formData: FormData): Promise<CreateProjectRe
 
   const [project] = await db
     .insert(projects)
-    .values({ name, branding: { displayName: name, primaryColor: color } })
+    .values({
+      name,
+      branding: { displayName: name, primaryColor: color },
+      webhookSigningSecret: randomBytes(32).toString("hex"),
+    })
     .returning();
 
   const raw = generateToken();

@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { getCollection } from "@/lib/collections";
-import { getProjectRole } from "@/lib/access";
+import { getProjectRole, getViewer } from "@/lib/access";
 import { createEntry, updateEntry, deleteEntry, ValidationError } from "@/lib/entries";
 import { coerceFormData } from "@/lib/admin-form";
 
@@ -25,11 +25,14 @@ export async function saveEntry(
 
   const data = coerceFormData(collection.fields, formData);
 
+  const viewer = await getViewer();
+  const actor = { type: "admin" as const, userId: viewer?.userId };
+
   try {
     if (entryId) {
-      await updateEntry(projectId, collection, entryId, data);
+      await updateEntry(projectId, collection, entryId, data, actor);
     } else {
-      await createEntry(projectId, collection, data);
+      await createEntry(projectId, collection, data, { actor });
     }
   } catch (e) {
     if (e instanceof ValidationError) return { error: e.message };
@@ -52,6 +55,7 @@ export async function deleteEntryAction(
   const collection = await getCollection(projectId, collectionName);
   if (!collection) return { error: "collection not found" };
 
-  await deleteEntry(collection, entryId);
+  const viewer = await getViewer();
+  await deleteEntry(collection, entryId, { type: "admin", userId: viewer?.userId });
   redirect(`/admin/${projectId}/${collectionName}`);
 }

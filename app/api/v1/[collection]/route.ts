@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { bearerFrom, resolveProjectId } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
 import { rateLimit } from "@/lib/ratelimit";
+import { CORS_HEADERS, preflight } from "@/lib/cors";
 import { gateRead, gateCreate, stampOwner } from "@/lib/access-rules";
 import {
   createEntry,
@@ -49,7 +50,7 @@ export async function GET(
 
   // Identity gate (Phase 4): public / authenticated / owner.
   const gate = await gateRead(projectId, collection, req.headers.get("x-user-token"));
-  if (!gate.ok) return Response.json({ error: gate.error }, { status: gate.status });
+  if (!gate.ok) return corsJson({ error: gate.error }, { status: gate.status });
 
   const url = new URL(req.url);
   const limit = Number(url.searchParams.get("limit") ?? 100);
@@ -62,7 +63,7 @@ export async function GET(
     if (key === "limit" || key === "offset" || key === "sort") continue;
     const field = pub.find((f) => f.name === key);
     if (!field) {
-      return Response.json(
+      return corsJson(
         {
           error: `unknown or non-public filter field "${key}" — filterable: ${pub.map((f) => f.name).join(", ")}`,
         },
@@ -77,7 +78,7 @@ export async function GET(
   if (sort) {
     const [field, dir = "asc"] = sort.split(":");
     if (!pub.some((f) => f.name === field) || (dir !== "asc" && dir !== "desc")) {
-      return Response.json(
+      return corsJson(
         { error: `sort must be "<public-field>:asc|desc" — sortable: ${pub.map((f) => f.name).join(", ")}` },
         { status: 422 },
       );
@@ -95,10 +96,10 @@ export async function GET(
     const rows = await queryEntries(collection, { limit, offset, where: effectiveWhere, orderBy });
     const resolved = await resolveRefsForRead(projectId, collection, rows);
     const data = resolved.map((e) => toPublicView(collection, e));
-    return Response.json({ data });
+    return corsJson({ data });
   } catch (e) {
     if (e instanceof ValidationError) {
-      return Response.json({ error: e.message }, { status: 422 });
+      return corsJson({ error: e.message }, { status: 422 });
     }
     throw e;
   }
@@ -121,12 +122,12 @@ export async function POST(
 
   // Identity gate: anonymous forms (publicWrite) or authenticated/owner creates.
   const gate = await gateCreate(projectId, collection, req.headers.get("x-user-token"));
-  if (!gate.ok) return Response.json({ error: gate.error }, { status: gate.status });
+  if (!gate.ok) return corsJson({ error: gate.error }, { status: gate.status });
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
   const limit = rateLimit(`${projectId}:${ip}`);
   if (!limit.allowed) {
-    return Response.json(
+    return corsJson(
       { error: "too many submissions — try again shortly" },
       { status: 429, headers: { "retry-after": String(limit.retryAfterSec) } },
     );
@@ -136,7 +137,7 @@ export async function POST(
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
+    return corsJson({ error: "invalid JSON body" }, { status: 400 });
   }
 
   try {
@@ -147,19 +148,32 @@ export async function POST(
       body && typeof body === "object" && !Array.isArray(body)
         ? stampOwner(collection, gate.user, body as Record<string, unknown>)
         : body;
-    const entry = await createEntry(projectId, collection, data);
-    return Response.json({ id: entry.id }, { status: 201 });
+    const entry = await createEntry(projectId, collection, data, {
+      actor: { type: "delivery", userSub: gate.user?.id },
+    });
+    return corsJson({ id: entry.id }, { status: 201 });
   } catch (e) {
     if (e instanceof ValidationError) {
-      return Response.json({ error: e.message }, { status: 422 });
+      return corsJson({ error: e.message }, { status: 422 });
     }
-    return Response.json({ error: "internal error" }, { status: 500 });
+    return corsJson({ error: "internal error" }, { status: 500 });
   }
 }
 
 function unauthorized() {
-  return Response.json({ error: "invalid or missing project token" }, { status: 401 });
+  return corsJson({ error: "invalid or missing project token" }, { status: 401 });
 }
 function notFound() {
-  return Response.json({ error: "not found" }, { status: 404 });
+  return corsJson({ error: "not found" }, { status: 404 });
+}
+
+export function OPTIONS() {
+  return preflight();
+}
+
+function corsJson(body: unknown, init?: ResponseInit) {
+  return Response.json(body, {
+    ...init,
+    headers: { ...CORS_HEADERS, ...(init?.headers ?? {}) },
+  });
 }

@@ -28,9 +28,10 @@ function mintTokenRow() {
 /** Project + mcp/delivery tokens via direct SQL; destroy() cascades everything. */
 export async function createEphemeralProject(label) {
   const name = `smoke ${label} ${Date.now()}`;
+  const signingSecret = randomBytes(32).toString("hex");
   const [project] = await sql`
-    INSERT INTO projects (name, branding)
-    VALUES (${name}, ${JSON.stringify({ displayName: name, primaryColor: "#0f766e" })}::jsonb)
+    INSERT INTO projects (name, branding, webhook_signing_secret)
+    VALUES (${name}, ${JSON.stringify({ displayName: name, primaryColor: "#0f766e" })}::jsonb, ${signingSecret})
     RETURNING id`;
   const mcp = mintTokenRow();
   const delivery = mintTokenRow();
@@ -41,10 +42,22 @@ export async function createEphemeralProject(label) {
     id: project.id,
     mcpToken: mcp.raw,
     deliveryToken: delivery.raw,
+    signingSecret,
     destroy: async () => {
       await sql`DELETE FROM projects WHERE id = ${project.id}`;
     },
   };
+}
+
+export async function queryAudit(projectId) {
+  return sql`SELECT action, actor, changed_fields, entry_id FROM audit_log
+    WHERE project_id = ${projectId} ORDER BY created_at`;
+}
+
+export async function tokenLastUsed(rawToken) {
+  const hash = createHash("sha256").update(rawToken).digest("hex");
+  const [row] = await sql`SELECT last_used_at FROM project_tokens WHERE token_hash = ${hash}`;
+  return row?.last_used_at ?? null;
 }
 
 /** Call an MCP tool; returns { ok, value?, errorText? }. */
@@ -131,14 +144,15 @@ export async function connectClerk(projectId, issuer) {
     ON CONFLICT (project_id, type) DO UPDATE SET config = EXCLUDED.config`;
 }
 
-/** Local webhook receiver capturing POST bodies — deterministic, no httpbin. */
+/** Local webhook receiver capturing POST bodies + headers — deterministic, no httpbin. */
 export async function startWebhookReceiver() {
   const received = [];
   const server = http.createServer((req, res) => {
     let data = "";
     req.on("data", (c) => (data += c));
     req.on("end", () => {
-      received.push(JSON.parse(data || "{}"));
+      // Parsed payload at top level (event tests), raw body+headers for signature tests.
+      received.push({ ...JSON.parse(data || "{}"), raw: { headers: req.headers, body: data } });
       res.writeHead(200);
       res.end("ok");
     });

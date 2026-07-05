@@ -5,6 +5,7 @@
  * Usage: npm run seed -- "Currents Demo" "#0f766e"
  */
 import "dotenv/config";
+import { randomBytes } from "node:crypto";
 import { db } from "@/db";
 import { projects, projectTokens } from "@/db/schema";
 import { generateToken, hashToken } from "@/lib/tokens";
@@ -17,6 +18,7 @@ async function main() {
     .insert(projects)
     .values({
       name,
+      webhookSigningSecret: randomBytes(32).toString("hex"),
       branding: { displayName: name, primaryColor: color },
     })
     .returning();

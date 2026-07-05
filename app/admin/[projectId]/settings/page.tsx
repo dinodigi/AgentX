@@ -1,10 +1,10 @@
 import { notFound } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { projectTokens, projectMembers, webhookDeliveries } from "@/db/schema";
+import { projects, projectTokens, projectMembers, webhookDeliveries } from "@/db/schema";
 import { getProjectRole } from "@/lib/access";
 import { listCollections } from "@/lib/collections";
-import { TokensSection, WebhookForm, MembersSection } from "./sections";
+import { TokensSection, WebhookForm, MembersSection, SecretReveal } from "./sections";
 
 /**
  * Settings tab: tokens, webhooks, members, manifest, delivery log.
@@ -19,7 +19,7 @@ export default async function SettingsPage({
   const role = await getProjectRole(projectId);
   if (role !== "operator") notFound();
 
-  const [collections, tokens, members, deliveries] = await Promise.all([
+  const [collections, tokens, members, deliveries, projectRow] = await Promise.all([
     listCollections(projectId),
     db
       .select({
@@ -27,6 +27,7 @@ export default async function SettingsPage({
         label: projectTokens.label,
         scope: projectTokens.scope,
         createdAt: projectTokens.createdAt,
+        lastUsedAt: projectTokens.lastUsedAt,
       })
       .from(projectTokens)
       .where(eq(projectTokens.projectId, projectId)),
@@ -37,6 +38,12 @@ export default async function SettingsPage({
       .where(eq(webhookDeliveries.projectId, projectId))
       .orderBy(desc(webhookDeliveries.createdAt))
       .limit(15),
+    db
+      .select({ secret: projects.webhookSigningSecret })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1)
+      .then((r) => r[0]),
   ]);
 
   const formCollections = collections.filter((c) => c.publicWrite);
@@ -59,8 +66,18 @@ export default async function SettingsPage({
             label: t.label,
             scope: t.scope,
             createdAt: t.createdAt.toISOString(),
+            lastUsedAt: t.lastUsedAt?.toISOString() ?? null,
           }))}
         />
+      </section>
+
+      <section className="mb-9">
+        <h2 className="section-label mb-1">Webhook signing secret</h2>
+        <p className="mb-3 max-w-md text-sm text-[--color-ink-mute]">
+          Outgoing webhooks carry <code className="font-mono text-xs">X-AgentX-Signature</code> —
+          receivers verify with this secret (see the API reference).
+        </p>
+        <SecretReveal secret={projectRow?.secret ?? ""} />
       </section>
 
       <section className="mb-9">

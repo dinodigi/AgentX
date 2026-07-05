@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Copy, Trash2 } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, Trash2 } from "lucide-react";
 import { McpSnippet } from "@/components/McpSnippet";
 import {
   updateBranding,
@@ -83,12 +83,60 @@ export function BrandingForm({
   );
 }
 
+export function SecretReveal({ secret }: { secret: string }) {
+  const [shown, setShown] = useState(false);
+  const [copied, setCopied] = useState(false);
+  if (!secret) return <p className="card max-w-md p-4 text-sm text-[--color-ink-mute]">No secret generated yet.</p>;
+
+  return (
+    <div className="card flex max-w-md items-center gap-2 p-3">
+      <code className="min-w-0 flex-1 truncate font-mono text-xs">
+        {shown ? secret : "•".repeat(40)}
+      </code>
+      <button
+        type="button"
+        aria-label={shown ? "Hide secret" : "Show secret"}
+        onClick={() => setShown(!shown)}
+        className="rounded p-1.5 text-[--color-ink-mute] hover:bg-[--color-paper]"
+      >
+        {shown ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+      <button
+        type="button"
+        onClick={async () => {
+          await navigator.clipboard.writeText(secret);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }}
+        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[--color-line] px-2 py-1 text-xs hover:bg-[--color-paper]"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
+function lastUsedLabel(iso: string | null): string {
+  if (!iso) return "never used";
+  const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+  if (mins < 60) return `used ${mins}m ago`;
+  if (mins < 60 * 24) return `used ${Math.round(mins / 60)}h ago`;
+  return `used ${new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
+}
+
 export function TokensSection({
   projectId,
   tokens,
 }: {
   projectId: string;
-  tokens: { id: string; label: string | null; scope: string; createdAt: string }[];
+  tokens: {
+    id: string;
+    label: string | null;
+    scope: string;
+    createdAt: string;
+    lastUsedAt: string | null;
+  }[];
 }) {
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -107,8 +155,8 @@ export function TokensSection({
               <span className="font-mono text-xs text-[--color-ink-mute]">agx_••••••••</span>
               <span className="truncate">{t.label ?? "untitled"}</span>
               <span className={`chip ${t.scope === "mcp" ? "chip-brand" : "chip-mute"}`}>{t.scope}</span>
-              <span className="ml-auto text-xs text-[--color-ink-mute]">
-                {new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              <span className="ml-auto whitespace-nowrap text-xs text-[--color-ink-mute]" title="≤5 min granularity">
+                {lastUsedLabel(t.lastUsedAt)}
               </span>
               <button
                 type="button"

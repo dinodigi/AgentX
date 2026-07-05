@@ -85,13 +85,12 @@ Three pillars:
 ## Part 3 — The gap plan
 
 ### Round A — Trust (all local, no deploy)
-- [ ] A1 Automated smoke suite (`npm run smoke`) — codify every hand battery:
-      validation, privacy projection, identity gates, events, rate limits
-- [ ] A2 Data export — entries dump (JSON/CSV) per collection + tool + admin button
-- [ ] A3 Webhook HMAC signatures (X-AgentX-Signature)
-- [ ] A4 CORS policy on /v1 (configurable per project later; permissive-read first)
+- [x] A1 Automated smoke suite — ✅ 2026-07-05: 38 tests / 8 files, `npm run verify`
+- [x] A2 Data export — ✅ 2026-07-05: export_entries tool + admin CSV/JSON + runbook
+- [x] A3 Webhook HMAC signatures — ✅ 2026-07-05
+- [x] A4 CORS policy on /v1 — ✅ 2026-07-05 (permissive; per-project allowlist later)
 - [ ] A5 `get_deliveries` tool — agents debug their own webhooks/emails
-- [ ] A6 Light audit log (entry writes: who/when/what via which surface)
+- [x] A6 Light audit log — ✅ 2026-07-05 (write-only; UI in subsystem 07)
 
 ### Round B — First-app completeness
 - [ ] B1 `get_client_code` — generated typed TS client from live schema
