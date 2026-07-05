@@ -45,6 +45,16 @@ composes schemas from these, never invents types. Defined once in
    (`npm run seed -- "Name" "#color"` still works as a CLI alternative.)
 6. Copy `.mcp.json.example` → `.mcp.json`, paste the token, and connect from Claude Code.
 
+## Before committing
+
+```
+npm run verify   # typecheck + smoke suite (needs the dev server running)
+```
+
+The smoke suite (`npm run smoke`) runs ~38 integration assertions against
+localhost:3000 using ephemeral projects — real data is never touched. See
+docs/runbooks/backup-restore.md for the backup story.
+
 ## Access model
 
 - **Platform operators** (`ADMIN_EMAILS`) open every project.

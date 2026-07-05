@@ -5,18 +5,14 @@ hand-driven curl; there is no export, no CI, no metering.
 
 ## Sub-features
 
-- [ ] **Smoke suite** (M) — `npm run smoke`: scripted batteries for validation
-      guards, privacy projection, identity gates (bundles a mock-issuer
-      helper), events + delivery log, rate limits, token scopes. Exits non-zero
-      on any failure. THE prerequisite for everything else.
-- [ ] **Ephemeral test project** (S) — suite creates + destroys its own project
-      so runs never touch real data.
-- [ ] **Data export** (S) — `export_entries(collection, format: json|csv)` tool
-      + download button in admin. The client's "can I get my data out?" answer.
-- [ ] **Pre-commit gate** (S) — typecheck + smoke wired into a `verify` script;
-      document the habit (no GitHub CI until there's a remote).
-- [ ] **Backup story doc** (S) — Neon PITR + manifest + entries export = full
-      recovery; write the runbook.
+- [x] **Smoke suite** (M) — ✅ 2026-07-05: 8 files, 38 tests, `npm run smoke`;
+      regression-catching proven by sabotage test.
+- [x] **Ephemeral test project** (S) — ✅ per-file project, cascade destroy.
+- [x] **Data export** (S) — ✅ export_entries tool (json/csv, 5k cap) + admin
+      CSV/JSON buttons + covered in suite.
+- [x] **Pre-commit gate** (S) — ✅ `npm run verify` + README habit note.
+- [x] **Backup story doc** (S) — ✅ docs/runbooks/backup-restore.md (documents
+      the id-remapping limitation → future import-with-ids item).
 - [ ] **Serverless readiness** (M, deploy-gated) — event emits via after()/queue
       instead of void promises; pluggable rate-limit store interface.
 - [ ] **Usage metering** (M, platform-gated) — per-project request/storage

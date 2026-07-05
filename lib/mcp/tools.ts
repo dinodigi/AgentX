@@ -23,6 +23,7 @@ import { listAssets, deleteAsset } from "@/lib/r2";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
 import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
+import { exportEntries } from "@/lib/export";
 import { formatZodError } from "@/lib/validation";
 
 /**
@@ -320,6 +321,22 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: { id: { type: "string" } },
       required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "export_entries",
+    description:
+      "Export a collection's entry DATA (raw values — relations/assets stay ids so mappings " +
+      "survive re-import). json or csv, capped at 5000 rows with a truncated flag. Pairs with " +
+      "export_project (schema) for full portability/backup.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        format: { type: "string", enum: ["json", "csv"] },
+      },
+      required: ["collection"],
       additionalProperties: false,
     },
   },
@@ -671,6 +688,14 @@ export async function callTool(
         const a = z.object({ id: z.string() }).parse(rawArgs);
         await deleteAsset(projectId, a.id);
         return ok({ deleted: a.id });
+      }
+
+      case "export_entries": {
+        const a = z
+          .object({ collection: z.string(), format: z.enum(["json", "csv"]).optional() })
+          .parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        return ok(await exportEntries(c, a.format ?? "json"));
       }
 
       case "export_project":

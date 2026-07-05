@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Download, Plus } from "lucide-react";
 import { getCollection } from "@/lib/collections";
 import { queryEntries, countEntries, resolveRefsForRead } from "@/lib/entries";
 import type { FieldDef } from "@/lib/field-types";
@@ -54,7 +54,24 @@ export default async function CollectionEntries({
             />
           </form>
         )}
-        <Link href={`/admin/${projectId}/${name}/new`} className="btn btn-primary ml-auto">
+        <a
+          href={`/api/admin/export-entries?projectId=${projectId}&collection=${name}&format=csv`}
+          className="btn ml-auto"
+          title="Download all entries as CSV"
+          download
+        >
+          <Download className="h-4 w-4" />
+          CSV
+        </a>
+        <a
+          href={`/api/admin/export-entries?projectId=${projectId}&collection=${name}&format=json`}
+          className="btn"
+          title="Download all entries as JSON"
+          download
+        >
+          JSON
+        </a>
+        <Link href={`/admin/${projectId}/${name}/new`} className="btn btn-primary">
           <Plus className="h-4 w-4" />
           New entry
         </Link>
