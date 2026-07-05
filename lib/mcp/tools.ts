@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FIELD_TYPE_SPECS } from "@/lib/field-types";
+import { FIELD_TYPE_SPECS, COMMON_FIELD_CONFIG } from "@/lib/field-types";
 import {
   getCollection,
   listCollections,
@@ -109,10 +109,12 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "define_collection",
     description:
       "Create or update a collection (a data model). `fields` is an array of field " +
-      "defs, each: {name, label, type, required?, publicRead?} plus type-specific config " +
-      "(enum:options[], relation:{targetCollection,labelField}). Instantly manageable in " +
-      "the admin; no per-project UI code. Public fields are served by the delivery API " +
-      "(see get_project_info). Set publicWrite:true + webhookUrl for a form. " +
+      "defs, each: {name, label, type, required?, publicRead?} plus constraints " +
+      "(unique? on text/number — DB-enforced; min/max? = value bounds on number, LENGTH " +
+      "bounds on text/richtext; requiredIf?: {field, equals} against a sibling enum) and " +
+      "type-specific config (enum:options[], relation:{targetCollection,labelField}). " +
+      "Instantly manageable in the admin; no per-project UI code. Public fields are served " +
+      "by the delivery API (see get_project_info). Set publicWrite:true + webhookUrl for a form. " +
       "Redefining an existing collection with dropped/retyped fields returns a diff plan " +
       `and requires confirm:true (affected entries are counted, not silently orphaned). ${BOUNDARIES}`,
     inputSchema: {
@@ -628,7 +630,7 @@ export async function callTool(
         });
       }
       case "list_field_types":
-        return ok(FIELD_TYPE_SPECS);
+        return ok({ commonConfig: COMMON_FIELD_CONFIG, types: FIELD_TYPE_SPECS });
 
       case "define_collection": {
         const a = defineArgs.parse(rawArgs);

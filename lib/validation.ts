@@ -45,6 +45,11 @@ const fieldDefSchema = z
     type: z.enum(FIELD_TYPES),
     required: z.boolean().optional(),
     publicRead: z.boolean().optional(),
+    // constraints (subsystem 05), validated per type by superRefine below
+    unique: z.boolean().optional(),
+    min: z.number().optional(),
+    max: z.number().optional(),
+    requiredIf: z.object({ field: z.string(), equals: z.string() }).strict().optional(),
     // type-specific, validated by superRefine below
     options: z.array(z.string().min(1)).optional(),
     targetCollection: z.string().regex(NAME_RE).optional(),
@@ -70,6 +75,21 @@ const fieldDefSchema = z
         message: "targetCollection/labelField are only valid on relation fields",
       });
     }
+    if (f.unique && f.type !== "text" && f.type !== "number") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "unique is only valid on text/number fields",
+      });
+    }
+    if ((f.min !== undefined || f.max !== undefined) && !["text", "richtext", "number"].includes(f.type)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "min/max are only valid on text/richtext (length) and number (value) fields",
+      });
+    }
+    if (f.min !== undefined && f.max !== undefined && f.min > f.max) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "min must be <= max" });
+    }
   });
 
 /** Meta-schema: a full fields[] array with no duplicate names. */
@@ -83,6 +103,22 @@ export const fieldsSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `duplicate field name: ${f.name}` });
       }
       seen.add(f.name);
+    }
+    // requiredIf must point at a sibling enum field and one of its options.
+    for (const f of fields) {
+      if (!f.requiredIf) continue;
+      const target = fields.find((x) => x.name === f.requiredIf!.field);
+      if (!target || target.type !== "enum" || f.requiredIf.field === f.name) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${f.name}.requiredIf.field must name a sibling enum field`,
+        });
+      } else if (!target.options?.includes(f.requiredIf.equals)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${f.name}.requiredIf.equals "${f.requiredIf.equals}" is not an option of "${target.name}" (${target.options?.join(", ")})`,
+        });
+      }
     }
   });
 
@@ -111,10 +147,18 @@ export function validateFieldDefs(fields: unknown): FieldDef[] {
 function valueSchemaFor(field: FieldDef): z.ZodTypeAny {
   switch (field.type) {
     case "text":
-    case "richtext":
-      return z.string();
-    case "number":
-      return z.number();
+    case "richtext": {
+      let s = z.string();
+      if (field.min !== undefined) s = s.min(field.min, `must be at least ${field.min} characters`);
+      if (field.max !== undefined) s = s.max(field.max, `must be at most ${field.max} characters`);
+      return s;
+    }
+    case "number": {
+      let n = z.number();
+      if (field.min !== undefined) n = n.min(field.min, `must be >= ${field.min}`);
+      if (field.max !== undefined) n = n.max(field.max, `must be <= ${field.max}`);
+      return n;
+    }
     case "boolean":
       return z.boolean();
     case "date":
@@ -168,8 +212,26 @@ export function buildEntrySchema(fields: FieldDef[], partial = false): CompiledS
   }
 
   // .strict() => unknown keys are rejected, so an AI can't stash arbitrary data.
-  const schema = z.object(shape).strict() as unknown as z.ZodType<Record<string, unknown>>;
-  return { schema, refChecks };
+  let schema: z.ZodTypeAny = z.object(shape).strict();
+
+  // Conditional requireds hold at create time only, like `required`.
+  const conditionals = fields.filter((f) => f.requiredIf);
+  if (conditionals.length > 0 && !partial) {
+    schema = schema.superRefine((data: Record<string, unknown>, ctx) => {
+      for (const f of conditionals) {
+        const cond = f.requiredIf!;
+        if (data[cond.field] === cond.equals && data[f.name] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [f.name],
+            message: `required when ${cond.field} = "${cond.equals}"`,
+          });
+        }
+      }
+    });
+  }
+
+  return { schema: schema as z.ZodType<Record<string, unknown>>, refChecks };
 }
 
 /** Flatten a ZodError into a compact, AI-legible string. */

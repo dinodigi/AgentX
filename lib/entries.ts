@@ -109,6 +109,21 @@ function validate(
   }
 }
 
+/** Full searchable text of a DB error (message + constraint name if exposed). */
+function dbErrorText(e: unknown): string {
+  const constraint = String((e as { constraint?: string }).constraint ?? "");
+  return (e instanceof Error ? e.message : String(e)) + " " + constraint;
+}
+
+/** Map partial-unique-index violations (23505) to agent-repairable errors. */
+function rethrowUnique(e: unknown): never {
+  const m = /entries_uq_[0-9a-f]{8}_([a-z][a-z0-9_]*)/.exec(dbErrorText(e));
+  if (m) {
+    throw new ValidationError(`${m[1]}: value already exists — this field is unique`);
+  }
+  throw e;
+}
+
 export async function createEntry(
   projectId: string,
   collection: Collection,
@@ -119,16 +134,22 @@ export async function createEntry(
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
 
-  const [row] = await db
-    .insert(entries)
-    .values({
-      projectId,
-      collectionId: collection.id,
-      data: clean,
-      idempotencyKey: opts.idempotencyKey ?? null,
-    })
-    .onConflictDoNothing()
-    .returning();
+  // Conflicts are handled explicitly (not onConflictDoNothing) so an
+  // idempotency replay and a unique-field violation stay distinguishable.
+  let row: Entry | undefined;
+  try {
+    [row] = await db
+      .insert(entries)
+      .values({
+        projectId,
+        collectionId: collection.id,
+        data: clean,
+        idempotencyKey: opts.idempotencyKey ?? null,
+      })
+      .returning();
+  } catch (e) {
+    if (!/entries_idempotency_idx/.test(dbErrorText(e))) rethrowUnique(e);
+  }
   if (row) {
     void emitEntryEvent(collection, "created", { id: row.id, data: row.data });
     recordAudit({
@@ -179,11 +200,16 @@ export async function updateEntry(
   if (!current) throw new ValidationError(`entry ${id} not found`, "E_NOT_FOUND");
 
   const merged = { ...current.data, ...patch };
-  const [row] = await db
-    .update(entries)
-    .set({ data: merged, updatedAt: new Date() })
-    .where(eq(entries.id, id))
-    .returning();
+  let row: Entry;
+  try {
+    [row] = await db
+      .update(entries)
+      .set({ data: merged, updatedAt: new Date() })
+      .where(eq(entries.id, id))
+      .returning();
+  } catch (e) {
+    rethrowUnique(e);
+  }
   void emitEntryEvent(collection, "updated", { id: row.id, data: row.data });
   recordAudit({
     projectId,
@@ -277,12 +303,19 @@ export async function bulkCreateEntries(
   );
 
   if (valid.length > 0) {
-    const rows = await db
-      .insert(entries)
-      .values(
-        valid.map((v) => ({ projectId, collectionId: collection.id, data: v.clean })),
-      )
-      .returning();
+    // One multi-row insert; a unique violation fails the whole batch with the
+    // field named, rather than paying a round-trip per item.
+    let rows: Entry[];
+    try {
+      rows = await db
+        .insert(entries)
+        .values(
+          valid.map((v) => ({ projectId, collectionId: collection.id, data: v.clean })),
+        )
+        .returning();
+    } catch (e) {
+      rethrowUnique(e);
+    }
     valid.forEach((v, i) => {
       results.push({ index: v.index, ok: true, id: rows[i].id });
       void emitEntryEvent(collection, "created", { id: rows[i].id, data: rows[i].data });

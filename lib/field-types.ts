@@ -31,6 +31,16 @@ interface FieldBase {
    * This is the per-field granularity the brief asks for.
    */
   publicRead?: boolean;
+  /**
+   * Value must be unique within the collection (text/number only). Enforced by
+   * a partial DB index, so concurrent writers can't race past it.
+   */
+  unique?: boolean;
+  /** Numbers: min/max VALUE. text/richtext: min/max LENGTH. */
+  min?: number;
+  max?: number;
+  /** Required only when a sibling enum field holds a specific option (create-time). */
+  requiredIf?: { field: string; equals: string };
 }
 
 export interface TextField extends FieldBase {
@@ -83,9 +93,18 @@ export const FIELD_TYPE_SPECS: Record<
   FieldType,
   { summary: string; config: string[] }
 > = {
-  text: { summary: "Single-line or short plain text.", config: [] },
-  richtext: { summary: "Formatted long-form body content (stored as HTML/markdown).", config: [] },
-  number: { summary: "Numeric value (int or float).", config: [] },
+  text: {
+    summary: "Single-line or short plain text.",
+    config: ["unique?: boolean", "min/max?: number (LENGTH bounds)"],
+  },
+  richtext: {
+    summary: "Formatted long-form body content (stored as HTML/markdown).",
+    config: ["min/max?: number (LENGTH bounds)"],
+  },
+  number: {
+    summary: "Numeric value (int or float).",
+    config: ["unique?: boolean", "min/max?: number (VALUE bounds)"],
+  },
   boolean: { summary: "True/false toggle.", config: [] },
   date: { summary: "ISO-8601 date/datetime.", config: [] },
   enum: { summary: "One value from a fixed option list.", config: ["options: string[] (required)"] },
@@ -95,3 +114,10 @@ export const FIELD_TYPE_SPECS: Record<
     config: ["targetCollection: string (required)", "labelField: string (required)"],
   },
 };
+
+/** Constraint knobs available on every field, shown by list_field_types. */
+export const COMMON_FIELD_CONFIG = [
+  "required?: boolean (create-time)",
+  'requiredIf?: {field, equals} — required only when a sibling ENUM field equals an option (create-time)',
+  "publicRead?: boolean (delivery visibility)",
+];

@@ -166,6 +166,52 @@ async function countEntriesWithKeys(collectionId: string, keys: string[]): Promi
   return rows[0]?.n ?? 0;
 }
 
+/**
+ * `unique` fields are backed by partial unique indexes on entries, so
+ * concurrent writers can't race past validation. The first 8 uuid hex chars
+ * keep names inside Postgres's 63-char identifier cap (collision across
+ * collections would need matching uuid prefixes AND field names — accepted).
+ */
+function uniqueIndexName(collectionId: string, field: string): string {
+  return `entries_uq_${collectionId.replaceAll("-", "").slice(0, 8)}_${field}`.slice(0, 63);
+}
+
+async function syncUniqueIndexes(
+  collectionId: string,
+  oldFields: FieldDef[],
+  newFields: FieldDef[],
+): Promise<void> {
+  const oldUnique = new Set(oldFields.filter((f) => f.unique).map((f) => f.name));
+  const newUnique = new Set(newFields.filter((f) => f.unique).map((f) => f.name));
+
+  for (const name of oldUnique) {
+    if (!newUnique.has(name)) {
+      await db.execute(sql.raw(`DROP INDEX IF EXISTS "${uniqueIndexName(collectionId, name)}"`));
+    }
+  }
+  for (const name of newUnique) {
+    if (oldUnique.has(name)) continue;
+    try {
+      // Field names are meta-validated snake_case and the id comes from the DB,
+      // so inlining them into DDL is safe (DDL can't take bind parameters).
+      await db.execute(
+        sql.raw(
+          `CREATE UNIQUE INDEX IF NOT EXISTS "${uniqueIndexName(collectionId, name)}" ` +
+            `ON entries ((data->>'${name}')) WHERE collection_id = '${collectionId}'`,
+        ),
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if ((e as { code?: string }).code === "23505" || msg.includes("could not create unique index")) {
+        throw new ValidationError(
+          `cannot enable unique on "${name}": existing entries already contain duplicate values — deduplicate them first`,
+        );
+      }
+      throw e;
+    }
+  }
+}
+
 export type DefineResult =
   | { applied: true; collection: Collection; diff?: SchemaDiff }
   | { applied: false; requiresConfirmation: true; diff: SchemaDiff; hint: string };
@@ -219,6 +265,12 @@ export async function defineCollection(
     }
   }
 
+  // Sync indexes BEFORE persisting the definition: if enabling unique fails on
+  // existing duplicates, the stored schema must not claim a constraint the DB
+  // doesn't enforce. (New collections sync after insert — they have no rows,
+  // so index creation cannot fail.)
+  if (current) await syncUniqueIndexes(current.id, current.fields, fields);
+
   const values = {
     projectId,
     name,
@@ -249,6 +301,8 @@ export async function defineCollection(
       },
     })
     .returning();
+
+  if (!current) await syncUniqueIndexes(row.id, [], fields);
 
   revalidateTag(collectionsTag(projectId));
   return { applied: true, collection: row, diff };
@@ -290,9 +344,12 @@ export async function planDeleteCollection(
 
 /** Delete a collection and (via cascade) its entries. Caller enforces the plan. */
 export async function deleteCollection(projectId: string, name: string): Promise<void> {
+  const target = await getCollection(projectId, name);
   await db
     .delete(collections)
     .where(and(eq(collections.projectId, projectId), eq(collections.name, name)));
+  // Partial unique indexes on entries outlive the cascade — drop them explicitly.
+  if (target) await syncUniqueIndexes(target.id, target.fields, []);
   revalidateTag(collectionsTag(projectId));
 }
 
