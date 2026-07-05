@@ -30,14 +30,14 @@ export function NewProjectForm() {
 
   if (result?.token) {
     return (
-      <div className="rounded-xl border border-gray-200 p-5">
+      <div className="card p-5">
         <div className="mb-4 flex items-center gap-2">
           <CircleCheck className="h-5 w-5" style={{ color }} />
           <p className="font-medium">Project created</p>
         </div>
 
-        <p className="mb-1.5 text-sm text-gray-500">MCP token</p>
-        <div className="mb-3 flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+        <p className="mb-1.5 text-sm text-[--color-ink-mute]">MCP token</p>
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-[--color-line] bg-[--color-paper] px-3 py-2">
           <code className="min-w-0 flex-1 truncate font-mono text-sm">{result.token}</code>
           <button
             type="button"
@@ -46,7 +46,7 @@ export function NewProjectForm() {
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
             }}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs hover:bg-gray-100"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[--color-line] px-2 py-1 text-xs hover:bg-[--color-paper]"
           >
             {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? "Copied" : "Copy"}
@@ -63,7 +63,7 @@ export function NewProjectForm() {
 
         <Link
           href={`/admin/${result.projectId}`}
-          className="inline-block rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700"
+          className="btn btn-ink"
         >
           Open project
         </Link>
@@ -72,7 +72,7 @@ export function NewProjectForm() {
   }
 
   return (
-    <form action={onSubmit} className="rounded-xl border border-gray-200 p-5">
+    <form action={onSubmit} className="card p-5">
       <label className="mb-1.5 block text-sm font-medium" htmlFor="name">
         Name
       </label>
@@ -80,7 +80,7 @@ export function NewProjectForm() {
         id="name"
         name="name"
         placeholder="Acme Landscaping"
-        className="mb-4 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-200"
+        className="mb-4 w-full rounded-lg border border-[--color-line] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-200"
       />
 
       <p className="mb-1.5 text-sm font-medium">Brand color</p>
@@ -103,7 +103,7 @@ export function NewProjectForm() {
           type="color"
           value={color}
           onChange={(e) => setColor(e.target.value)}
-          className="h-7 w-9 cursor-pointer rounded border border-gray-200"
+          className="h-7 w-9 cursor-pointer rounded border border-[--color-line]"
           aria-label="Custom color"
         />
       </div>
@@ -114,7 +114,7 @@ export function NewProjectForm() {
       <button
         type="submit"
         disabled={pending}
-        className="w-full rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-60"
+        className="btn btn-ink w-full justify-center disabled:opacity-60"
       >
         {pending ? "Creating…" : "Create project"}
       </button>

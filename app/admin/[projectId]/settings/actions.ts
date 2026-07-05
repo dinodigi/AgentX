@@ -140,7 +140,7 @@ export async function saveConnector(
     if (!existing?.secretEnc) return { error: `${spec.secretLabel} is required` };
   }
   await upsertConnector(projectId, type, config, secret || undefined);
-  revalidatePath(`/admin/${projectId}/settings`);
+  revalidatePath(`/admin/${projectId}/connectors`);
   return {};
 }
 
@@ -152,7 +152,7 @@ export async function disconnectConnector(
   if (denied) return { error: denied };
   const { removeConnector } = await import("@/lib/connectors");
   await removeConnector(projectId, type);
-  revalidatePath(`/admin/${projectId}/settings`);
+  revalidatePath(`/admin/${projectId}/connectors`);
   return {};
 }
 
@@ -164,7 +164,7 @@ export async function testConnector(
   if (denied) return { error: denied };
   const { checkConnectorHealth } = await import("@/lib/connectors");
   const result = await checkConnectorHealth(projectId, type);
-  revalidatePath(`/admin/${projectId}/settings`);
+  revalidatePath(`/admin/${projectId}/connectors`);
   return result;
 }
 

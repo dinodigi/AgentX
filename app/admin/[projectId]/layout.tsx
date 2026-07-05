@@ -7,10 +7,9 @@ import { listCollections } from "@/lib/collections";
 import { Sidebar } from "@/components/Sidebar";
 
 /**
- * The branded workspace shell. Fetches project + collections once (both
- * cached), sets the per-project --brand CSS variable so every brand-* Tailwind
- * utility inside reskins to this project, and renders the sidebar from the
- * schema registry.
+ * The branded workspace shell: ink rail + paper canvas. The per-project
+ * --brand CSS variable set here is the single saturated color in the room —
+ * every brand-* utility inside reskins to this project.
  */
 export default async function ProjectLayout({
   params,
@@ -33,7 +32,7 @@ export default async function ProjectLayout({
 
   return (
     <div
-      className="flex min-h-screen bg-white"
+      className="flex min-h-screen"
       style={{ "--brand": brand } as CSSProperties}
     >
       <Sidebar
@@ -47,11 +46,11 @@ export default async function ProjectLayout({
         }))}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-center justify-between border-b border-gray-200 px-6 py-3">
-          <span className="text-sm text-gray-400">{displayName}</span>
+        <header className="flex items-center justify-between border-b border-[--color-line] px-8 py-3">
+          <span className="eyebrow">{displayName}</span>
           <UserButton />
         </header>
-        <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-6">{children}</main>
+        <main className="page-enter mx-auto w-full max-w-4xl flex-1 px-8 py-8">{children}</main>
       </div>
     </div>
   );

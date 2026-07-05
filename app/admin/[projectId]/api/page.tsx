@@ -17,23 +17,23 @@ export default async function ApiReference({
 
   return (
     <>
-      <h1 className="mb-1 text-lg font-medium">API reference</h1>
-      <p className="mb-2 text-sm text-gray-500">
+      <h1 className="display mb-1 text-xl font-semibold">API reference</h1>
+      <p className="mb-2 text-sm text-[--color-ink-mute]">
         All requests need a project token (use a delivery-scoped one in sites):{" "}
-        <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs">
+        <code className="rounded bg-[--color-paper] px-1.5 py-0.5 font-mono text-xs">
           Authorization: Bearer agx_…
         </code>
       </p>
-      <p className="mb-6 text-sm text-gray-500">
+      <p className="mb-6 text-sm text-[--color-ink-mute]">
         Collections with access rules also need the signed-in user&apos;s JWT:{" "}
-        <code className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-xs">
+        <code className="rounded bg-[--color-paper] px-1.5 py-0.5 font-mono text-xs">
           X-User-Token: &lt;jwt&gt;
         </code>{" "}
         — issued by this project&apos;s connected Clerk instance.
       </p>
 
       {collections.length === 0 && (
-        <p className="rounded-lg border border-gray-200 p-4 text-sm text-gray-400">
+        <p className="rounded-lg border border-[--color-line] p-4 text-sm text-[--color-ink-mute]">
           No collections defined yet.
         </p>
       )}
@@ -53,7 +53,7 @@ function Method({ verb, tone }: { verb: string; tone: "get" | "post" | "mut" }) 
       ? "bg-brand-soft text-brand-strong"
       : tone === "post"
         ? "bg-amber-50 text-amber-800"
-        : "bg-gray-100 text-gray-700";
+        : "bg-[--color-paper] text-[--color-ink-soft]";
   return (
     <span className={`mr-2 rounded px-1.5 py-0.5 font-mono text-xs font-medium ${cls}`}>
       {verb}
@@ -71,26 +71,26 @@ function CollectionDocs({ collection }: { collection: Collection }) {
   );
 
   return (
-    <div className="rounded-xl border border-gray-200 p-4">
+    <div className="card p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <p className="font-medium">{collection.displayName}</p>
         {read !== "public" && (
-          <span className="rounded-full bg-brand-soft px-2 py-0.5 text-xs text-brand-strong">
+          <span className="chip chip-brand">
             read: {read}
           </span>
         )}
         {write !== "none" && (
-          <span className="rounded-full bg-brand-soft px-2 py-0.5 text-xs text-brand-strong">
+          <span className="chip chip-brand">
             write: {write}
           </span>
         )}
         {collection.publicFilter?.length ? (
-          <span className="rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-500">
+          <span className="chip chip-mute">
             row filter: {collection.publicFilter.map((f) => `${f.field} ${f.op} ${f.value}`).join(", ")}
           </span>
         ) : null}
         {eventCount > 0 && (
-          <span className="rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-500">
+          <span className="chip chip-mute">
             {eventCount} event action{eventCount > 1 ? "s" : ""}
           </span>
         )}
@@ -102,7 +102,7 @@ function CollectionDocs({ collection }: { collection: Collection }) {
             <Method verb="GET" tone="get" />
             <code className="font-mono text-sm">/api/v1/{collection.name}</code>
           </p>
-          <p className="mb-2 text-xs text-gray-500">
+          <p className="mb-2 text-xs text-[--color-ink-mute]">
             Public fields only{read === "owner" ? ", scoped to the signed-in user's rows" : ""}.
             Relations → <code className="font-mono">{"{id,label}"}</code>, assets →{" "}
             <code className="font-mono">{"{id,url}"}</code>. Filters:{" "}
@@ -110,17 +110,17 @@ function CollectionDocs({ collection }: { collection: Collection }) {
             <code className="font-mono">?sort={pub[0]?.name}:asc</code> · paging:{" "}
             <code className="font-mono">?limit=&offset=</code>
           </p>
-          <pre className="overflow-x-auto rounded-lg bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-700">
+          <pre className="overflow-x-auto rounded-lg bg-[--color-paper] p-3 font-mono text-xs leading-relaxed text-[--color-ink-soft]">
             {sampleResponse(pub)}
           </pre>
-          <p className="mt-1.5 text-xs text-gray-500">
+          <p className="mt-1.5 text-xs text-[--color-ink-mute]">
             <Method verb="GET" tone="get" />
             <code className="font-mono">/api/v1/{collection.name}/{"{id}"}</code> — single entry,
             same rules.
           </p>
         </div>
       ) : (
-        <p className="mb-4 text-xs text-gray-400">
+        <p className="mb-4 text-xs text-[--color-ink-mute]">
           No public fields — this collection is not readable from the delivery API.
         </p>
       )}
@@ -131,7 +131,7 @@ function CollectionDocs({ collection }: { collection: Collection }) {
             <Method verb="POST" tone="post" />
             <code className="font-mono text-sm">/api/v1/{collection.name}</code>
           </p>
-          <p className="mb-2 text-xs text-gray-500">
+          <p className="mb-2 text-xs text-[--color-ink-mute]">
             {collection.publicWrite && write === "none"
               ? "Anonymous submissions allowed (public form)."
               : `Requires a signed-in user (X-User-Token)${
@@ -142,14 +142,14 @@ function CollectionDocs({ collection }: { collection: Collection }) {
             Validated server-side; fires event actions. Required:{" "}
             {collection.fields.filter((f) => f.required).map((f) => f.name).join(", ") || "none"}.
           </p>
-          <pre className="overflow-x-auto rounded-lg bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-700">
+          <pre className="overflow-x-auto rounded-lg bg-[--color-paper] p-3 font-mono text-xs leading-relaxed text-[--color-ink-soft]">
             {samplePayload(collection.fields)}
           </pre>
         </div>
       )}
 
       {write === "owner" && (
-        <p className="mt-2 text-xs text-gray-500">
+        <p className="mt-2 text-xs text-[--color-ink-mute]">
           <Method verb="PATCH" tone="mut" />
           <Method verb="DELETE" tone="mut" />
           <code className="font-mono">/api/v1/{collection.name}/{"{id}"}</code> — signed-in owner

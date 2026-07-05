@@ -84,7 +84,15 @@ export const fieldsSchema = z
   });
 
 /** Slugs that collide with admin routes or feel ambiguous in URLs. */
-const RESERVED_NAMES = new Set(["settings", "api", "new", "admin", "v1"]);
+const RESERVED_NAMES = new Set([
+  "settings",
+  "api",
+  "new",
+  "admin",
+  "v1",
+  "appearance",
+  "connectors",
+]);
 
 export const collectionNameSchema = z
   .string()

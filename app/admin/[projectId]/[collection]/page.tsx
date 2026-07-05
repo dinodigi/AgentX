@@ -40,9 +40,9 @@ export default async function CollectionEntries({
 
   return (
     <>
-      <div className="mb-4 flex items-center gap-3">
-        <h1 className="text-lg font-medium">{collection.displayName}</h1>
-        <span className="text-sm text-gray-400">{total} entries</span>
+      <div className="mb-5 flex items-center gap-3">
+        <h1 className="display text-xl font-semibold">{collection.displayName}</h1>
+        <span className="text-sm text-[--color-ink-mute]">{total} entries</span>
         {searchField && (
           <form className="ml-2">
             <input
@@ -50,45 +50,45 @@ export default async function CollectionEntries({
               name="q"
               defaultValue={q ?? ""}
               placeholder={`Search ${searchField.label.toLowerCase()}…`}
-              className="w-48 rounded-lg border border-gray-200 px-3 py-1.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-soft"
+              className="field-input w-48 !py-1.5"
             />
           </form>
         )}
-        <Link
-          href={`/admin/${projectId}/${name}/new`}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-strong"
-        >
+        <Link href={`/admin/${projectId}/${name}/new`} className="btn btn-primary ml-auto">
           <Plus className="h-4 w-4" />
           New entry
         </Link>
       </div>
 
       {rows.length === 0 ? (
-        <div className="rounded-xl border border-gray-200 p-8 text-center text-sm text-gray-500">
+        <div className="card p-10 text-center text-sm text-[--color-ink-mute]">
           {q ? "No matches." : "No entries yet."}
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-200 bg-gray-50 text-left text-xs text-gray-500">
+              <tr className="border-b border-[--color-line] text-left">
                 {cols.map((f) => (
-                  <th key={f.name} className="px-3 py-2 font-medium">
+                  <th key={f.name} className="table-head px-4 py-2.5">
                     {f.label}
                   </th>
                 ))}
-                <th className="px-3 py-2 font-medium">Updated</th>
+                <th className="table-head px-4 py-2.5">Updated</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                <tr
+                  key={r.id}
+                  className="border-b border-[--color-line] transition-colors last:border-0 hover:bg-[--color-brand-wash]"
+                >
                   {cols.map((f, i) => (
-                    <td key={f.name} className="px-3 py-2.5">
+                    <td key={f.name} className="px-4 py-3">
                       {i === 0 ? (
                         <Link
                           href={`/admin/${projectId}/${name}/${r.id}`}
-                          className="font-medium text-gray-900 hover:text-brand-strong"
+                          className="font-medium hover:text-brand-strong"
                         >
                           <Cell field={f} value={r.data[f.name]} />
                         </Link>
@@ -97,7 +97,7 @@ export default async function CollectionEntries({
                       )}
                     </td>
                   ))}
-                  <td className="px-3 py-2.5 text-gray-400">
+                  <td className="px-4 py-3 text-[--color-ink-mute]">
                     {r.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                   </td>
                 </tr>
@@ -110,15 +110,15 @@ export default async function CollectionEntries({
       {pages > 1 && (
         <div className="mt-4 flex items-center gap-3 text-sm">
           {page > 1 && (
-            <Link href={pageHref(page - 1)} className="rounded-lg border border-gray-200 px-3 py-1.5 hover:bg-gray-50">
+            <Link href={pageHref(page - 1)} className="btn">
               ← Prev
             </Link>
           )}
-          <span className="text-gray-400">
+          <span className="text-[--color-ink-mute]">
             Page {page} of {pages}
           </span>
           {page < pages && (
-            <Link href={pageHref(page + 1)} className="rounded-lg border border-gray-200 px-3 py-1.5 hover:bg-gray-50">
+            <Link href={pageHref(page + 1)} className="btn">
               Next →
             </Link>
           )}
@@ -130,18 +130,18 @@ export default async function CollectionEntries({
 
 /** Type-aware cell rendering — one representation per primitive. */
 function Cell({ field, value }: { field: FieldDef; value: unknown }) {
-  if (value == null || value === "") return <span className="text-gray-300">—</span>;
+  if (value == null || value === "") return <span className="text-[--color-line-strong]">—</span>;
 
   switch (field.type) {
     case "boolean":
       return value ? (
-        <span className="rounded-full bg-brand-soft px-2 py-0.5 text-xs text-brand-strong">Yes</span>
+        <span className="chip chip-brand">Yes</span>
       ) : (
-        <span className="rounded-full border border-gray-200 px-2 py-0.5 text-xs text-gray-500">No</span>
+        <span className="chip chip-mute">No</span>
       );
     case "enum":
       return (
-        <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700">
+        <span className="chip chip-mute">
           {String(value)}
         </span>
       );
@@ -150,11 +150,11 @@ function Cell({ field, value }: { field: FieldDef; value: unknown }) {
         value && typeof value === "object" && "label" in value
           ? String((value as { label: unknown }).label)
           : String(value);
-      return <span className="text-gray-600">{label}</span>;
+      return <span className="text-[--color-ink-soft]">{label}</span>;
     }
     case "date":
       return (
-        <span className="text-gray-600">
+        <span className="text-[--color-ink-soft]">
           {new Date(String(value)).toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
@@ -170,7 +170,7 @@ function Cell({ field, value }: { field: FieldDef; value: unknown }) {
       return url && /\.(png|jpe?g|gif|webp|svg)$/i.test(url) ? (
         <img src={url} alt="" className="h-8 w-8 rounded object-cover" />
       ) : (
-        <span className="text-xs text-gray-400">file</span>
+        <span className="text-xs text-[--color-ink-mute]">file</span>
       );
     }
     case "richtext": {

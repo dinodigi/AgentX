@@ -29,7 +29,7 @@ export function DeleteEntryButton({
       className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm ${
         armed
           ? "border-red-600 bg-red-600 text-white"
-          : "border-gray-200 text-gray-500 hover:border-red-200 hover:text-red-600"
+          : "border-[--color-line] text-[--color-ink-mute] hover:border-red-200 hover:text-red-600"
       }`}
     >
       <Trash2 className="h-4 w-4" />

@@ -15,10 +15,8 @@ import {
   testConnector,
 } from "./actions";
 
-const inputClass =
-  "w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-soft";
-const buttonClass =
-  "rounded-lg bg-brand px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-strong disabled:opacity-60";
+const inputClass = "field-input";
+const buttonClass = "btn btn-primary disabled:opacity-60";
 
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
@@ -57,7 +55,7 @@ export function BrandingForm({
         setError(res.error ?? null);
         if (!res.error) setSaved(true);
       }}
-      className="max-w-md rounded-xl border border-gray-200 p-4"
+      className="card max-w-md p-5"
     >
       <label className="mb-1 block text-sm font-medium">Display name</label>
       <input name="displayName" defaultValue={initial.displayName} className={`${inputClass} mb-3`} />
@@ -67,14 +65,14 @@ export function BrandingForm({
         type="color"
         name="primaryColor"
         defaultValue={initial.primaryColor}
-        className="mb-3 h-9 w-14 cursor-pointer rounded border border-gray-200"
+        className="mb-3 h-9 w-14 cursor-pointer rounded border border-[--color-line]"
       />
 
       <label className="mb-1 block text-sm font-medium">Logo</label>
       <input type="hidden" name="logoUrl" value={logoUrl} />
       <div className="mb-3 flex items-center gap-3">
-        {logoUrl && <img src={logoUrl} alt="" className="h-9 w-9 rounded-lg border border-gray-200 object-cover" />}
-        <input type="file" accept="image/*" onChange={onLogoFile} disabled={uploading} className="text-sm text-gray-600" />
+        {logoUrl && <img src={logoUrl} alt="" className="h-9 w-9 rounded-lg border border-[--color-line] object-cover" />}
+        <input type="file" accept="image/*" onChange={onLogoFile} disabled={uploading} className="text-sm text-[--color-ink-soft]" />
       </div>
 
       <button type="submit" className={buttonClass}>
@@ -90,7 +88,7 @@ export function TokensSection({
   tokens,
 }: {
   projectId: string;
-  tokens: { id: string; label: string | null; createdAt: string }[];
+  tokens: { id: string; label: string | null; scope: string; createdAt: string }[];
 }) {
   const [error, setError] = useState<string | null>(null);
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -99,16 +97,17 @@ export function TokensSection({
   const [scope, setScope] = useState<"mcp" | "delivery">("mcp");
 
   return (
-    <div className="max-w-md rounded-xl border border-gray-200 p-4">
+    <div className="card max-w-md p-5">
       {tokens.length === 0 ? (
-        <p className="mb-3 text-sm text-gray-400">No active tokens.</p>
+        <p className="mb-3 text-sm text-[--color-ink-mute]">No active tokens.</p>
       ) : (
-        <ul className="mb-3 divide-y divide-gray-100">
+        <ul className="mb-3 divide-y divide-[--color-line]">
           {tokens.map((t) => (
             <li key={t.id} className="flex items-center gap-2 py-2 text-sm">
-              <span className="font-mono text-xs text-gray-400">agx_••••••••</span>
+              <span className="font-mono text-xs text-[--color-ink-mute]">agx_••••••••</span>
               <span className="truncate">{t.label ?? "untitled"}</span>
-              <span className="ml-auto text-xs text-gray-400">
+              <span className={`chip ${t.scope === "mcp" ? "chip-brand" : "chip-mute"}`}>{t.scope}</span>
+              <span className="ml-auto text-xs text-[--color-ink-mute]">
                 {new Date(t.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
               </span>
               <button
@@ -118,7 +117,7 @@ export function TokensSection({
                   const res = await revokeToken(projectId, t.id);
                   setError(res.error ?? null);
                 }}
-                className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                className="rounded p-1 text-[--color-ink-mute] hover:bg-red-50 hover:text-red-600"
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -129,7 +128,7 @@ export function TokensSection({
 
       {revealed && (
         <div className="mb-3">
-          <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+          <div className="flex items-center gap-2 rounded-lg border border-[--color-line] bg-[--color-paper] px-3 py-2">
             <code className="min-w-0 flex-1 truncate font-mono text-sm">{revealed}</code>
             <button
               type="button"
@@ -138,7 +137,7 @@ export function TokensSection({
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1500);
               }}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs hover:bg-gray-100"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[--color-line] px-2 py-1 text-xs hover:bg-[--color-paper]"
             >
               {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? "Copied" : "Copy"}
@@ -182,7 +181,7 @@ export function TokensSection({
           Mint token
         </button>
       </div>
-      <p className="mt-2 text-xs text-gray-400">
+      <p className="mt-2 text-xs text-[--color-ink-mute]">
         Give the site a delivery-scoped token (public read/write only) — never the
         mcp token, which can change schemas.
       </p>
@@ -213,7 +212,7 @@ export function WebhookForm({
         setError(res.error ?? null);
         if (!res.error) setSaved(true);
       }}
-      className="max-w-md rounded-xl border border-gray-200 p-4"
+      className="card max-w-md p-5"
     >
       <p className="mb-2 text-sm font-medium">{displayName}</p>
       <div className="flex gap-2">
@@ -259,7 +258,7 @@ export function ConnectorCard(p: ConnectorCardProps) {
         setError(res.error ?? null);
         if (!res.error) setNote("Saved");
       }}
-      className="max-w-md rounded-xl border border-gray-200 p-4"
+      className="card max-w-md p-5"
     >
       <div className="mb-3 flex items-center gap-2">
         <span
@@ -269,7 +268,7 @@ export function ConnectorCard(p: ConnectorCardProps) {
         />
         <p className="text-sm font-medium">{p.label}</p>
         {p.connected && (
-          <span className="text-xs text-gray-400">
+          <span className="text-xs text-[--color-ink-mute]">
             {p.status === "connected" ? "connected" : "error"}
           </span>
         )}
@@ -277,13 +276,13 @@ export function ConnectorCard(p: ConnectorCardProps) {
 
       {p.configFields.map((f) => (
         <div key={f.key} className="mb-3">
-          <label className="mb-1 block text-xs text-gray-500">{f.label}</label>
+          <label className="mb-1 block text-xs text-[--color-ink-mute]">{f.label}</label>
           <input name={f.key} defaultValue={p.config[f.key] ?? ""} placeholder={f.placeholder} className={inputClass} />
         </div>
       ))}
       {p.secretLabel && (
         <div className="mb-3">
-          <label className="mb-1 block text-xs text-gray-500">
+          <label className="mb-1 block text-xs text-[--color-ink-mute]">
             {p.secretLabel}
             {p.hasSecret ? " (stored — leave blank to keep)" : ""}
           </label>
@@ -299,7 +298,7 @@ export function ConnectorCard(p: ConnectorCardProps) {
           <>
             <button
               type="button"
-              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm hover:bg-gray-50"
+              className="btn"
               onClick={async () => {
                 setBusy(true);
                 setNote(null);
@@ -313,7 +312,7 @@ export function ConnectorCard(p: ConnectorCardProps) {
             </button>
             <button
               type="button"
-              className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:border-red-200 hover:text-red-600"
+              className="btn btn-danger-ghost"
               onClick={async () => {
                 const res = await disconnectConnector(p.projectId, p.type);
                 setError(res.error ?? null);
@@ -323,7 +322,7 @@ export function ConnectorCard(p: ConnectorCardProps) {
             </button>
           </>
         )}
-        {note && <span className="text-xs text-gray-500">{note}</span>}
+        {note && <span className="text-xs text-[--color-ink-mute]">{note}</span>}
       </div>
       <ErrorLine error={error} />
     </form>
@@ -340,15 +339,15 @@ export function MembersSection({
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <div className="max-w-md rounded-xl border border-gray-200 p-4">
+    <div className="card max-w-md p-5">
       {members.length === 0 ? (
-        <p className="mb-3 text-sm text-gray-400">No members yet — only platform operators can open this project.</p>
+        <p className="mb-3 text-sm text-[--color-ink-mute]">No members yet — only platform operators can open this project.</p>
       ) : (
-        <ul className="mb-3 divide-y divide-gray-100">
+        <ul className="mb-3 divide-y divide-[--color-line]">
           {members.map((m) => (
             <li key={m.id} className="flex items-center gap-2 py-2 text-sm">
               <span className="truncate">{m.email}</span>
-              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">{m.role}</span>
+              <span className="rounded-full bg-[--color-paper] px-2 py-0.5 text-xs text-[--color-ink-soft]">{m.role}</span>
               <button
                 type="button"
                 aria-label="Remove member"
@@ -356,7 +355,7 @@ export function MembersSection({
                   const res = await removeMember(projectId, m.id);
                   setError(res.error ?? null);
                 }}
-                className="ml-auto rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600"
+                className="ml-auto rounded p-1 text-[--color-ink-mute] hover:bg-red-50 hover:text-red-600"
               >
                 <Trash2 className="h-4 w-4" />
               </button>

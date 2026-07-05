@@ -18,7 +18,7 @@ export interface RelationChoice {
 }
 
 const inputClass =
-  "w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-soft";
+  "field-input";
 
 export function EntryForm({
   projectId,
@@ -61,7 +61,7 @@ export function EntryForm({
       <button
         type="submit"
         disabled={pending}
-        className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-strong disabled:opacity-60"
+        className="btn btn-primary disabled:opacity-60"
       >
         {pending ? "Saving…" : "Save"}
       </button>
@@ -71,12 +71,12 @@ export function EntryForm({
 
 function VisibilityPill({ publicRead }: { publicRead?: boolean }) {
   return publicRead ? (
-    <span className="inline-flex items-center gap-1 rounded-full bg-brand-soft px-2 py-0.5 text-[11px] text-brand-strong">
+    <span className="chip chip-brand">
       <Globe className="h-3 w-3" />
       public
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 px-2 py-0.5 text-[11px] text-gray-400">
+    <span className="chip chip-mute">
       <Lock className="h-3 w-3" />
       admin only
     </span>

@@ -9,16 +9,16 @@ export default async function AdminHome() {
 
   return (
     <div className="min-h-screen bg-white">
-      <header className="flex items-center justify-between border-b border-gray-200 px-6 py-3">
+      <header className="flex items-center justify-between border-b border-[--color-line] px-6 py-3">
         <span className="text-sm font-medium">AgentX</span>
         <UserButton />
       </header>
       <main className="mx-auto max-w-4xl px-6 py-8">
         <div className="mb-5 flex items-center">
-          <h1 className="text-lg font-medium">Projects</h1>
+          <h1 className="display text-xl font-semibold">Projects</h1>
           <Link
             href="/admin/new"
-            className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700"
+            className="btn btn-ink ml-auto"
           >
             <Plus className="h-4 w-4" />
             New project
@@ -26,9 +26,9 @@ export default async function AdminHome() {
         </div>
 
         {projects.length === 0 && (
-          <div className="rounded-xl border border-gray-200 p-8 text-center">
+          <div className="card p-8 text-center">
             <p className="font-medium">Start your first project</p>
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-1 text-sm text-[--color-ink-mute]">
               A project gets its own branded admin, MCP token, and delivery API.
             </p>
           </div>
@@ -42,7 +42,7 @@ export default async function AdminHome() {
               <Link
                 key={p.id}
                 href={`/admin/${p.id}`}
-                className="flex items-center gap-3 rounded-xl border border-gray-200 p-4 hover:border-gray-300"
+                className="flex items-center gap-3 card p-4 hover:border-gray-300"
               >
                 {p.branding?.logoUrl ? (
                   <img src={p.branding.logoUrl} alt="" className="h-9 w-9 rounded-lg object-cover" />
@@ -56,7 +56,7 @@ export default async function AdminHome() {
                 )}
                 <div className="min-w-0">
                   <p className="truncate font-medium">{name}</p>
-                  <p className="truncate text-xs text-gray-400">{p.id}</p>
+                  <p className="truncate text-xs text-[--color-ink-mute]">{p.id}</p>
                 </div>
               </Link>
             );

@@ -20,12 +20,12 @@ export default async function NewEntry({
 
   return (
     <>
-      <p className="mb-2 text-sm text-gray-400">
-        <Link href={`/admin/${projectId}/${name}`} className="hover:text-gray-600">
+      <p className="mb-2 text-sm text-[--color-ink-mute]">
+        <Link href={`/admin/${projectId}/${name}`} className="hover:text-[--color-ink-soft]">
           ← {collection.displayName}
         </Link>
       </p>
-      <h1 className="mb-5 text-lg font-medium">New {collection.displayName}</h1>
+      <h1 className="display mb-5 text-xl font-semibold">New {collection.displayName}</h1>
       <div className="max-w-lg">
         <EntryForm
           projectId={projectId}
