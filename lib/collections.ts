@@ -79,6 +79,11 @@ export interface DefineCollectionInput {
     updated?: EventAction[];
     deleted?: EventAction[];
   } | null;
+  /**
+   * Declared field renames: data is backfilled (old key moved to the new key),
+   * so a rename never strands entries the way drop+add would. Types must match.
+   */
+  renames?: { from: string; to: string }[];
   /** Required when redefinition drops or retypes fields (destructive). */
   confirm?: boolean;
 }
@@ -134,6 +139,8 @@ export interface SchemaDiff {
   added: string[];
   removed: string[];
   retyped: { field: string; from: string; to: string }[];
+  /** Declared renames — non-destructive, data is backfilled. */
+  renamed: { from: string; to: string }[];
   /** Entries whose stored data contains a removed/retyped key. */
   affectedEntries: number;
 }
@@ -142,15 +149,67 @@ export interface SchemaDiff {
 export function diffFields(
   oldFields: FieldDef[],
   newFields: FieldDef[],
+  renames: { from: string; to: string }[] = [],
 ): Omit<SchemaDiff, "affectedEntries"> {
+  const renameFroms = new Set(renames.map((r) => r.from));
+  const renameTos = new Set(renames.map((r) => r.to));
   const oldByName = new Map(oldFields.map((f) => [f.name, f]));
   const newNames = new Set(newFields.map((f) => f.name));
-  const added = newFields.filter((f) => !oldByName.has(f.name)).map((f) => f.name);
-  const removed = oldFields.filter((f) => !newNames.has(f.name)).map((f) => f.name);
+  const added = newFields
+    .filter((f) => !oldByName.has(f.name) && !renameTos.has(f.name))
+    .map((f) => f.name);
+  const removed = oldFields
+    .filter((f) => !newNames.has(f.name) && !renameFroms.has(f.name))
+    .map((f) => f.name);
   const retyped = newFields
     .filter((f) => oldByName.has(f.name) && oldByName.get(f.name)!.type !== f.type)
     .map((f) => ({ field: f.name, from: oldByName.get(f.name)!.type, to: f.type }));
-  return { added, removed, retyped };
+  return { added, removed, retyped, renamed: renames };
+}
+
+/** A rename must move an existing field to a same-typed new field, cleanly. */
+function validateRenames(
+  current: Collection | undefined,
+  newFields: FieldDef[],
+  renames: { from: string; to: string }[],
+): void {
+  if (renames.length === 0) return;
+  if (!current) {
+    throw new ValidationError("renames: nothing to rename — this collection doesn't exist yet");
+  }
+  const seen = new Set<string>();
+  for (const r of renames) {
+    if (seen.has(r.from) || seen.has(r.to)) {
+      throw new ValidationError(`renames: "${r.from}" → "${r.to}" overlaps another rename`);
+    }
+    seen.add(r.from).add(r.to);
+
+    const oldField = current.fields.find((f) => f.name === r.from);
+    if (!oldField) {
+      throw new ValidationError(
+        `renames: "${r.from}" is not a field of "${current.name}" — current fields: ${current.fields.map((f) => f.name).join(", ")}`,
+      );
+    }
+    if (newFields.some((f) => f.name === r.from)) {
+      throw new ValidationError(
+        `renames: "${r.from}" still exists in the new definition — remove it (its data moves to "${r.to}")`,
+      );
+    }
+    const newField = newFields.find((f) => f.name === r.to);
+    if (!newField) {
+      throw new ValidationError(`renames: "${r.to}" must be a field in the new definition`);
+    }
+    if (newField.type !== oldField.type) {
+      throw new ValidationError(
+        `renames: "${r.from}" (${oldField.type}) cannot become "${r.to}" (${newField.type}) — a rename cannot retype`,
+      );
+    }
+    if (newField.unique && !oldField.unique) {
+      throw new ValidationError(
+        `renames: cannot add unique to "${r.to}" in the same call as the rename — rename first, then enable unique`,
+      );
+    }
+  }
 }
 
 /** Count entries that carry any of the given data keys. */
@@ -246,9 +305,11 @@ export async function defineCollection(
 
   // Destructive-change gate for existing collections.
   const current = existing.find((c) => c.name === name);
+  const renames = input.renames ?? [];
+  validateRenames(current, fields, renames);
   let diff: SchemaDiff | undefined;
   if (current) {
-    const structural = diffFields(current.fields, fields);
+    const structural = diffFields(current.fields, fields, renames);
     const dangerousKeys = [
       ...structural.removed,
       ...structural.retyped.map((r) => r.field),
@@ -303,6 +364,16 @@ export async function defineCollection(
     .returning();
 
   if (!current) await syncUniqueIndexes(row.id, [], fields);
+
+  // Backfill each rename in one atomic UPDATE: move the old key's value to
+  // the new key across every entry that carries it.
+  for (const r of renames) {
+    await db.execute(
+      sql`UPDATE entries
+          SET data = (data - ${r.from}::text) || jsonb_build_object(${r.to}::text, data->${r.from}::text)
+          WHERE collection_id = ${row.id} AND data ? ${r.from}::text`,
+    );
+  }
 
   revalidateTag(collectionsTag(projectId));
   return { applied: true, collection: row, diff };

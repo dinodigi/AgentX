@@ -117,7 +117,9 @@ export const TOOL_DEFS: ToolDef[] = [
       "Instantly manageable in the admin; no per-project UI code. Public fields are served " +
       "by the delivery API (see get_project_info). Set publicWrite:true + webhookUrl for a form. " +
       "Redefining an existing collection with dropped/retyped fields returns a diff plan " +
-      `and requires confirm:true (affected entries are counted, not silently orphaned). ${BOUNDARIES}`,
+      "and requires confirm:true (affected entries are counted, not silently orphaned). " +
+      "To RENAME a field, pass renames: [{from, to}] with the new name in fields — entry " +
+      `data is backfilled, no confirm needed; without renames a rename is a destructive drop+add. ${BOUNDARIES}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -162,6 +164,17 @@ export const TOOL_DEFS: ToolDef[] = [
             deleted: { type: "array", items: { type: "object" } },
           },
           additionalProperties: false,
+        },
+        renames: {
+          type: "array",
+          description:
+            "declared field renames; data moves from → to (same type, to must be in fields)",
+          items: {
+            type: "object",
+            properties: { from: { type: "string" }, to: { type: "string" } },
+            required: ["from", "to"],
+            additionalProperties: false,
+          },
         },
         confirm: { type: "boolean", description: "required to apply destructive schema changes" },
       },
@@ -553,6 +566,7 @@ const defineArgs = z.object({
       deleted: z.array(eventActionSchema).optional(),
     })
     .optional(),
+  renames: z.array(z.object({ from: z.string(), to: z.string() })).optional(),
   confirm: z.boolean().optional(),
 });
 const nameArg = z.object({ name: z.string() });
@@ -675,6 +689,7 @@ export async function callTool(
           publicFilter: a.publicFilter,
           access: a.access,
           events: a.events,
+          renames: a.renames,
           confirm: a.confirm,
         });
         if (!result.applied) {
