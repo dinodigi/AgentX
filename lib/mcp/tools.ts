@@ -20,6 +20,7 @@ import {
   projectData,
   encodeCursor,
   decodeCursor,
+  aggregateEntries,
   ValidationError,
 } from "@/lib/entries";
 import { getProject } from "@/lib/admin";
@@ -299,6 +300,40 @@ export const TOOL_DEFS: ToolDef[] = [
         where: { type: "array", items: WHERE_ITEM_JSON },
       },
       required: ["collection"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "aggregate_entries",
+    description:
+      "Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggregates: " +
+      "[{fn: count|sum|avg|min|max, field?}] (count takes no field; the rest need a number " +
+      "field). Optional groupBy on an enum or relation field (relation groups include the " +
+      "target's label). Same where vocabulary as query_entries (eq/contains/gt/lt/in + anyOf). " +
+      "Groups are capped at 500, largest first, with truncatedGroups: true when cut. " +
+      "Example: revenue by trip = {aggregates:[{fn:'sum',field:'price'}], groupBy:'trip'}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        aggregates: {
+          type: "array",
+          minItems: 1,
+          maxItems: 10,
+          items: {
+            type: "object",
+            properties: {
+              fn: { type: "string", enum: ["count", "sum", "avg", "min", "max"] },
+              field: { type: "string", description: "number field; omit for count" },
+            },
+            required: ["fn"],
+            additionalProperties: false,
+          },
+        },
+        groupBy: { type: "string", description: "enum or relation field" },
+        where: { type: "array", items: WHERE_ITEM_JSON },
+      },
+      required: ["collection", "aggregates"],
       additionalProperties: false,
     },
   },
@@ -754,6 +789,49 @@ export async function callTool(
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         return ok({ count: await countEntries(c, a.where ?? []) });
+      }
+
+      case "aggregate_entries": {
+        const a = z
+          .object({
+            collection: z.string(),
+            aggregates: z
+              .array(
+                z.object({
+                  fn: z.enum(["count", "sum", "avg", "min", "max"]),
+                  field: z.string().optional(),
+                }),
+              )
+              .min(1)
+              .max(10),
+            groupBy: z.string().optional(),
+            where: z.array(whereItemSchema).optional(),
+          })
+          .parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        const result = await aggregateEntries(c, {
+          aggregates: a.aggregates,
+          groupBy: a.groupBy,
+          where: a.where,
+        });
+        const shape = (values: (number | null)[]) =>
+          a.aggregates.map((spec, i) => ({
+            fn: spec.fn,
+            ...(spec.field ? { field: spec.field } : {}),
+            value: values[i],
+          }));
+        if (!a.groupBy) {
+          return ok({ results: shape(result.groups[0].values) });
+        }
+        return ok({
+          groupBy: a.groupBy,
+          groups: result.groups.map((g) => ({
+            key: g.key,
+            ...(g.label !== undefined ? { label: g.label } : {}),
+            results: shape(g.values),
+          })),
+          truncatedGroups: result.truncated,
+        });
       }
 
       case "bulk_create_entries": {

@@ -55,7 +55,7 @@ function fieldOrThrow(fields: FieldDef[], name: string, context: string): FieldD
 }
 
 /** JSONB text accessor for a field, cast per type where needed. */
-function accessor(field: FieldDef): SQL {
+export function accessor(field: FieldDef): SQL {
   const raw = sql`${entries.data}->>${field.name}`;
   switch (field.type) {
     case "number":

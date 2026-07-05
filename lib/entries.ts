@@ -2,7 +2,7 @@ import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { entries, assets, collections, type Collection, type Entry } from "@/db/schema";
 import { buildEntrySchema, formatZodError, ValidationError, type RefCheck } from "./validation";
-import { buildWhere, buildOrderBy, type WhereItem, type OrderByClause } from "./query";
+import { accessor, buildWhere, buildOrderBy, type WhereItem, type OrderByClause } from "./query";
 import { emitEntryEvent } from "./events";
 import { recordAudit } from "./audit";
 import type { AuditActor } from "@/db/schema";
@@ -482,6 +482,126 @@ export async function resolveRefsForRead(
 }
 
 /** Project an entry's data down to only fields flagged publicRead. */
+export type AggregateFn = "count" | "sum" | "avg" | "min" | "max";
+export interface AggregateSpec {
+  fn: AggregateFn;
+  field?: string;
+}
+
+export const MAX_AGGREGATE_GROUPS = 500;
+
+export interface AggregateResult {
+  /** One entry per group; a single group with key null when groupBy is absent. */
+  groups: { key: string | null; label?: string; values: (number | null)[] }[];
+  /** True when more than MAX_AGGREGATE_GROUPS groups exist (largest kept). */
+  truncated: boolean;
+}
+
+/**
+ * Aggregations without fetching rows: count/sum/avg/min/max over number
+ * fields, optionally grouped by an enum or relation field (relation group
+ * keys resolve to their target's labelField). Same validated where
+ * vocabulary as queries; same "reject with a fix hint" discipline.
+ */
+export async function aggregateEntries(
+  collection: Collection,
+  opts: { aggregates: AggregateSpec[]; groupBy?: string; where?: WhereItem[] },
+): Promise<AggregateResult> {
+  const numberFields = collection.fields.filter((f) => f.type === "number");
+  const selects: Record<string, ReturnType<typeof sql>> = {};
+  opts.aggregates.forEach((spec, i) => {
+    if (spec.fn === "count") {
+      if (spec.field !== undefined) {
+        throw new ValidationError('aggregates: "count" counts rows — omit field');
+      }
+      selects[`a${i}`] = sql`count(*)`;
+      return;
+    }
+    if (!spec.field) {
+      throw new ValidationError(`aggregates: "${spec.fn}" needs a field`);
+    }
+    const f = collection.fields.find((x) => x.name === spec.field);
+    if (!f || f.type !== "number") {
+      throw new ValidationError(
+        `aggregates: "${spec.fn}" needs a number field — number fields: ${
+          numberFields.map((x) => x.name).join(", ") || "(none)"
+        }`,
+      );
+    }
+    // fn is enum-validated above, so sql.raw is safe.
+    selects[`a${i}`] = sql`${sql.raw(spec.fn)}(${accessor(f)})`;
+  });
+
+  const conditions = [
+    eq(entries.collectionId, collection.id),
+    ...buildWhere(collection.fields, opts.where ?? []),
+  ];
+
+  const toValues = (row: Record<string, unknown>) =>
+    opts.aggregates.map((_, i) => (row[`a${i}`] === null ? null : Number(row[`a${i}`])));
+
+  if (!opts.groupBy) {
+    const [row] = await db.select(selects).from(entries).where(and(...conditions));
+    return { groups: [{ key: null, values: toValues(row) }], truncated: false };
+  }
+
+  const groupField = collection.fields.find((f) => f.name === opts.groupBy);
+  if (!groupField || (groupField.type !== "enum" && groupField.type !== "relation")) {
+    const groupable = collection.fields
+      .filter((f) => f.type === "enum" || f.type === "relation")
+      .map((f) => f.name);
+    throw new ValidationError(
+      `groupBy: needs an enum or relation field — groupable: ${groupable.join(", ") || "(none)"}`,
+    );
+  }
+
+  // Group/order by ordinal: repeating the parametrized JSONB expression would
+  // get fresh parameter numbers and Postgres would refuse to match them.
+  const keyExpr = sql`${entries.data}->>${groupField.name}`;
+  const rows = await db
+    .select({ key: keyExpr, ...selects })
+    .from(entries)
+    .where(and(...conditions))
+    .groupBy(sql`1`)
+    .orderBy(sql`count(*) DESC`, sql`1`)
+    .limit(MAX_AGGREGATE_GROUPS + 1);
+
+  const truncated = rows.length > MAX_AGGREGATE_GROUPS;
+  const groups: AggregateResult["groups"] = rows.slice(0, MAX_AGGREGATE_GROUPS).map((row) => ({
+    key: row.key === null ? null : String(row.key),
+    values: toValues(row),
+  }));
+
+  // Relation group keys are target-entry ids; resolve their labels in one query.
+  if (groupField.type === "relation") {
+    const ids = groups.map((g) => g.key).filter((k): k is string => k !== null);
+    if (ids.length > 0) {
+      const [target] = await db
+        .select()
+        .from(collections)
+        .where(
+          and(
+            eq(collections.projectId, collection.projectId),
+            eq(collections.name, groupField.targetCollection),
+          ),
+        )
+        .limit(1);
+      if (target) {
+        const labelRows = await db
+          .select({ id: entries.id, label: sql`${entries.data}->>${groupField.labelField}` })
+          .from(entries)
+          .where(and(eq(entries.collectionId, target.id), inArray(entries.id, ids)));
+        const labels = new Map(labelRows.map((r) => [r.id, r.label === null ? "" : String(r.label)]));
+        for (const g of groups) {
+          if (g.key !== null && labels.has(g.key)) g.label = labels.get(g.key);
+        }
+      }
+    }
+  }
+
+  return { groups, truncated };
+}
+
 /** Validate a select list against a collection's fields. Throws with the field list. */
 export function validateSelect(fields: FieldDef[], select: string[]): void {
   if (select.length === 0) {
