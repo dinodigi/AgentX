@@ -10,6 +10,7 @@ import {
   type SchemaDiff,
 } from "./collections";
 import type { FieldDef } from "./field-types";
+import { WHERE_OPS, type WhereClause } from "./query";
 import { ValidationError } from "./validation";
 
 /**
@@ -27,7 +28,7 @@ export interface ProjectManifest {
     displayName: string;
     publicWrite: boolean;
     webhookUrl: string | null;
-    publicFilter: { field: string; op: "eq" | "contains" | "gt" | "lt"; value: string | number | boolean }[] | null;
+    publicFilter: WhereClause[] | null;
     access: { read?: "public" | "authenticated" | "owner"; write?: "none" | "authenticated" | "owner"; ownerField?: string } | null;
     events: Record<string, unknown> | null;
     fields: FieldDef[];
@@ -56,8 +57,8 @@ const manifestSchema = z.object({
         .array(
           z.object({
             field: z.string(),
-            op: z.enum(["eq", "contains", "gt", "lt"]),
-            value: z.union([z.string(), z.number(), z.boolean()]),
+            op: z.enum(WHERE_OPS),
+            value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
           }),
         )
         .nullable()

@@ -10,13 +10,14 @@ import { ValidationError } from "./validation";
  * exist, use an operator that doesn't fit the type, or inject anything.
  */
 
-export const WHERE_OPS = ["eq", "contains", "gt", "lt"] as const;
+export const WHERE_OPS = ["eq", "contains", "gt", "lt", "in"] as const;
 export type WhereOp = (typeof WHERE_OPS)[number];
 
 export interface WhereClause {
   field: string;
   op: WhereOp;
-  value: string | number | boolean;
+  /** `in` takes a string[]; every other op takes a scalar. */
+  value: string | number | boolean | string[];
 }
 
 export interface OrderByClause {
@@ -26,14 +27,14 @@ export interface OrderByClause {
 
 /** Which operators make sense per primitive. */
 const OPS_BY_TYPE: Record<FieldDef["type"], WhereOp[]> = {
-  text: ["eq", "contains"],
+  text: ["eq", "contains", "in"],
   richtext: ["contains"],
   number: ["eq", "gt", "lt"],
   boolean: ["eq"],
   date: ["eq", "gt", "lt"],
-  enum: ["eq"],
+  enum: ["eq", "in"],
   asset: ["eq"],
-  relation: ["eq"],
+  relation: ["eq", "in"],
 };
 
 function fieldOrThrow(fields: FieldDef[], name: string, context: string): FieldDef {
@@ -70,6 +71,17 @@ export function buildWhere(fields: FieldDef[], where: WhereClause[]): SQL[] {
         `where: op "${clause.op}" not valid for ${f.type} field "${f.name}" — allowed: ${OPS_BY_TYPE[f.type].join(", ")}`,
       );
     }
+    if (clause.op === "in") {
+      if (!Array.isArray(clause.value) || clause.value.length === 0) {
+        throw new ValidationError(
+          `where: op "in" on "${f.name}" needs a non-empty array of values, e.g. {field:"${f.name}",op:"in",value:["a","b"]}`,
+        );
+      }
+    } else if (Array.isArray(clause.value)) {
+      throw new ValidationError(
+        `where: op "${clause.op}" on "${f.name}" takes a single value, not an array — use op "in" for value lists`,
+      );
+    }
     const lhs = accessor(f);
     switch (clause.op) {
       case "eq":
@@ -86,6 +98,10 @@ export function buildWhere(fields: FieldDef[], where: WhereClause[]): SQL[] {
         return f.type === "number"
           ? sql`${lhs} < ${Number(clause.value)}`
           : sql`${lhs} < ${String(clause.value)}::timestamptz`;
+      case "in": {
+        const values = (clause.value as string[]).map((v) => sql`${String(v)}`);
+        return sql`${lhs} IN (${sql.join(values, sql`, `)})`;
+      }
     }
   });
 }
@@ -101,6 +117,8 @@ export function matchesClauses(
     if (!f) return false;
     const v = data[c.field];
     switch (c.op) {
+      case "in":
+        return Array.isArray(c.value) && c.value.some((x) => String(v ?? "") === String(x));
       case "eq":
         if (f.type === "number") return Number(v) === Number(c.value);
         if (f.type === "boolean") return Boolean(v) === Boolean(c.value);

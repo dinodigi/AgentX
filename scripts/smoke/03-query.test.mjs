@@ -53,6 +53,49 @@ describe("query filters + sorting", () => {
     assert.equal(lt.value.entries.length, 1);
   });
 
+  it("in: value lists on enum and text", async () => {
+    const byLevel = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      where: [{ field: "level", op: "in", value: ["easy", "hard"] }],
+    });
+    assert.equal(byLevel.value.entries.length, 3);
+
+    const byTitle = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      where: [{ field: "title", op: "in", value: ["Alpha paddle", "Gamma glide"] }],
+    });
+    assert.deepEqual(
+      byTitle.value.entries.map((r) => r.data.title).sort(),
+      ["Alpha paddle", "Gamma glide"],
+    );
+
+    const count = await mcp(p.mcpToken, "count_entries", {
+      collection: "trips",
+      where: [{ field: "level", op: "in", value: ["hard"] }],
+    });
+    assert.equal(count.value.count, 1);
+  });
+
+  it("in: rejected on numbers, empty lists, and scalar-op arrays", async () => {
+    const onNumber = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      where: [{ field: "price", op: "in", value: ["50"] }],
+    });
+    assert.ok(!onNumber.ok && /allowed: eq/.test(onNumber.errorText), onNumber.errorText);
+
+    const empty = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      where: [{ field: "level", op: "in", value: [] }],
+    });
+    assert.ok(!empty.ok && /non-empty array/.test(empty.errorText), empty.errorText);
+
+    const arrayOnEq = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      where: [{ field: "level", op: "eq", value: ["easy"] }],
+    });
+    assert.ok(!arrayOnEq.ok && /use op "in"/.test(arrayOnEq.errorText), arrayOnEq.errorText);
+  });
+
   it("rejects op/type mismatch with an allowed-ops hint", async () => {
     const r = await mcp(p.mcpToken, "query_entries", {
       collection: "trips",

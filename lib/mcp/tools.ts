@@ -103,7 +103,7 @@ export const TOOL_DEFS: ToolDef[] = [
             type: "object",
             properties: {
               field: { type: "string" },
-              op: { type: "string", enum: ["eq", "contains", "gt", "lt"] },
+              op: { type: "string", enum: ["eq", "contains", "gt", "lt", "in"] },
               value: {},
             },
             required: ["field", "op", "value"],
@@ -227,8 +227,9 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "query_entries",
     description:
       "List entries in a collection (relations resolved to {id,label}). Supports limit/offset " +
-      "(default 100, max 500), where filters [{field, op: eq|contains|gt|lt, value}] and orderBy " +
-      "{field, dir: asc|desc}. Ops are type-checked: contains=text/richtext, gt/lt=number/date. " +
+      "(default 100, max 500), where filters [{field, op: eq|contains|gt|lt|in, value}] and orderBy " +
+      "{field, dir: asc|desc}. Ops are type-checked: contains=text/richtext, gt/lt=number/date, " +
+      "in=text/enum/relation with value: string[]. " +
       "Returns {entries, limit, offset, hasMore, nextOffset} — when hasMore is true, re-call with " +
       "offset: nextOffset for the next page. No full-text search service.",
     inputSchema: {
@@ -243,7 +244,7 @@ export const TOOL_DEFS: ToolDef[] = [
             type: "object",
             properties: {
               field: { type: "string" },
-              op: { type: "string", enum: ["eq", "contains", "gt", "lt"] },
+              op: { type: "string", enum: ["eq", "contains", "gt", "lt", "in"] },
               value: {},
             },
             required: ["field", "op", "value"],
@@ -287,7 +288,7 @@ export const TOOL_DEFS: ToolDef[] = [
             type: "object",
             properties: {
               field: { type: "string" },
-              op: { type: "string", enum: ["eq", "contains", "gt", "lt"] },
+              op: { type: "string", enum: ["eq", "contains", "gt", "lt", "in"] },
               value: {},
             },
             required: ["field", "op", "value"],
@@ -460,8 +461,8 @@ const defineArgs = z.object({
     .array(
       z.object({
         field: z.string(),
-        op: z.enum(["eq", "contains", "gt", "lt"]),
-        value: z.union([z.string(), z.number(), z.boolean()]),
+        op: z.enum(["eq", "contains", "gt", "lt", "in"]),
+        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
       }),
     )
     .optional(),
@@ -500,8 +501,8 @@ const queryArgs = z.object({
     .array(
       z.object({
         field: z.string(),
-        op: z.enum(["eq", "contains", "gt", "lt"]),
-        value: z.union([z.string(), z.number(), z.boolean()]),
+        op: z.enum(["eq", "contains", "gt", "lt", "in"]),
+        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
       }),
     )
     .optional(),
