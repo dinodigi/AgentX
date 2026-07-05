@@ -1,18 +1,22 @@
-# 08 · Events (grade B-)
+# 08 · Events ✅ DONE 2026-07-05 (gated items unchanged)
 
-Purpose: declarative automation. Lifecycle → webhook/email with retry+log
-exists; the gaps are precision and self-service debugging.
+Purpose: declarative automation. "Notify X when Y becomes Z" is one
+declarative line, and a failed notification can be diagnosed and replayed by
+the agent that set it up — the done-when, verbatim.
 
 ## Sub-features
 
-- [ ] **Conditional actions** (S/M) — `when: WhereClause[]` on any action
-      ("email only when status becomes confirmed"); reuses 04's validated
-      clause machinery against the entry snapshot.
-- [ ] **Manual re-fire** (S) — replay a failed delivery from the log (admin
-      button + tool); today a failed webhook is visible but dead.
-- [ ] **Per-action enable/disable** (S) — pause an action without deleting it.
-- [ ] **Old/new snapshot in updated events** (S) — payload includes changed
-      fields so receivers don't diff blindly.
+- [x] **Conditional actions** (S/M) — `when: [clauses]` on any action, same
+      validated shape as query where (define-time buildWhere, emit-time
+      matchesClauses against the post-change snapshot).
+- [x] **Manual re-fire** (S) — refire_delivery tool + Re-fire button on failed
+      rows in the settings log. Webhooks re-post the stored payload; emails
+      re-send the render (now stored with each log row). Replays are NEW rows.
+- [x] **Per-action enable/disable** (S) — disabled: true pauses an action,
+      schema keeps it; toggle by redefining.
+- [x] **Old/new snapshot in updated events** (S) — updated payloads carry
+      {previous: {data}, changedFields} (from updateEntry; update_entry_if
+      omits previous — it deliberately never reads before writing).
 - [ ] **Digest/batching** (M, defer) — "daily summary email" shape; wait for
       demand.
 - [ ] **Function action** (gated, Phase 6) — {type:"function"} per the hosted
