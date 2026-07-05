@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Download, Plus } from "lucide-react";
+import { Check, Download, Plus, Undo2 } from "lucide-react";
 import { getCollection } from "@/lib/collections";
 import { queryEntries, countEntries, resolveRefsForRead } from "@/lib/entries";
 import type { FieldDef } from "@/lib/field-types";
+import { toggleHandledAction } from "../../actions";
 
 const PAGE_SIZE = 50;
 
@@ -79,13 +80,28 @@ export default async function CollectionEntries({
 
       {rows.length === 0 ? (
         <div className="card p-10 text-center text-sm text-[--color-ink-mute]">
-          {q ? "No matches." : "No entries yet."}
+          {q ? (
+            "No matches."
+          ) : collection.publicWrite ? (
+            <>
+              No submissions yet. Your site posts to{" "}
+              <code className="font-mono text-xs">POST /v1/{name}</code> — new ones land here
+              with a <span className="chip chip-brand">new</span> badge.
+            </>
+          ) : (
+            <>
+              No entries yet — create one with <span className="font-medium">New entry</span>,
+              or let your agent seed the collection over MCP
+              (<code className="font-mono text-xs">bulk_create_entries</code>).
+            </>
+          )}
         </div>
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[--color-line] text-left">
+                {collection.publicWrite && <th className="table-head px-4 py-2.5">Status</th>}
                 {cols.map((f) => (
                   <th key={f.name} className="table-head px-4 py-2.5">
                     {f.label}
@@ -98,8 +114,35 @@ export default async function CollectionEntries({
               {rows.map((r) => (
                 <tr
                   key={r.id}
-                  className="border-b border-[--color-line] transition-colors last:border-0 hover:bg-[--color-brand-wash]"
+                  className={`border-b border-[--color-line] transition-colors last:border-0 hover:bg-[--color-brand-wash] ${
+                    collection.publicWrite && !r.handledAt ? "bg-[--color-brand-wash]/40" : ""
+                  }`}
                 >
+                  {collection.publicWrite && (
+                    <td className="px-4 py-3">
+                      <form action={toggleHandledAction.bind(null, projectId, name, r.id)}>
+                        {r.handledAt ? (
+                          <button
+                            type="submit"
+                            className="chip chip-mute transition-opacity hover:opacity-70"
+                            title="Mark as new again"
+                          >
+                            <Undo2 className="h-3 w-3" />
+                            handled
+                          </button>
+                        ) : (
+                          <button
+                            type="submit"
+                            className="chip chip-brand transition-opacity hover:opacity-70"
+                            title="Mark handled"
+                          >
+                            <Check className="h-3 w-3" />
+                            new
+                          </button>
+                        )}
+                      </form>
+                    </td>
+                  )}
                   {cols.map((f, i) => (
                     <td key={f.name} className="px-4 py-3">
                       {i === 0 ? (

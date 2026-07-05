@@ -15,6 +15,8 @@ export interface SidebarCollection {
   name: string;
   displayName: string;
   publicWrite: boolean;
+  /** Unhandled submissions (publicWrite collections only). */
+  unhandled?: number;
 }
 
 export function Sidebar({
@@ -32,7 +34,7 @@ export function Sidebar({
   const content = collections.filter((c) => !c.publicWrite);
   const inbox = collections.filter((c) => c.publicWrite);
 
-  const item = (href: string, label: string, Icon: typeof Table2) => {
+  const item = (href: string, label: string, Icon: typeof Table2, badge?: number) => {
     const active = pathname === href || pathname.startsWith(href + "/");
     return (
       <Link
@@ -55,6 +57,15 @@ export function Sidebar({
           style={active ? { color: "var(--brand)" } : undefined}
         />
         <span className="truncate">{label}</span>
+        {badge ? (
+          <span
+            className="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
+            style={{ background: "var(--brand)" }}
+            title={`${badge} unhandled`}
+          >
+            {badge > 99 ? "99+" : badge}
+          </span>
+        ) : null}
       </Link>
     );
   };
@@ -87,7 +98,7 @@ export function Sidebar({
       {content.map((c) => item(`/admin/${projectId}/${c.name}`, c.displayName, Table2))}
 
       {inbox.length > 0 && groupLabel("Inbox")}
-      {inbox.map((c) => item(`/admin/${projectId}/${c.name}`, c.displayName, Inbox))}
+      {inbox.map((c) => item(`/admin/${projectId}/${c.name}`, c.displayName, Inbox, c.unhandled))}
 
       {groupLabel("Project")}
       {item(`/admin/${projectId}/appearance`, "Appearance", Palette)}

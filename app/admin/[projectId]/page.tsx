@@ -33,8 +33,20 @@ export default async function ProjectHome({
         <div className="card p-10 text-center">
           <p className="display font-semibold">Define your first collection</p>
           <p className="mt-1.5 text-sm text-[--color-ink-mute]">
-            Connect Claude Code to the MCP endpoint and describe your data model —
-            it appears here instantly.
+            Connect Claude Code to this project&apos;s MCP endpoint and describe your data
+            model — collections appear here instantly, forms and API included.
+          </p>
+          <p className="mt-3 text-sm text-[--color-ink-mute]">
+            Grab the endpoint URL and an <code className="font-mono text-xs">agx_</code> token
+            from{" "}
+            <Link href={`/admin/${projectId}/settings`} className="font-medium text-brand-strong hover:underline">
+              Settings
+            </Link>
+            , then tell your agent what you&apos;re building. The{" "}
+            <Link href={`/admin/${projectId}/api`} className="font-medium text-brand-strong hover:underline">
+              API reference
+            </Link>{" "}
+            writes itself as the schema grows.
           </p>
         </div>
       )}

@@ -1,6 +1,10 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { and, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { entries } from "@/db/schema";
 import { getCollection } from "@/lib/collections";
 import { getProjectRole, getViewer } from "@/lib/access";
 import { createEntry, updateEntry, deleteEntry, ValidationError } from "@/lib/entries";
@@ -41,6 +45,37 @@ export async function saveEntry(
 
   // Success — leave the try/catch before redirecting (redirect throws by design).
   redirect(`/admin/${projectId}/${collectionName}`);
+}
+
+/**
+ * Toggle the handled flag on an inbox submission. Workflow metadata, not entry
+ * data — it never touches the validated payload, fires no events, and is
+ * invisible to the delivery API.
+ */
+export async function toggleHandledAction(
+  projectId: string,
+  collectionName: string,
+  entryId: string,
+): Promise<void> {
+  // A plain form action can't surface errors; unauthorized/missing = no-op.
+  const role = await getProjectRole(projectId);
+  if (!role) return;
+  const collection = await getCollection(projectId, collectionName);
+  if (!collection) return;
+
+  const [row] = await db
+    .select({ handledAt: entries.handledAt })
+    .from(entries)
+    .where(and(eq(entries.id, entryId), eq(entries.collectionId, collection.id)))
+    .limit(1);
+  if (!row) return;
+
+  await db
+    .update(entries)
+    .set({ handledAt: row.handledAt ? null : new Date() })
+    .where(eq(entries.id, entryId));
+  revalidatePath(`/admin/${projectId}/${collectionName}`);
+  revalidatePath(`/admin/${projectId}`, "layout");
 }
 
 /** Delete an entry from the admin edit page. */

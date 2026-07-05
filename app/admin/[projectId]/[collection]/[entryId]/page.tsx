@@ -1,15 +1,30 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, eq } from "drizzle-orm";
-import { Globe } from "lucide-react";
+import { Globe, History } from "lucide-react";
 import { db } from "@/db";
-import { entries } from "@/db/schema";
+import { entries, type AuditActor } from "@/db/schema";
 import { getCollection } from "@/lib/collections";
+import { listAuditLog } from "@/lib/audit";
 import { loadRelationChoices } from "@/lib/admin";
 import { publicFields } from "@/lib/entries";
 import { EntryForm } from "@/components/EntryForm";
 import { DeleteEntryButton } from "@/components/DeleteEntryButton";
 import { saveEntry, deleteEntryAction } from "../../../actions";
+
+/** Who performed an audit action, in client-readable words. */
+function actorLabel(actor: AuditActor): string {
+  switch (actor.type) {
+    case "mcp":
+      return "the agent";
+    case "admin":
+      return "an admin user";
+    case "delivery":
+      return actor.userSub ? "a signed-in site user" : "the public site";
+    default:
+      return "unknown";
+  }
+}
 
 /** Edit an existing entry: auto-generated form + metadata/visibility panel. */
 export default async function EditEntry({
@@ -21,7 +36,7 @@ export default async function EditEntry({
   const collection = await getCollection(projectId, name);
   if (!collection) notFound();
 
-  const [entry, relationChoices] = await Promise.all([
+  const [entry, relationChoices, audit] = await Promise.all([
     db
       .select()
       .from(entries)
@@ -29,6 +44,7 @@ export default async function EditEntry({
       .limit(1)
       .then((r) => r[0]),
     loadRelationChoices(projectId, collection.fields),
+    listAuditLog(projectId, { entryId, limit: 8, offset: 0 }),
   ]);
   if (!entry) notFound();
 
@@ -83,6 +99,33 @@ export default async function EditEntry({
               {pub} of {collection.fields.length} fields are public and served by{" "}
               <code className="font-mono text-xs">GET /v1/{name}</code>.
             </p>
+            {audit.length > 0 && (
+              <>
+                <div className="my-3 border-t border-[--color-line]" />
+                <div className="flex items-center gap-1.5 font-medium">
+                  <History className="h-4 w-4 text-[--color-ink-mute]" />
+                  History
+                </div>
+                <ul className="mt-1.5 space-y-1.5">
+                  {audit.slice(0, 8).map((row, i) => (
+                    <li key={i} className="text-xs leading-relaxed text-[--color-ink-mute]">
+                      <span className="font-medium text-[--color-ink-soft]">
+                        {row.action === "create" ? "Created" : row.action === "delete" ? "Deleted" : "Updated"}
+                      </span>{" "}
+                      by {actorLabel(row.actor)}
+                      {row.action === "update" && row.changedFields?.length
+                        ? ` — ${row.changedFields.join(", ")}`
+                        : ""}
+                      <span className="text-[--color-line-strong]">
+                        {" · "}
+                        {row.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}{" "}
+                        {row.createdAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
         </aside>
       </div>

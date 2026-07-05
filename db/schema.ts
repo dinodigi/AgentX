@@ -111,6 +111,8 @@ export const entries = pgTable(
     data: jsonb("data").$type<Record<string, unknown>>().notNull().default({}),
     /** Optional client-supplied key: a retried create with the same key is a no-op. */
     idempotencyKey: text("idempotency_key"),
+    /** Inbox affordance: when an admin marked this submission handled (publicWrite collections). */
+    handledAt: timestamp("handled_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

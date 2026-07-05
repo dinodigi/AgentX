@@ -1,6 +1,9 @@
 import type { CSSProperties, ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
+import { and, count, eq, isNull, inArray } from "drizzle-orm";
+import { db } from "@/db";
+import { entries } from "@/db/schema";
 import { getProject } from "@/lib/admin";
 import { getProjectRole } from "@/lib/access";
 import { listCollections } from "@/lib/collections";
@@ -27,6 +30,18 @@ export default async function ProjectLayout({
   // No access reads as not-found: don't leak which project ids exist.
   if (!project || !role) notFound();
 
+  // Unhandled inbox counts (one grouped query across all publicWrite collections).
+  const inboxIds = collections.filter((c) => c.publicWrite).map((c) => c.id);
+  const unhandled =
+    inboxIds.length === 0
+      ? []
+      : await db
+          .select({ collectionId: entries.collectionId, n: count() })
+          .from(entries)
+          .where(and(inArray(entries.collectionId, inboxIds), isNull(entries.handledAt)))
+          .groupBy(entries.collectionId);
+  const unhandledById = new Map(unhandled.map((u) => [u.collectionId, u.n]));
+
   const brand = safeColor(project.branding.primaryColor);
   const displayName = project.branding.displayName ?? project.name;
 
@@ -43,6 +58,7 @@ export default async function ProjectLayout({
           name: c.name,
           displayName: c.displayName,
           publicWrite: c.publicWrite,
+          unhandled: unhandledById.get(c.id) ?? 0,
         }))}
       />
       <div className="flex min-w-0 flex-1 flex-col">
