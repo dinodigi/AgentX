@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { projects, webhookDeliveries } from "@/db/schema";
+import { projects, webhookDeliveries, type WebhookDelivery } from "@/db/schema";
 
 /**
  * Webhook delivery with retries + an outcome log. A public-form submission
@@ -57,6 +57,32 @@ export async function deliverWebhook(opts: {
     }
   }
   await log(opts, "failed", BACKOFF_MS.length, lastError);
+}
+
+export interface DeliveryFilter {
+  collectionId?: string;
+  status?: "success" | "failed";
+  event?: string;
+  limit: number;
+  offset: number;
+}
+
+/** Newest-first page of the delivery log (webhooks + emails), limit+1 probe row included. */
+export async function listDeliveries(
+  projectId: string,
+  f: DeliveryFilter,
+): Promise<WebhookDelivery[]> {
+  const conditions = [eq(webhookDeliveries.projectId, projectId)];
+  if (f.collectionId) conditions.push(eq(webhookDeliveries.collectionId, f.collectionId));
+  if (f.status) conditions.push(eq(webhookDeliveries.status, f.status));
+  if (f.event) conditions.push(eq(webhookDeliveries.event, f.event));
+  return db
+    .select()
+    .from(webhookDeliveries)
+    .where(and(...conditions))
+    .orderBy(desc(webhookDeliveries.createdAt), desc(webhookDeliveries.id))
+    .limit(f.limit + 1)
+    .offset(f.offset);
 }
 
 async function log(

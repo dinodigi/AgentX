@@ -1,6 +1,13 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { ensureServer, createEphemeralProject, mcp, BASE } from "./helpers.mjs";
+import {
+  ensureServer,
+  createEphemeralProject,
+  mcp,
+  BASE,
+  startWebhookReceiver,
+  waitFor,
+} from "./helpers.mjs";
 
 describe("mcp surface: error codes", () => {
   let p;
@@ -119,6 +126,45 @@ describe("mcp surface: error codes", () => {
     assert.ok(Array.isArray(r.value.assets));
     assert.equal(r.value.hasMore, false);
     assert.equal(r.value.nextOffset, null);
+  });
+
+  it("get_deliveries: agent reads its own webhook outcomes, filters work", async () => {
+    const hook = await startWebhookReceiver();
+    try {
+      await mcp(p.mcpToken, "define_collection", {
+        name: "signups",
+        fields: [{ name: "email", label: "Email", type: "text" }],
+        events: { created: [{ type: "webhook", url: hook.url }] },
+      });
+      const created = await mcp(p.mcpToken, "create_entry", {
+        collection: "signups",
+        data: { email: "a@b.c" },
+      });
+      assert.ok(created.ok, created.errorText);
+
+      const logged = await waitFor(async () => {
+        const r = await mcp(p.mcpToken, "get_deliveries", { collection: "signups" });
+        return r.ok && r.value.deliveries.length > 0 ? r.value : null;
+      });
+      assert.ok(logged, "delivery never appeared in get_deliveries");
+      const d = logged.deliveries[0];
+      assert.equal(d.event, "entry.created");
+      assert.equal(d.status, "success");
+      assert.equal(d.url, hook.url);
+      assert.equal(d.payload.entry.id, created.value.id);
+      assert.equal(logged.hasMore, false);
+
+      const failed = await mcp(p.mcpToken, "get_deliveries", {
+        collection: "signups",
+        status: "failed",
+      });
+      assert.equal(failed.value.deliveries.length, 0);
+
+      const badCollection = await mcp(p.mcpToken, "get_deliveries", { collection: "nope" });
+      assert.ok(!badCollection.ok && /\[E_NOT_FOUND\]/.test(badCollection.errorText));
+    } finally {
+      await hook.close();
+    }
   });
 
   it("scope rejection carries E_SCOPE; GET exposes the code registry", async () => {

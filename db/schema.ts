@@ -238,3 +238,5 @@ export type Asset = InferSelectModel<typeof assets>;
 export type ProjectToken = InferSelectModel<typeof projectTokens>;
 export type ProjectMember = InferSelectModel<typeof projectMembers>;
 export type ProjectConnector = InferSelectModel<typeof projectConnectors>;
+export type WebhookDelivery = InferSelectModel<typeof webhookDeliveries>;
+export type AuditLogRow = InferSelectModel<typeof auditLog>;

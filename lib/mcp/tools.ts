@@ -20,6 +20,7 @@ import {
 } from "@/lib/entries";
 import { getProject } from "@/lib/admin";
 import { listAssets, deleteAsset } from "@/lib/r2";
+import { listDeliveries } from "@/lib/webhook";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
 import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
@@ -372,6 +373,25 @@ export const TOOL_DEFS: ToolDef[] = [
         confirm: { type: "boolean", description: "apply destructive schema changes" },
       },
       required: ["manifest"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_deliveries",
+    description:
+      "Read the project's event delivery log (webhooks + emails, newest first) to debug your " +
+      "own event wiring — no human needed. Email rows have url \"email:<to>\". Optional filters: " +
+      "collection (slug), status (success|failed), event (e.g. entry.created). Supports " +
+      "limit/offset (default 20, max 200); returns {deliveries, limit, offset, hasMore, nextOffset}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        status: { type: "string", enum: ["success", "failed"] },
+        event: { type: "string" },
+        limit: { type: "number" },
+        offset: { type: "number" },
+      },
       additionalProperties: false,
     },
   },
@@ -742,6 +762,47 @@ export async function callTool(
           return ok({ ...result, code: "E_CONFIRM_REQUIRED" });
         }
         return ok(result);
+      }
+
+      case "get_deliveries": {
+        const a = z
+          .object({
+            collection: z.string().optional(),
+            status: z.enum(["success", "failed"]).optional(),
+            event: z.string().optional(),
+            limit: z.number().optional(),
+            offset: z.number().optional(),
+          })
+          .parse(rawArgs ?? {});
+        const limit = Math.max(1, Math.min(a.limit ?? 20, 200));
+        const offset = Math.max(0, a.offset ?? 0);
+        const collectionId = a.collection
+          ? (await mustCollection(projectId, a.collection)).id
+          : undefined;
+        const rows = await listDeliveries(projectId, {
+          collectionId,
+          status: a.status,
+          event: a.event,
+          limit,
+          offset,
+        });
+        const hasMore = rows.length > limit;
+        return ok({
+          deliveries: rows.slice(0, limit).map((r) => ({
+            id: r.id,
+            event: r.event,
+            url: r.url,
+            status: r.status,
+            attempts: Number(r.attempts),
+            lastError: r.lastError,
+            payload: r.payload,
+            createdAt: r.createdAt,
+          })),
+          limit,
+          offset,
+          hasMore,
+          nextOffset: hasMore ? offset + limit : null,
+        });
       }
 
       case "upload_asset": {
