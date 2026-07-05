@@ -56,11 +56,27 @@ export async function GET(
   const limit = Number(url.searchParams.get("limit") ?? 100);
   const offset = Number(url.searchParams.get("offset") ?? 0);
 
+  // ?select=a,b trims the projection; restricted to public fields like filters.
+  let select: string[] | null = null;
+  const selectParam = url.searchParams.get("select");
+  if (selectParam !== null) {
+    select = selectParam.split(",").map((s) => s.trim()).filter(Boolean);
+    const bad = select.find((name) => !pub.some((f) => f.name === name));
+    if (select.length === 0 || bad !== undefined) {
+      return corsJson(
+        {
+          error: `unknown or non-public select field "${bad ?? ""}" — selectable: ${pub.map((f) => f.name).join(", ")}`,
+        },
+        { status: 422 },
+      );
+    }
+  }
+
   // Filters and sorting are restricted to PUBLIC fields — filtering on a
   // private field would leak its contents through result differences.
   const where: WhereClause[] = [];
   for (const [key, value] of url.searchParams.entries()) {
-    if (key === "limit" || key === "offset" || key === "sort") continue;
+    if (key === "limit" || key === "offset" || key === "sort" || key === "select") continue;
     const field = pub.find((f) => f.name === key);
     if (!field) {
       return corsJson(
@@ -95,7 +111,13 @@ export async function GET(
     ];
     const rows = await queryEntries(collection, { limit, offset, where: effectiveWhere, orderBy });
     const resolved = await resolveRefsForRead(projectId, collection, rows);
-    const data = resolved.map((e) => toPublicView(collection, e));
+    const data = resolved.map((e) => {
+      const view = toPublicView(collection, e);
+      if (!select) return view;
+      const picked: Record<string, unknown> = { id: view.id };
+      for (const name of select) if (name in view) picked[name] = view[name];
+      return picked;
+    });
     return corsJson({ data });
   } catch (e) {
     if (e instanceof ValidationError) {

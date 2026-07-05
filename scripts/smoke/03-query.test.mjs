@@ -172,6 +172,34 @@ describe("query filters + sorting", () => {
     assert.equal(desc.value.entries[0].data.price, 150);
   });
 
+  it("select trims MCP results to the named fields, id kept", async () => {
+    const r = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      select: ["title"],
+      orderBy: { field: "price", dir: "asc" },
+    });
+    assert.ok(r.ok, r.errorText);
+    assert.equal(r.value.entries[0].data.title, "Alpha paddle");
+    assert.deepEqual(Object.keys(r.value.entries[0].data), ["title"]);
+    assert.ok(r.value.entries[0].id, "id must survive selection");
+
+    const bad = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      select: ["title", "nope"],
+    });
+    assert.ok(!bad.ok && /valid fields:/.test(bad.errorText), bad.errorText);
+  });
+
+  it("delivery ?select= trims public rows; private select is 422", async () => {
+    const r = await delivery(p.deliveryToken, "/trips?select=title&sort=price:asc");
+    assert.equal(r.status, 200);
+    assert.deepEqual(Object.keys(r.json.data[0]).sort(), ["id", "title"]);
+
+    const priv = await delivery(p.deliveryToken, "/trips?select=notes");
+    assert.equal(priv.status, 422);
+    assert.ok(/non-public/.test(priv.json.error));
+  });
+
   it("delivery filters are restricted to public fields (422 on private)", async () => {
     const r = await delivery(p.deliveryToken, "/trips?notes=secret");
     assert.equal(r.status, 422);

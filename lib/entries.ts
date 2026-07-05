@@ -441,6 +441,31 @@ export async function resolveRefsForRead(
 }
 
 /** Project an entry's data down to only fields flagged publicRead. */
+/** Validate a select list against a collection's fields. Throws with the field list. */
+export function validateSelect(fields: FieldDef[], select: string[]): void {
+  if (select.length === 0) {
+    throw new ValidationError("select: needs at least one field name");
+  }
+  const valid = new Set(fields.map((f) => f.name));
+  for (const name of select) {
+    if (!valid.has(name)) {
+      throw new ValidationError(
+        `select: unknown field "${name}" — valid fields: ${fields.map((f) => f.name).join(", ")}`,
+      );
+    }
+  }
+}
+
+/** Project entry data down to the selected fields (validation is the caller's job). */
+export function projectData(
+  data: Record<string, unknown>,
+  select: string[],
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const name of select) if (name in data) out[name] = data[name];
+  return out;
+}
+
 export function toPublicView(collection: Collection, entry: Entry): Record<string, unknown> {
   const out: Record<string, unknown> = { id: entry.id };
   for (const f of collection.fields) {

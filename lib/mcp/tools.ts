@@ -16,6 +16,8 @@ import {
   bulkCreateEntries,
   queryEntriesPage,
   resolveRefsForRead,
+  validateSelect,
+  projectData,
   ValidationError,
 } from "@/lib/entries";
 import { getProject } from "@/lib/admin";
@@ -246,7 +248,8 @@ export const TOOL_DEFS: ToolDef[] = [
       "(default 100, max 500), where filters [{field, op: eq|contains|gt|lt|in, value}] and orderBy " +
       "{field, dir: asc|desc}. Ops are type-checked: contains=text/richtext, gt/lt=number/date, " +
       "in=text/enum/relation with value: string[]. Where items AND together; an item may be an OR " +
-      "group {anyOf: [clauses]} (one level, no nesting). " +
+      "group {anyOf: [clauses]} (one level, no nesting). select: [fields] trims each entry's data " +
+      "to those fields (id always included). " +
       "Returns {entries, limit, offset, hasMore, nextOffset} — when hasMore is true, re-call with " +
       "offset: nextOffset for the next page. No full-text search service.",
     inputSchema: {
@@ -256,6 +259,7 @@ export const TOOL_DEFS: ToolDef[] = [
         limit: { type: "number" },
         offset: { type: "number" },
         where: { type: "array", items: WHERE_ITEM_JSON },
+        select: { type: "array", items: { type: "string" } },
         orderBy: {
           type: "object",
           properties: {
@@ -493,6 +497,7 @@ const queryArgs = z.object({
   limit: z.number().optional(),
   offset: z.number().optional(),
   where: z.array(whereItemSchema).optional(),
+  select: z.array(z.string()).optional(),
   orderBy: z
     .object({ field: z.string(), dir: z.enum(["asc", "desc"]) })
     .optional(),
@@ -565,6 +570,7 @@ export async function callTool(
               "GET {deliveryBase}/{collection} — returns ONLY publicRead fields; " +
               "relations resolve to {id,label}, assets to {id,url}; " +
               "filters: ?field=value (public fields, equality); sort: ?sort=field:asc|desc; " +
+              "projection: ?select=a,b (public fields, id always included); " +
               "pagination: ?limit=&offset=",
             write:
               "POST {deliveryBase}/{collection} — anonymous when publicWrite, or " +
@@ -692,13 +698,18 @@ export async function callTool(
       case "query_entries": {
         const a = queryArgs.parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
+        if (a.select) validateSelect(c.fields, a.select);
         const page = await queryEntriesPage(c, {
           limit: a.limit,
           offset: a.offset,
           where: a.where,
           orderBy: a.orderBy,
         });
-        const resolved = await resolveRefsForRead(projectId, c, page.rows);
+        // Project before resolving refs so unselected relations cost nothing.
+        const rows = a.select
+          ? page.rows.map((r) => ({ ...r, data: projectData(r.data, a.select!) }))
+          : page.rows;
+        const resolved = await resolveRefsForRead(projectId, c, rows);
         return ok({
           entries: resolved.map((r) => ({ id: r.id, data: r.data })),
           limit: page.limit,
@@ -718,7 +729,9 @@ export async function callTool(
       }
 
       case "count_entries": {
-        const a = queryArgs.omit({ limit: true, offset: true, orderBy: true }).parse(rawArgs);
+        const a = queryArgs
+          .omit({ limit: true, offset: true, orderBy: true, select: true })
+          .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         return ok({ count: await countEntries(c, a.where ?? []) });
       }
