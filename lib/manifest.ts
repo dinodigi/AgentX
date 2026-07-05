@@ -10,7 +10,7 @@ import {
   type SchemaDiff,
 } from "./collections";
 import type { FieldDef } from "./field-types";
-import { WHERE_OPS, type WhereClause } from "./query";
+import { WHERE_OPS, type WhereItem } from "./query";
 import { ValidationError } from "./validation";
 
 /**
@@ -28,12 +28,18 @@ export interface ProjectManifest {
     displayName: string;
     publicWrite: boolean;
     webhookUrl: string | null;
-    publicFilter: WhereClause[] | null;
+    publicFilter: WhereItem[] | null;
     access: { read?: "public" | "authenticated" | "owner"; write?: "none" | "authenticated" | "owner"; ownerField?: string } | null;
     events: Record<string, unknown> | null;
     fields: FieldDef[];
   }[];
 }
+
+const manifestClauseSchema = z.object({
+  field: z.string(),
+  op: z.enum(WHERE_OPS),
+  value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
+});
 
 const manifestSchema = z.object({
   version: z.literal(1),
@@ -55,11 +61,10 @@ const manifestSchema = z.object({
       webhookUrl: z.string().nullable().default(null),
       publicFilter: z
         .array(
-          z.object({
-            field: z.string(),
-            op: z.enum(WHERE_OPS),
-            value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
-          }),
+          z.union([
+            manifestClauseSchema,
+            z.object({ anyOf: z.array(manifestClauseSchema).min(1) }),
+          ]),
         )
         .nullable()
         .default(null),

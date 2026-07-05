@@ -5,7 +5,7 @@ import { collections, entries, type Collection, type EventAction } from "@/db/sc
 import { getConnector } from "./connectors";
 import { ValidationError } from "./validation";
 import { validateFieldDefs, collectionNameSchema } from "./validation";
-import { buildWhere, type WhereClause } from "./query";
+import { buildWhere, type WhereItem } from "./query";
 import type { FieldDef } from "./field-types";
 
 /**
@@ -66,7 +66,7 @@ export interface DefineCollectionInput {
    * publicly served (e.g. [{field:"approved",op:"eq",value:true}]). May
    * reference private fields. Admin/MCP reads are unaffected.
    */
-  publicFilter?: WhereClause[] | null;
+  publicFilter?: WhereItem[] | null;
   /** Identity rule presets (Phase 4). owner rules need ownerField (a text field). */
   access?: {
     read?: "public" | "authenticated" | "owner";

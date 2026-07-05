@@ -15,7 +15,7 @@ export type EventAction =
   | { type: "webhook"; url: string }
   | { type: "email"; to: string; subject: string };
 import type { FieldDef } from "@/lib/field-types";
-import type { WhereClause } from "@/lib/query";
+import type { WhereItem } from "@/lib/query";
 import type { InferSelectModel } from "drizzle-orm";
 
 /**
@@ -74,7 +74,7 @@ export const collections = pgTable(
     /** Fired on public-write submissions. No email engine — webhook and stop. */
     webhookUrl: text("webhook_url"),
     /** Row visibility for delivery reads: only rows matching ALL clauses are served. */
-    publicFilter: jsonb("public_filter").$type<WhereClause[]>(),
+    publicFilter: jsonb("public_filter").$type<WhereItem[]>(),
     /**
      * Identity rule presets for the delivery API (Phase 4). No expression
      * language — three fixed levels per direction. `owner` requires ownerField

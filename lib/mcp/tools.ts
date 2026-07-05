@@ -48,6 +48,31 @@ export interface ToolDef {
   inputSchema: Record<string, unknown>;
 }
 
+/** JSON schema for one where clause — the single source for every where-shaped input. */
+const WHERE_CLAUSE_JSON = {
+  type: "object",
+  properties: {
+    field: { type: "string" },
+    op: { type: "string", enum: ["eq", "contains", "gt", "lt", "in"] },
+    value: { description: "scalar, or string[] for op 'in'" },
+  },
+  required: ["field", "op", "value"],
+  additionalProperties: false,
+} as const;
+
+/** A where item: a clause, or {anyOf:[clauses]} — an OR group, one level only. */
+const WHERE_ITEM_JSON = {
+  oneOf: [
+    WHERE_CLAUSE_JSON,
+    {
+      type: "object",
+      properties: { anyOf: { type: "array", items: WHERE_CLAUSE_JSON, minItems: 1 } },
+      required: ["anyOf"],
+      additionalProperties: false,
+    },
+  ],
+} as const;
+
 export const TOOL_DEFS: ToolDef[] = [
   {
     name: "get_project_info",
@@ -96,19 +121,10 @@ export const TOOL_DEFS: ToolDef[] = [
         publicFilter: {
           type: "array",
           description:
-            "row visibility for delivery reads: only rows matching ALL clauses are publicly " +
-            "served, e.g. [{field:'approved',op:'eq',value:true}]. May use private fields. " +
-            "Admin and MCP reads are unaffected.",
-          items: {
-            type: "object",
-            properties: {
-              field: { type: "string" },
-              op: { type: "string", enum: ["eq", "contains", "gt", "lt", "in"] },
-              value: {},
-            },
-            required: ["field", "op", "value"],
-            additionalProperties: false,
-          },
+            "row visibility for delivery reads: only rows matching ALL items are publicly " +
+            "served, e.g. [{field:'approved',op:'eq',value:true}]. Items may be OR groups " +
+            "{anyOf:[clauses]}. May use private fields. Admin and MCP reads are unaffected.",
+          items: WHERE_ITEM_JSON,
         },
         access: {
           type: "object",
@@ -229,7 +245,8 @@ export const TOOL_DEFS: ToolDef[] = [
       "List entries in a collection (relations resolved to {id,label}). Supports limit/offset " +
       "(default 100, max 500), where filters [{field, op: eq|contains|gt|lt|in, value}] and orderBy " +
       "{field, dir: asc|desc}. Ops are type-checked: contains=text/richtext, gt/lt=number/date, " +
-      "in=text/enum/relation with value: string[]. " +
+      "in=text/enum/relation with value: string[]. Where items AND together; an item may be an OR " +
+      "group {anyOf: [clauses]} (one level, no nesting). " +
       "Returns {entries, limit, offset, hasMore, nextOffset} — when hasMore is true, re-call with " +
       "offset: nextOffset for the next page. No full-text search service.",
     inputSchema: {
@@ -238,19 +255,7 @@ export const TOOL_DEFS: ToolDef[] = [
         collection: { type: "string" },
         limit: { type: "number" },
         offset: { type: "number" },
-        where: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              field: { type: "string" },
-              op: { type: "string", enum: ["eq", "contains", "gt", "lt", "in"] },
-              value: {},
-            },
-            required: ["field", "op", "value"],
-            additionalProperties: false,
-          },
-        },
+        where: { type: "array", items: WHERE_ITEM_JSON },
         orderBy: {
           type: "object",
           properties: {
@@ -282,19 +287,7 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: {
         collection: { type: "string" },
-        where: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              field: { type: "string" },
-              op: { type: "string", enum: ["eq", "contains", "gt", "lt", "in"] },
-              value: {},
-            },
-            required: ["field", "op", "value"],
-            additionalProperties: false,
-          },
-        },
+        where: { type: "array", items: WHERE_ITEM_JSON },
       },
       required: ["collection"],
       additionalProperties: false,
@@ -451,21 +444,23 @@ const eventActionSchema = z.union([
   z.object({ type: z.literal("email"), to: z.string(), subject: z.string() }),
 ]);
 
+const whereClauseSchema = z.object({
+  field: z.string(),
+  op: z.enum(["eq", "contains", "gt", "lt", "in"]),
+  value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
+});
+const whereItemSchema = z.union([
+  whereClauseSchema,
+  z.object({ anyOf: z.array(whereClauseSchema).min(1) }),
+]);
+
 const defineArgs = z.object({
   name: z.string(),
   displayName: z.string().optional(),
   fields: z.array(z.any()),
   publicWrite: z.boolean().optional(),
   webhookUrl: z.string().url().optional(),
-  publicFilter: z
-    .array(
-      z.object({
-        field: z.string(),
-        op: z.enum(["eq", "contains", "gt", "lt", "in"]),
-        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
-      }),
-    )
-    .optional(),
+  publicFilter: z.array(whereItemSchema).optional(),
   access: z
     .object({
       read: z.enum(["public", "authenticated", "owner"]).optional(),
@@ -497,15 +492,7 @@ const queryArgs = z.object({
   collection: z.string(),
   limit: z.number().optional(),
   offset: z.number().optional(),
-  where: z
-    .array(
-      z.object({
-        field: z.string(),
-        op: z.enum(["eq", "contains", "gt", "lt", "in"]),
-        value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
-      }),
-    )
-    .optional(),
+  where: z.array(whereItemSchema).optional(),
   orderBy: z
     .object({ field: z.string(), dir: z.enum(["asc", "desc"]) })
     .optional(),

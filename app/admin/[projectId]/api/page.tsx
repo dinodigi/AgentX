@@ -2,6 +2,16 @@ import { listCollections } from "@/lib/collections";
 import { publicFields } from "@/lib/entries";
 import type { Collection } from "@/db/schema";
 import type { FieldDef } from "@/lib/field-types";
+import type { WhereClause, WhereItem } from "@/lib/query";
+
+function describeClause(c: WhereClause): string {
+  return `${c.field} ${c.op} ${Array.isArray(c.value) ? c.value.join("|") : c.value}`;
+}
+function describeWhereItem(item: WhereItem): string {
+  return "anyOf" in item
+    ? `(${item.anyOf.map(describeClause).join(" OR ")})`
+    : describeClause(item);
+}
 
 /**
  * Auto-generated API reference — rendered straight from the schema registry.
@@ -97,7 +107,7 @@ function CollectionDocs({ collection }: { collection: Collection }) {
         )}
         {collection.publicFilter?.length ? (
           <span className="chip chip-mute">
-            row filter: {collection.publicFilter.map((f) => `${f.field} ${f.op} ${f.value}`).join(", ")}
+            row filter: {collection.publicFilter.map(describeWhereItem).join(", ")}
           </span>
         ) : null}
         {eventCount > 0 && (

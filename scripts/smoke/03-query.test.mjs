@@ -96,6 +96,50 @@ describe("query filters + sorting", () => {
     assert.ok(!arrayOnEq.ok && /use op "in"/.test(arrayOnEq.errorText), arrayOnEq.errorText);
   });
 
+  it("anyOf: OR groups AND with sibling items, one level only", async () => {
+    // (title contains "paddle" OR price > 100) AND level = easy
+    const r = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      where: [
+        {
+          anyOf: [
+            { field: "title", op: "contains", value: "paddle" },
+            { field: "price", op: "gt", value: 100 },
+          ],
+        },
+        { field: "level", op: "eq", value: "easy" },
+      ],
+    });
+    assert.ok(r.ok, r.errorText);
+    assert.deepEqual(r.value.entries.map((e) => e.data.title), ["Alpha paddle"]);
+
+    const orOnly = await mcp(p.mcpToken, "count_entries", {
+      collection: "trips",
+      where: [
+        {
+          anyOf: [
+            { field: "title", op: "contains", value: "paddle" },
+            { field: "price", op: "gt", value: 100 },
+          ],
+        },
+      ],
+    });
+    assert.equal(orOnly.value.count, 2); // Alpha paddle + Beta rapids
+
+    // Bad clauses inside a group still get the full validation treatment.
+    const badInner = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      where: [{ anyOf: [{ field: "nope", op: "eq", value: 1 }] }],
+    });
+    assert.ok(!badInner.ok && /valid fields:/.test(badInner.errorText), badInner.errorText);
+
+    const empty = await mcp(p.mcpToken, "query_entries", {
+      collection: "trips",
+      where: [{ anyOf: [] }],
+    });
+    assert.ok(!empty.ok, "empty anyOf must be rejected");
+  });
+
   it("rejects op/type mismatch with an allowed-ops hint", async () => {
     const r = await mcp(p.mcpToken, "query_entries", {
       collection: "trips",

@@ -20,6 +20,13 @@ export interface WhereClause {
   value: string | number | boolean | string[];
 }
 
+/**
+ * One item of a where[] list: a clause, or an OR group of clauses.
+ * Items AND together; inside anyOf, clauses OR together. Exactly one nesting
+ * level — no expression language.
+ */
+export type WhereItem = WhereClause | { anyOf: WhereClause[] };
+
 export interface OrderByClause {
   field: string;
   dir: "asc" | "desc";
@@ -62,57 +69,85 @@ function accessor(field: FieldDef): SQL {
   }
 }
 
-/** Validate + compile where clauses to SQL conditions. Throws ValidationError. */
-export function buildWhere(fields: FieldDef[], where: WhereClause[]): SQL[] {
-  return where.map((clause) => {
-    const f = fieldOrThrow(fields, clause.field, "where");
-    if (!OPS_BY_TYPE[f.type].includes(clause.op)) {
-      throw new ValidationError(
-        `where: op "${clause.op}" not valid for ${f.type} field "${f.name}" — allowed: ${OPS_BY_TYPE[f.type].join(", ")}`,
-      );
-    }
-    if (clause.op === "in") {
-      if (!Array.isArray(clause.value) || clause.value.length === 0) {
-        throw new ValidationError(
-          `where: op "in" on "${f.name}" needs a non-empty array of values, e.g. {field:"${f.name}",op:"in",value:["a","b"]}`,
-        );
+/** Validate + compile where items (clauses + OR groups) to SQL conditions. Throws ValidationError. */
+export function buildWhere(fields: FieldDef[], where: WhereItem[]): SQL[] {
+  return where.map((item) => {
+    if ("anyOf" in item) {
+      if (!Array.isArray(item.anyOf) || item.anyOf.length === 0) {
+        throw new ValidationError("where: anyOf needs a non-empty array of clauses");
       }
-    } else if (Array.isArray(clause.value)) {
-      throw new ValidationError(
-        `where: op "${clause.op}" on "${f.name}" takes a single value, not an array — use op "in" for value lists`,
-      );
+      const conds = item.anyOf.map((c) => {
+        if (typeof c !== "object" || c === null || "anyOf" in c) {
+          throw new ValidationError("where: anyOf cannot nest another anyOf — one level only");
+        }
+        return compileClause(fields, c);
+      });
+      return conds.length === 1 ? conds[0] : sql`(${sql.join(conds, sql` OR `)})`;
     }
-    const lhs = accessor(f);
-    switch (clause.op) {
-      case "eq":
-        if (f.type === "boolean") return sql`${lhs} = ${Boolean(clause.value)}`;
-        if (f.type === "number") return sql`${lhs} = ${Number(clause.value)}`;
-        return sql`${lhs} = ${String(clause.value)}`;
-      case "contains":
-        return sql`${lhs} ILIKE ${"%" + String(clause.value) + "%"}`;
-      case "gt":
-        return f.type === "number"
-          ? sql`${lhs} > ${Number(clause.value)}`
-          : sql`${lhs} > ${String(clause.value)}::timestamptz`;
-      case "lt":
-        return f.type === "number"
-          ? sql`${lhs} < ${Number(clause.value)}`
-          : sql`${lhs} < ${String(clause.value)}::timestamptz`;
-      case "in": {
-        const values = (clause.value as string[]).map((v) => sql`${String(v)}`);
-        return sql`${lhs} IN (${sql.join(values, sql`, `)})`;
-      }
-    }
+    return compileClause(fields, item);
   });
 }
 
-/** JS-side clause evaluation for single-entry row gates (same semantics as buildWhere). */
+function compileClause(fields: FieldDef[], clause: WhereClause): SQL {
+  const f = fieldOrThrow(fields, clause.field, "where");
+  if (!OPS_BY_TYPE[f.type].includes(clause.op)) {
+    throw new ValidationError(
+      `where: op "${clause.op}" not valid for ${f.type} field "${f.name}" — allowed: ${OPS_BY_TYPE[f.type].join(", ")}`,
+    );
+  }
+  if (clause.op === "in") {
+    if (!Array.isArray(clause.value) || clause.value.length === 0) {
+      throw new ValidationError(
+        `where: op "in" on "${f.name}" needs a non-empty array of values, e.g. {field:"${f.name}",op:"in",value:["a","b"]}`,
+      );
+    }
+  } else if (Array.isArray(clause.value)) {
+    throw new ValidationError(
+      `where: op "${clause.op}" on "${f.name}" takes a single value, not an array — use op "in" for value lists`,
+    );
+  }
+  const lhs = accessor(f);
+  switch (clause.op) {
+    case "eq":
+      if (f.type === "boolean") return sql`${lhs} = ${Boolean(clause.value)}`;
+      if (f.type === "number") return sql`${lhs} = ${Number(clause.value)}`;
+      return sql`${lhs} = ${String(clause.value)}`;
+    case "contains":
+      return sql`${lhs} ILIKE ${"%" + String(clause.value) + "%"}`;
+    case "gt":
+      return f.type === "number"
+        ? sql`${lhs} > ${Number(clause.value)}`
+        : sql`${lhs} > ${String(clause.value)}::timestamptz`;
+    case "lt":
+      return f.type === "number"
+        ? sql`${lhs} < ${Number(clause.value)}`
+        : sql`${lhs} < ${String(clause.value)}::timestamptz`;
+    case "in": {
+      const values = (clause.value as string[]).map((v) => sql`${String(v)}`);
+      return sql`${lhs} IN (${sql.join(values, sql`, `)})`;
+    }
+  }
+}
+
+/** JS-side item evaluation for single-entry row gates (same semantics as buildWhere). */
 export function matchesClauses(
   fields: FieldDef[],
-  clauses: WhereClause[],
+  clauses: WhereItem[],
   data: Record<string, unknown>,
 ): boolean {
-  return clauses.every((c) => {
+  return clauses.every((item) =>
+    "anyOf" in item
+      ? item.anyOf.some((c) => matchClause(fields, c, data))
+      : matchClause(fields, item, data),
+  );
+}
+
+function matchClause(
+  fields: FieldDef[],
+  c: WhereClause,
+  data: Record<string, unknown>,
+): boolean {
+  {
     const f = fields.find((x) => x.name === c.field);
     if (!f) return false;
     const v = data[c.field];
@@ -134,7 +169,7 @@ export function matchesClauses(
           ? Number(v) < Number(c.value)
           : new Date(String(v)) < new Date(String(c.value));
     }
-  });
+  }
 }
 
 /** Validate + compile an orderBy clause. Throws ValidationError. */

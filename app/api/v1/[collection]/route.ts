@@ -12,7 +12,7 @@ import {
   publicFields,
   ValidationError,
 } from "@/lib/entries";
-import type { WhereClause, OrderByClause } from "@/lib/query";
+import type { WhereClause, WhereItem, OrderByClause } from "@/lib/query";
 
 /**
  * Delivery API — what the live site consumes. Scoped per-project by the same
@@ -89,7 +89,7 @@ export async function GET(
   try {
     // Row gates first: declarative publicFilter, then the owner clause.
     const effectiveWhere = [
-      ...((collection.publicFilter as WhereClause[] | null) ?? []),
+      ...((collection.publicFilter as WhereItem[] | null) ?? []),
       ...(gate.ownerClause ? [gate.ownerClause] : []),
       ...where,
     ];

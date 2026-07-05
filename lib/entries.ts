@@ -2,7 +2,7 @@ import { and, count, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { entries, assets, collections, type Collection, type Entry } from "@/db/schema";
 import { buildEntrySchema, formatZodError, ValidationError, type RefCheck } from "./validation";
-import { buildWhere, buildOrderBy, type WhereClause, type OrderByClause } from "./query";
+import { buildWhere, buildOrderBy, type WhereItem, type OrderByClause } from "./query";
 import { emitEntryEvent } from "./events";
 import { recordAudit } from "./audit";
 import type { AuditActor } from "@/db/schema";
@@ -228,7 +228,7 @@ export async function getEntry(collection: Collection, id: string): Promise<Entr
 
 export async function countEntries(
   collection: Collection,
-  where: WhereClause[] = [],
+  where: WhereItem[] = [],
 ): Promise<number> {
   const conditions = [
     eq(entries.collectionId, collection.id),
@@ -302,7 +302,7 @@ export async function bulkCreateEntries(
 export interface QueryOpts {
   limit?: number;
   offset?: number;
-  where?: WhereClause[];
+  where?: WhereItem[];
   orderBy?: OrderByClause;
 }
 
