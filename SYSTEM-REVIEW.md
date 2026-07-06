@@ -1,113 +1,73 @@
-# AgentX System Review — 2026-07-05
+# AgentX System Review — refreshed 2026-07-05 (evening)
 
-Grounded audit: 6,174 lines / 57 source files · 19 MCP tools · 8 tables ·
-verified by live batteries (no automated tests yet). Grades are honest.
+Grounded audit after the subsystem sweep: ~8.9k source lines + 2.3k test
+lines · **26 MCP tools · 93 automated integration tests** (`npm run verify`,
+green before every commit) · 8 tables. The morning review's Round A and
+Round B are complete; what remains is Round C — proving it in the field.
 
-## Part 1 — What exists, subsystem by subsystem
+## Part 1 — Subsystem states (work order 01→10)
 
-### Data layer — A-
-8 primitives, strict runtime validation (unknown keys, types, enums, dangling
-refs all rejected), schema diff/plan/confirm, manifest export/import,
-idempotency keys, bulk create with per-item results.
-**Missing:** field constraints (unique/min/max), multi-relation (has-many),
-rename migrations (rename = drop+add today, data stranded).
+### 01 Ops & quality — A- (was D)
+93-test suite, ephemeral projects, pre-commit gate, data export + backup
+runbook, after()-deferred side-work, pluggable rate-limit store.
+**Gated:** CI, usage metering (platform), durable store impl (deploy).
 
-### Query layer — B
-eq/contains/gt/lt filters, typed sort, offset paging, filtered counts.
-**Missing:** `in` + OR logic, aggregations (sum/avg/group-by), cursor
-pagination, deep relation population (one level of {id,label} only).
+### 02 Security — A-
+HMAC webhooks, CORS (+expose-headers), upload limits, audit trail on all
+three surfaces, security headers, token last-used. **Gated:** content-scope
+token (custom-admin demand), strict CSP (Clerk allowlist work).
 
-### Delivery API — B+
-Per-field publicRead, publicFilter row gates, identity gates, single-entry
-GET/PATCH/DELETE for owners, rate-limited public POST.
-**Missing:** CORS headers (browser calls will fail cross-origin), webhook HMAC
-signatures, public file uploads (forms can't attach files), ETag/cache headers.
+### 03 MCP surface — A
+Stable `E_*` codes with fix hints, exact pagination envelopes, get_deliveries
+/ get_audit_log / refire_delivery self-debugging, get_client_code (typed
+dependency-free TS client, tsc --strict + live round-trip tested).
 
-### Identity — B
-BYO-issuer JWT verification (JWKS cached), public/authenticated/owner presets,
-server-side owner stamping, ownership immutable via API.
-**Missing:** claims-based roles (gated), a real Clerk instance actually
-connected (verified against mock issuer only), JWT-only revocation caveat
-(no server-side logout).
+### 04 Query layer — A-
+eq/contains/gt/lt/in + anyOf OR groups, select projection, exact keyset
+cursors, aggregate_entries (count/sum/avg/min/max, group-by enum/relation
+with labels). **Deferred:** relation depth (real-site evidence).
 
-### Events — B-
-created/updated/deleted → webhook (3 retries + log) and email (Resend,
-{{field}} interpolation), single emit point covering MCP/admin/delivery.
-**Missing:** conditional actions ("only when status=confirmed"), manual
-re-fire for failed deliveries, agent-readable delivery log (admin-only today —
-agents can't debug their own webhooks).
+### 05 Data layer — A
+Constraints (unique via partial indexes, min/max, requiredIf),
+update_entry_if (atomic CAS + guarded increment — 5 parallel bookings vs 3
+seats: exactly 3 win), rename migrations with backfill.
+**Gated:** multi-relation, transact (evidence).
 
-### Connectors — B-
-Encrypted secrets (AES-256-GCM), Clerk + Resend, health checks, status via MCP
-with secrets structurally unexposable.
-**Missing:** Neon connector (gated on tenant demand), OAuth connect flows
-(paste-keys only), secret rotation UX.
+### 06 Delivery API — A-
+{error, code} envelope, strong ETags + 304s, public multipart uploads,
+versioning discipline doc. A CDN-hosted static site needs no server of its
+own. **Deferred:** presigned-PUT uploads (volume), per-project CORS allowlist.
 
-### Admin — B+
-Registry-rendered, per-project branding, redesigned (paper/ink), tabs
-(Appearance/Connectors/Settings/API), search + pagination, delivery log.
-**Missing:** richtext is a bare textarea (weakest handoff moment), relation
-picker caps at 500 options, no asset manager page, no audit log (who changed
-what), no one-click mark-handled for inboxes, mobile layout untested (fixed
-240px rail — likely poor).
+### 07 Admin — A- (pending human eyeball)
+TipTap richtext, inbox mark-handled + badges, Media page, typeahead relation
+picker, entry History panel, mobile drawer, teaching empty states. Clerk-gated
+so the suite can't render it — **visual pass before next client handoff.**
 
-### MCP surface — A-
-19 self-describing tools, machine-readable errors with fix hints,
-plan+confirm on destruction, get_project_info orientation.
-**Missing:** `get_client_code` (generated typed TS client — both experiment
-arms hand-rolled one), delivery-log reading tool, docs URL in errors.
+### 08 Events — A-
+when: clauses, disabled flag, previous+changedFields snapshots, re-fire from
+the log (tool + button; email renders stored for replay).
+**Gated:** digests (demand), function actions (Phase 6).
 
-### Security — B
-Scoped tokens (mcp/delivery) + rotation + cache TTL, rate limiting, encrypted
-secrets, per-project access with 404 shielding, reserved slugs.
-**Missing:** audit trail, webhook signatures, CORS policy, hard upload
-size/type limits, CSP headers.
+### 09 Identity — B+ (mechanically proven, not field-proven)
+Multi-issuer + audience + clock tolerance, session guidance doc, owner rules,
+stamping. **The gap is a real Clerk instance** — everything verified against
+a mock RS256 issuer only.
 
-### Ops & quality — D (the honest one)
-Everything verified by hand-driven curl batteries; git history; memory notes.
-**Missing:** automated tests (zero), CI, deploy (user-deferred), durable rate
-limiting (in-memory), event emits are void promises (serverless risk: use
-after()/queue when deployed), monitoring/alerting, data export/backup beyond
-Neon defaults, usage metering.
+### 10 Connectors — B+
+Rotation with validate-before-swap, studio health dots, encrypted secrets,
+health probes. **Gated:** scheduled checks (deploy), OAuth flows (platform),
+Neon (tenant), provider expansion (demand).
 
-## Part 2 — What "next level" means
+## Part 2 — Round C: prove it (unchanged, all needs the user)
 
-From *working dogfood tool* to *credible platform someone else could rely on*.
-Three pillars:
-
-1. **Trustworthy under failure** — provable behavior (tests), recoverable data
-   (export/backup), debuggable by its own agents (log tools).
-2. **Complete for a first real app** — no wall in the first week of a real
-   client build (SDK, uploads, aggregations, editor, constraints).
-3. **Proven** — deployed, real Clerk/Resend connected, one real site shipped,
-   friction log mined.
-
-## Part 3 — The gap plan
-
-### Round A — Trust (all local, no deploy)
-- [x] A1 Automated smoke suite — ✅ 2026-07-05: 38 tests / 8 files, `npm run verify`
-- [x] A2 Data export — ✅ 2026-07-05: export_entries tool + admin CSV/JSON + runbook
-- [x] A3 Webhook HMAC signatures — ✅ 2026-07-05
-- [x] A4 CORS policy on /v1 — ✅ 2026-07-05 (permissive; per-project allowlist later)
-- [x] A5 `get_deliveries` tool — ✅ 2026-07-05 (subsystem 03, + get_audit_log)
-- [x] A6 Light audit log — ✅ 2026-07-05 (write-only; UI in subsystem 07)
-
-### Round B — First-app completeness
-- [x] B1 `get_client_code` — ✅ 2026-07-05 (subsystem 03; tsc --strict + live round-trip tested)
-- [x] B2 Public uploads — ✅ 2026-07-05 (subsystem 06: + ETags, {error,code} envelope)
-- [x] B3 Aggregations — ✅ 2026-07-05 (subsystem 04: + in/anyOf ops, select, cursor paging)
-- [x] B4 Field constraints — ✅ 2026-07-05 (subsystem 05: unique/min/max/requiredIf)
-- [x] B5 `update_entry_if` — ✅ 2026-07-05 (subsystem 05: + rename migration)
-- [x] B6 Richtext editor in admin (TipTap) + inbox mark-handled — ✅ 2026-07-05 (subsystem 07)
-- [x] B7 Mobile pass on the admin — ✅ 2026-07-05 (subsystem 07; human eyeball pending)
-
-### Round C — Prove it (needs user)
 - [ ] C1 Real Clerk + Resend connected, live end-to-end auth + email
-- [ ] C2 Deploy (whenever chosen) — prod env, durable rate limit note, after()/queue for emits
-- [ ] C3 Real client site + friction log (THE milestone)
+- [ ] C2 Deploy — prod env; durable RateLimitStore impl; after() already in place
+- [ ] C3 Real client site + friction log (THE milestone — decides every gate)
 - [ ] C4 Close the Tidewater experiment file (scores/times)
+- [ ] C5 Human visual pass on the admin (TipTap, combobox, mobile, Media, rotate)
 
-### Stays gated (unchanged)
-Claims roles · transact · hosted functions (architecture documented in chat
-2026-07-05; build only at Phase 6) · Neon connector · realtime (decide on
-evidence) · multi-relation (dogfood signal) · workspaces/quotas/plugins.
+## Historical record
+
+The original 2026-07-05 morning review (grades D–A-, Round A/B gap lists) is
+in git history at commit 07e40ed and earlier — kept out of this file so the
+review always describes the system as it is.
