@@ -5,6 +5,7 @@ import { buildEntrySchema, formatZodError, ValidationError, type RefCheck } from
 import { accessor, buildWhere, buildOrderBy, type WhereItem, type OrderByClause } from "./query";
 import { emitEntryEvent } from "./events";
 import { recordAudit } from "./audit";
+import { defer } from "./defer";
 import type { AuditActor } from "@/db/schema";
 
 const UNKNOWN_ACTOR: AuditActor = { type: "unknown" };
@@ -151,7 +152,8 @@ export async function createEntry(
     if (!/entries_idempotency_idx/.test(dbErrorText(e))) rethrowUnique(e);
   }
   if (row) {
-    void emitEntryEvent(collection, "created", { id: row.id, data: row.data });
+    const created = row;
+    defer(() => emitEntryEvent(collection, "created", { id: created.id, data: created.data }));
     recordAudit({
       projectId,
       collectionName: collection.name,
@@ -210,7 +212,10 @@ export async function updateEntry(
   } catch (e) {
     rethrowUnique(e);
   }
-  void emitEntryEvent(collection, "updated", { id: row.id, data: row.data }, current.data);
+  const updated = row;
+  defer(() =>
+    emitEntryEvent(collection, "updated", { id: updated.id, data: updated.data }, current.data),
+  );
   recordAudit({
     projectId,
     collectionName: collection.name,
@@ -307,7 +312,8 @@ export async function updateEntryIf(
     return { ok: false, reason: exists ? "conflict" : "not_found" };
   }
 
-  void emitEntryEvent(collection, "updated", { id: row.id, data: row.data });
+  const applied = row;
+  defer(() => emitEntryEvent(collection, "updated", { id: applied.id, data: applied.data }));
   recordAudit({
     projectId,
     collectionName: collection.name,
@@ -329,7 +335,8 @@ export async function deleteEntry(
     .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
     .returning();
   if (row) {
-    void emitEntryEvent(collection, "deleted", { id: row.id, data: row.data });
+    const deleted = row;
+    defer(() => emitEntryEvent(collection, "deleted", { id: deleted.id, data: deleted.data }));
     recordAudit({
       projectId: collection.projectId,
       collectionName: collection.name,
@@ -415,7 +422,8 @@ export async function bulkCreateEntries(
     }
     valid.forEach((v, i) => {
       results.push({ index: v.index, ok: true, id: rows[i].id });
-      void emitEntryEvent(collection, "created", { id: rows[i].id, data: rows[i].data });
+      const created = rows[i];
+      defer(() => emitEntryEvent(collection, "created", { id: created.id, data: created.data }));
       recordAudit({
         projectId,
         collectionName: collection.name,

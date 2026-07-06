@@ -1,11 +1,13 @@
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, type AuditActor, type AuditLogRow } from "@/db/schema";
+import { defer } from "./defer";
 
 /**
  * Light audit trail: one row per entry mutation, recording which surface
  * (mcp/admin/delivery) did it and as whom. Fire-and-forget by contract —
- * auditing must never take down the mutation path.
+ * auditing must never take down the mutation path — but deferred via after()
+ * so serverless freeze can't drop the row.
  */
 export function recordAudit(opts: {
   projectId: string;
@@ -15,17 +17,19 @@ export function recordAudit(opts: {
   actor: AuditActor;
   changedFields?: string[];
 }): void {
-  void db
-    .insert(auditLog)
-    .values({
-      projectId: opts.projectId,
-      collectionName: opts.collectionName,
-      entryId: opts.entryId,
-      action: opts.action,
-      actor: opts.actor,
-      changedFields: opts.changedFields ?? null,
-    })
-    .catch(() => {});
+  defer(() =>
+    db
+      .insert(auditLog)
+      .values({
+        projectId: opts.projectId,
+        collectionName: opts.collectionName,
+        entryId: opts.entryId,
+        action: opts.action,
+        actor: opts.actor,
+        changedFields: opts.changedFields ?? null,
+      })
+      .catch(() => {}),
+  );
 }
 
 export interface AuditFilter {
