@@ -43,9 +43,12 @@ export function deliveryError(
  */
 export function cachedJson(req: NextRequest, body: unknown): Response {
   const json = JSON.stringify(body);
-  const etag = `"${createHash("sha256").update(json).digest("hex").slice(0, 32)}"`;
+  const hash = createHash("sha256").update(json).digest("hex").slice(0, 32);
+  const etag = `"${hash}"`;
   const cacheHeaders = { etag, "cache-control": "no-cache" };
-  if (req.headers.get("if-none-match") === etag) {
+  // Match by hash inclusion, not equality: CDNs mutate ETags in flight
+  // (Netlify appends -df for compressed responses; proxies add W/ markers).
+  if (req.headers.get("if-none-match")?.includes(hash)) {
     return new Response(null, { status: 304, headers: { ...CORS_HEADERS, ...cacheHeaders } });
   }
   return new Response(json, {

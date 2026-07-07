@@ -61,7 +61,10 @@ Neon (tenant), provider expansion (demand).
 ## Part 2 — Round C: prove it (unchanged, all needs the user)
 
 - [ ] C1 Real Clerk + Resend connected, live end-to-end auth + email
-- [ ] C2 Deploy — prod env; durable RateLimitStore impl; after() already in place
+- [x] C2 Deploy — ✅ 2026-07-05: https://agentx-currents.netlify.app (Netlify,
+      dev resources, docs/runbooks/deploy-netlify.md). after() canary PASSED
+      on prod; CDN strips If-None-Match (documented); durable RateLimitStore
+      impl still pending (per-lambda limiting until then)
 - [ ] C3 Real client site + friction log (THE milestone — decides every gate)
 - [ ] C4 Close the Tidewater experiment file (scores/times)
 - [ ] C5 Human visual pass on the admin (TipTap, combobox, mobile, Media, rotate)
