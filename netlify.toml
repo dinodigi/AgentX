@@ -1,0 +1,9 @@
+# Netlify build config. The Next.js runtime plugin translates App Router
+# routes/server actions into Netlify functions; env vars are set on the site
+# (never here — this file is committed).
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
