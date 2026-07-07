@@ -154,14 +154,38 @@ export async function saveConnector(
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
 
-  const { CONNECTOR_SPECS, upsertConnector } = await import("@/lib/connectors");
+  const { CONNECTOR_SPECS, upsertConnector, deriveClerkIssuer } = await import("@/lib/connectors");
   const spec = CONNECTOR_SPECS[type];
   const config: Record<string, string> = {};
   for (const f of spec.configFields) {
     config[f.key] = String(formData.get(f.key) ?? "").trim();
   }
-  if (type === "clerk" && config.issuer && !/^https:\/\//.test(config.issuer)) {
-    return { error: "Issuer must be an https URL" };
+  if (type === "clerk") {
+    // One-paste connect: the publishable key alone is enough — derive the issuer.
+    if (!config.issuer && config.publishableKey) {
+      const derived = deriveClerkIssuer(config.publishableKey);
+      if (!derived) {
+        return { error: "Couldn't read that publishable key — it should start with pk_test_ or pk_live_" };
+      }
+      config.issuer = derived;
+    }
+    if (!config.issuer) {
+      return { error: "Paste your Clerk publishable key (or an issuer URL)" };
+    }
+    if (!/^https:\/\//.test(config.issuer)) {
+      return { error: "Issuer must be an https URL" };
+    }
+    // Validate before saving: a connector that never worked shouldn't say "connected".
+    try {
+      const res = await fetch(`${config.issuer.replace(/\/$/, "")}/.well-known/jwks.json`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        return { error: `That instance's JWKS returned HTTP ${res.status} — check the key/issuer` };
+      }
+    } catch {
+      return { error: "Couldn't reach that Clerk instance — check the key/issuer and try again" };
+    }
   }
   const secret = String(formData.get("secret") ?? "").trim();
   if (spec.secretLabel && !secret) {

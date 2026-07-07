@@ -20,14 +20,14 @@ export const CONNECTOR_SPECS: Record<
     label: "Clerk (end-user auth)",
     configFields: [
       {
-        key: "issuer",
-        label: "Issuer URL",
-        placeholder: "https://your-app.clerk.accounts.dev",
+        key: "publishableKey",
+        label: "Publishable key — paste this and Connect; the issuer is derived automatically",
+        placeholder: "pk_test_…",
       },
       {
-        key: "publishableKey",
-        label: "Publishable key (safe to expose; sites use it for sign-in UI)",
-        placeholder: "pk_test_…",
+        key: "issuer",
+        label: "Issuer URL (optional — derived from the publishable key; set to override)",
+        placeholder: "https://your-app.clerk.accounts.dev",
       },
       {
         key: "additionalIssuers",
@@ -52,6 +52,23 @@ export const CONNECTOR_SPECS: Record<
 };
 
 const tag = (projectId: string) => `connectors:${projectId}`;
+
+/**
+ * A Clerk publishable key encodes the instance's frontend API domain:
+ * pk_test_<base64("foo-bar-1.clerk.accounts.dev$")>. Deriving the issuer from
+ * the key makes connecting one paste — no URL hunting in the Clerk dashboard.
+ */
+export function deriveClerkIssuer(publishableKey: string): string | null {
+  const m = /^pk_(?:test|live)_(.+)$/.exec(publishableKey.trim());
+  if (!m) return null;
+  try {
+    const domain = Buffer.from(m[1], "base64").toString("utf8").replace(/\$$/, "");
+    if (!/^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/i.test(domain)) return null;
+    return `https://${domain}`;
+  } catch {
+    return null;
+  }
+}
 
 export async function getConnector(
   projectId: string,
