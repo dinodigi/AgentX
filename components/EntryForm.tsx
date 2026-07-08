@@ -28,12 +28,17 @@ export function EntryForm({
   relationChoices,
   initial,
   action,
+  enumOptionOverrides,
 }: {
   projectId: string;
   fields: FieldDef[];
   relationChoices: Record<string, RelationChoice[]>;
   initial: Record<string, unknown>;
   action: (formData: FormData) => Promise<{ error?: string } | void>;
+  /** Workflow-aware option narrowing (G5): for a state-machine field, only the
+   * current state + admin-reachable targets are offered (new entries: initial
+   * only). UX truthfulness — the entries layer remains the enforcer. */
+  enumOptionOverrides?: Record<string, string[]>;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -55,6 +60,7 @@ export function EntryForm({
           field={f}
           value={initial[f.name]}
           choices={relationChoices[f.name] ?? []}
+          enumOverride={enumOptionOverrides?.[f.name]}
         />
       ))}
       {error && (
@@ -102,11 +108,13 @@ function FieldInput({
   field,
   value,
   choices,
+  enumOverride,
 }: {
   projectId: string;
   field: FieldDef;
   value: unknown;
   choices: RelationChoice[];
+  enumOverride?: string[];
 }) {
   switch (field.type) {
     case "text":
@@ -164,13 +172,20 @@ function FieldInput({
           />
         </div>
       );
-    case "enum":
+    case "enum": {
+      // A workflow field offers only the current state + reachable targets —
+      // and always holds a state, so no empty "—" choice.
+      const options = enumOverride ?? field.options;
       return (
         <div className="mb-4">
           <Label field={field} />
-          <select name={field.name} defaultValue={str(value)} className={inputClass}>
-            <option value="">—</option>
-            {field.options.map((o) => (
+          <select
+            name={field.name}
+            defaultValue={str(value) || (enumOverride ? options[0] : "")}
+            className={inputClass}
+          >
+            {!enumOverride && <option value="">—</option>}
+            {options.map((o) => (
               <option key={o} value={o}>
                 {o}
               </option>
@@ -178,6 +193,7 @@ function FieldInput({
           </select>
         </div>
       );
+    }
     case "relation":
       return (
         <div className="mb-4">

@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray, and } from "drizzle-orm";
 import { db } from "@/db";
-import { projects, projectTokens, projectMembers, webhookDeliveries } from "@/db/schema";
+import { projects, projectTokens, projectMembers, webhookDeliveries, jobs } from "@/db/schema";
 import { getProjectRole } from "@/lib/access";
 import { listCollections } from "@/lib/collections";
+import { listSchedules } from "@/lib/schedules";
 import { TokensSection, WebhookForm, MembersSection, SecretReveal } from "./sections";
-import { refireDeliveryAction } from "./actions";
+import { refireDeliveryAction, cancelJobAction, toggleScheduleAction } from "./actions";
 
 /**
  * Settings tab: tokens, webhooks, members, manifest, delivery log.
@@ -20,7 +21,7 @@ export default async function SettingsPage({
   const role = await getProjectRole(projectId);
   if (role !== "operator") notFound();
 
-  const [collections, tokens, members, deliveries, projectRow] = await Promise.all([
+  const [collections, tokens, members, deliveries, projectRow, automationJobs, schedules] = await Promise.all([
     listCollections(projectId),
     db
       .select({
@@ -45,6 +46,15 @@ export default async function SettingsPage({
       .where(eq(projects.id, projectId))
       .limit(1)
       .then((r) => r[0]),
+    // Automation: work still in the queue or needing attention (succeeded rows
+    // are noise here; the delivery log holds outcomes).
+    db
+      .select()
+      .from(jobs)
+      .where(and(eq(jobs.projectId, projectId), inArray(jobs.status, ["pending", "running", "failed"])))
+      .orderBy(desc(jobs.runAt))
+      .limit(20),
+    listSchedules(projectId),
   ]);
 
   const formCollections = collections.filter((c) => c.publicWrite);
@@ -152,6 +162,103 @@ export default async function SettingsPage({
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      <section className="mb-9">
+        <h2 className="section-label mb-1">Automation</h2>
+        <p className="mb-3 max-w-md text-sm text-[--color-ink-mute]">
+          Background work: delayed event actions and recurring schedules. Job
+          outcomes (webhooks/emails) land in the delivery log above.
+        </p>
+        {schedules.length === 0 && automationJobs.length === 0 ? (
+          <p className="card max-w-md p-4 text-sm text-[--color-ink-mute]">
+            No schedules or queued jobs — agents create them via define_schedule
+            and events with <code className="font-mono text-xs">after</code>.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {schedules.length > 0 && (
+              <div className="card max-w-2xl overflow-x-auto">
+                <table className="w-full text-sm">
+                  <tbody>
+                    {schedules.map((s) => (
+                      <tr key={s.id} className="border-b border-[--color-line] last:border-0">
+                        <td className="px-4 py-2.5 font-medium">{s.name}</td>
+                        <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
+                          {s.recurrence.frequency}
+                          {s.recurrence.at ? ` at ${s.recurrence.at}` : ""}
+                          {s.recurrence.weekday ? ` (${s.recurrence.weekday})` : ""}
+                          {s.recurrence.dayOfMonth ? ` (day ${s.recurrence.dayOfMonth})` : ""}
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-xs text-[--color-ink-mute]">
+                          {s.action.type === "webhook" ? "webhook" : `email:${s.action.to}`}
+                        </td>
+                        <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
+                          {s.enabled
+                            ? `next ${s.nextRunAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
+                            : "paused"}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <form action={toggleScheduleAction.bind(null, projectId, s.id, !s.enabled)}>
+                            <button
+                              type="submit"
+                              className="btn !px-2.5 !py-1 text-xs"
+                              title={
+                                s.enabled
+                                  ? "Pause — also skips already-queued fires"
+                                  : "Resume — a missed window fires once, then advances"
+                              }
+                            >
+                              {s.enabled ? "Pause" : "Resume"}
+                            </button>
+                          </form>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {automationJobs.length > 0 && (
+              <div className="card max-w-2xl overflow-x-auto">
+                <table className="w-full text-sm">
+                  <tbody>
+                    {automationJobs.map((j) => (
+                      <tr key={j.id} className="border-b border-[--color-line] last:border-0">
+                        <td className="px-4 py-2.5">
+                          <span className={`chip ${j.status === "failed" ? "chip-bad" : "chip-mute"}`}>
+                            {j.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 font-mono text-xs">{j.kind}</td>
+                        <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
+                          {j.runAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                        </td>
+                        <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
+                          {j.attempts}/{j.maxAttempts}
+                        </td>
+                        <td className="max-w-40 truncate px-3 py-2.5 text-xs text-red-600">{j.lastError}</td>
+                        <td className="px-3 py-2.5">
+                          {j.status === "pending" && (
+                            <form action={cancelJobAction.bind(null, projectId, j.id)}>
+                              <button
+                                type="submit"
+                                className="btn !px-2.5 !py-1 text-xs"
+                                title="Cancel this queued job (only pending jobs cancel)"
+                              >
+                                Cancel
+                              </button>
+                            </form>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </section>

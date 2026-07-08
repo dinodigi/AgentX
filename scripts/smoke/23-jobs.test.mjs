@@ -119,4 +119,23 @@ describe("jobs: pg queue primitive (G1)", () => {
     const [row] = await sql`SELECT status FROM jobs WHERE id = ${id}`;
     assert.equal(row.status, "pending", "a not-yet-due job must remain pending");
   });
+
+  it("cancel_job: a canceled pending job never runs; non-pending is E_CONFLICT (G5)", async () => {
+    const id = await enqueueNoop(p.id, { runAt: new Date(Date.now() + 3600_000) });
+    const c = await mcp(p.mcpToken, "cancel_job", { id });
+    assert.ok(c.ok, c.errorText);
+    assert.equal(c.value.status, "canceled");
+    // Make it "due" — a canceled job must still never be claimed.
+    await sql`UPDATE jobs SET run_at = now() - interval '1 minute' WHERE id = ${id}`;
+    await drain(SECRET);
+    const [row] = await sql`SELECT status, attempts FROM jobs WHERE id = ${id}`;
+    assert.equal(row.status, "canceled");
+    assert.equal(row.attempts, 0, "a canceled job never ran");
+    // Canceling it again (not pending) → E_CONFLICT naming the status.
+    const again = await mcp(p.mcpToken, "cancel_job", { id });
+    assert.ok(!again.ok && /already canceled/.test(again.errorText), again.errorText);
+    // Unknown id → E_NOT_FOUND.
+    const missing = await mcp(p.mcpToken, "cancel_job", { id: "00000000-0000-4000-8000-000000000000" });
+    assert.ok(!missing.ok && /E_NOT_FOUND/.test(missing.errorText), missing.errorText);
+  });
 });

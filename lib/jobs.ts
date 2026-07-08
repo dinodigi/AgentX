@@ -154,6 +154,33 @@ export async function drainJobs(
   return { claimed, succeeded, failed, rescheduled };
 }
 
+export type CancelJobResult =
+  | { ok: true; job: Job }
+  | { ok: false; reason: "not_found" }
+  | { ok: false; reason: "not_pending"; status: JobStatus };
+
+/**
+ * Cancel ONE pending job (per-job override; the declarative kill switch for
+ * delayed event actions is disabling/removing the action itself). The cancel is
+ * a single conditional UPDATE so a concurrent claim can't race the check: only
+ * a still-pending row cancels; otherwise a diagnostic read names the status.
+ */
+export async function cancelJob(projectId: string, id: string): Promise<CancelJobResult> {
+  const rows = await db
+    .update(jobs)
+    .set({ status: "canceled", updatedAt: new Date() })
+    .where(and(eq(jobs.id, id), eq(jobs.projectId, projectId), eq(jobs.status, "pending")))
+    .returning();
+  if (rows[0]) return { ok: true, job: rows[0] };
+  const [existing] = await db
+    .select({ status: jobs.status })
+    .from(jobs)
+    .where(and(eq(jobs.id, id), eq(jobs.projectId, projectId)))
+    .limit(1);
+  if (!existing) return { ok: false, reason: "not_found" };
+  return { ok: false, reason: "not_pending", status: existing.status };
+}
+
 export interface ListJobsFilter {
   kind?: string;
   status?: JobStatus;

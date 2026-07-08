@@ -222,6 +222,31 @@ export async function testConnector(
   return result;
 }
 
+/** Cancel a pending background job (Automation section). */
+export async function cancelJobAction(projectId: string, jobId: string): Promise<void> {
+  const denied = await requireOperator(projectId);
+  if (denied) return;
+  const { cancelJob } = await import("@/lib/jobs");
+  await cancelJob(projectId, jobId); // not-pending is a no-op — the list shows the live status
+  revalidatePath(`/admin/${projectId}/settings`);
+}
+
+/** Pause/resume a schedule. Paused schedules also skip their queued fires. */
+export async function toggleScheduleAction(
+  projectId: string,
+  scheduleId: string,
+  enabled: boolean,
+): Promise<void> {
+  const denied = await requireOperator(projectId);
+  if (denied) return;
+  const { projectSchedules } = await import("@/db/schema");
+  await db
+    .update(projectSchedules)
+    .set({ enabled, updatedAt: new Date() })
+    .where(and(eq(projectSchedules.id, scheduleId), eq(projectSchedules.projectId, projectId)));
+  revalidatePath(`/admin/${projectId}/settings`);
+}
+
 export async function removeMember(
   projectId: string,
   memberId: string,

@@ -9,6 +9,7 @@ import { listAuditLog } from "@/lib/audit";
 import { listEntryVersions } from "@/lib/versions";
 import { loadRelationChoices } from "@/lib/admin";
 import { publicFields } from "@/lib/entries";
+import { allowedTargets } from "@/lib/workflow";
 import { EntryForm } from "@/components/EntryForm";
 import { DeleteEntryButton } from "@/components/DeleteEntryButton";
 import { ConfirmButton } from "@/components/ConfirmButton";
@@ -52,6 +53,15 @@ export default async function EditEntry({
   if (!entry) notFound();
   const versions = versionsPage.versions;
 
+  // G5: a workflow field offers only the current state + admin-reachable
+  // targets (UX truthfulness; the entries layer enforces).
+  const wf = collection.workflow;
+  const current = wf ? entry.data[wf.field] : undefined;
+  const enumOptionOverrides =
+    wf && typeof current === "string"
+      ? { [wf.field]: [current, ...allowedTargets(wf, current, "admin").filter((t) => t !== current)] }
+      : undefined;
+
   const pub = publicFields(collection).length;
 
   return (
@@ -76,6 +86,7 @@ export default async function EditEntry({
             relationChoices={relationChoices}
             initial={entry.data}
             action={saveEntry.bind(null, projectId, name, entryId)}
+            enumOptionOverrides={enumOptionOverrides}
           />
         </div>
         <aside>

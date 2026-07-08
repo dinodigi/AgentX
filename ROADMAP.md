@@ -319,7 +319,12 @@ backfill, C's sweep, H's prune, K's reconciliation all name it as their runner).
       (use `if` for retries). Smoke: exact-from with disjoint froms→same-to,
       `if`+workflow guard in one statement, 5 concurrent → EXACTLY once.
       ✅ 2026-07-08, 27-cas-transition smoke (4)
-- [ ] 13.6 `G5` (S) — `cancel_job`, admin Automation section, transition-aware entry form.
+- [x] 13.6 `G5` (S) — `cancel_job` (single conditional UPDATE; only pending cancels,
+      else E_CONFLICT naming the status / E_NOT_FOUND) + admin **Automation** settings
+      section (schedules with pause/resume, pending/running/failed jobs with cancel) +
+      transition-aware entry form (a workflow field offers only current + admin-reachable
+      targets; new entries pinned to `initial`) — UX truthfulness; the entries layer stays
+      the enforcer. ✅ 2026-07-08, 23-jobs cancel round-trip
 
 ## Phase 14 — Semantic + hybrid search (spec: design-search E4–E6) — evidence-gated
 

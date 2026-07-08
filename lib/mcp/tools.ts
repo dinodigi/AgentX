@@ -39,7 +39,7 @@ import { listAssets, deleteAsset } from "@/lib/r2";
 import { listDeliveries } from "@/lib/webhook";
 import { refireDelivery } from "@/lib/events";
 import { listAuditLog } from "@/lib/audit";
-import { listJobs } from "@/lib/jobs";
+import { listJobs, cancelJob } from "@/lib/jobs";
 import { defineSchedule, listSchedules, deleteSchedule } from "@/lib/schedules";
 import { generateClientCode } from "@/lib/mcp/client-code";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
@@ -854,6 +854,20 @@ export const TOOL_DEFS: ToolDef[] = [
         limit: { type: "number", description: "1-100, default 20" },
         offset: { type: "number" },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "cancel_job",
+    description:
+      "Cancel ONE pending background job by id (from list_jobs) — the per-job override. " +
+      "Only pending jobs cancel; a running/succeeded/failed/canceled job returns E_CONFLICT. " +
+      "For delayed event actions, the DECLARATIVE kill switch is disabling or removing the " +
+      "action itself in define_collection events — that skips ALL its queued sends at run time.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
       additionalProperties: false,
     },
   },
@@ -1751,6 +1765,18 @@ export async function callTool(
           hasMore,
           nextOffset: hasMore ? offset + limit : null,
         });
+      }
+
+      case "cancel_job": {
+        const a = z.object({ id: z.string() }).parse(rawArgs);
+        const r = await cancelJob(projectId, a.id);
+        if (!r.ok) {
+          if (r.reason === "not_found") {
+            return err(`no job ${a.id} in this project — list_jobs shows what exists`, "E_NOT_FOUND");
+          }
+          return err(`job already ${r.status} — only pending jobs can be canceled`, "E_CONFLICT");
+        }
+        return ok({ id: r.job.id, kind: r.job.kind, status: r.job.status });
       }
 
       case "define_schedule": {

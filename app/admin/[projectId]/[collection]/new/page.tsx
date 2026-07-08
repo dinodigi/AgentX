@@ -18,6 +18,11 @@ export default async function NewEntry({
   const relationChoices = await loadRelationChoices(projectId, collection.fields);
   const action = saveEntry.bind(null, projectId, name, null);
 
+  // G5: a new entry's workflow field is pinned to the initial state — the
+  // create rule enforces it anyway; the form just tells the truth.
+  const wf = collection.workflow;
+  const enumOptionOverrides = wf ? { [wf.field]: [wf.initial] } : undefined;
+
   return (
     <>
       <p className="mb-2 text-sm text-[--color-ink-mute]">
@@ -33,6 +38,7 @@ export default async function NewEntry({
           relationChoices={relationChoices}
           initial={{}}
           action={action}
+          enumOptionOverrides={enumOptionOverrides}
         />
       </div>
     </>
