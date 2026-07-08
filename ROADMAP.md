@@ -433,8 +433,14 @@ is written **once** against the final set instead of chasing it.
       the H2 reader serves a tombstone only for delivery-visible entries; orphaned
       created/updated rows stop surfacing. Plan discloses `changeFeedTombstones`.
       ✅ 2026-07-08, 30-changes-collection-delete smoke (2)
-- [ ] 17.4 `H4` (M) — SSE stream with bounded lifetime; Netlify degrade to
-      long-poll documented; Render streams natively.
+- [x] 17.4 `H4` (M) — SSE `GET /v1/changes/stream`: same auth + intersection gate
+      (reuses `projectChangeForDelivery`), polls every 2s, `id:`/`event:change`
+      frames + 15s pings, bounded lifetime (55s; 8s on Netlify → long-poll
+      degrade) closing with an `event:cursor` frame. Review pre-fixes folded in:
+      `?maxMs=` client override clamped to the host cap (openMinor #6 — also makes
+      the smoke testable), `last-event-id` added to CORS (#3), per-project
+      concurrent-stream cap of 5 → 429 (#8). Resume via `?since`/`Last-Event-ID`.
+      ✅ 2026-07-08, 31-changes-sse smoke (2)
 - [ ] 17.5 `H5` (S) — self-description + generated client code (poll/SSE/webhook
       positioning). Retention prune runs as a G1 job.
 - **Honest positioning:** documented-lossy near-realtime pull (~2–4s worst case);
