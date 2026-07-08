@@ -40,6 +40,7 @@ import { listDeliveries } from "@/lib/webhook";
 import { refireDelivery } from "@/lib/events";
 import { listAuditLog } from "@/lib/audit";
 import { listJobs, cancelJob } from "@/lib/jobs";
+import { listChanges, encodeChangeCursor, decodeChangeCursor } from "@/lib/changes";
 import { defineSchedule, listSchedules, deleteSchedule } from "@/lib/schedules";
 import { generateClientCode } from "@/lib/mcp/client-code";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
@@ -853,6 +854,27 @@ export const TOOL_DEFS: ToolDef[] = [
         status: { type: "string", enum: ["pending", "running", "succeeded", "failed", "canceled"] },
         limit: { type: "number", description: "1-100, default 20" },
         offset: { type: "number" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_changes",
+    description:
+      "Read the append-only change feed (created/updated/deleted, oldest-first) for near-realtime " +
+      "sync. Each row: {cursor, collection, id, kind, at, changedFields, data (full snapshot), " +
+      "prevData (plain/CAS updates)}. Pass since=<cursor from a previous page> to get only newer " +
+      "changes; omit it to read from the beginning. Returns {changes, cursor, hasMore}. THIS TOOL " +
+      "IS FULL-TRUST — it shows ALL fields; the delivery endpoint GET /v1/changes applies the " +
+      "write-time-AND-current publicRead/publicFilter intersection. Retention ~30 days; refs are " +
+      "raw uuids (re-fetch for labels). A field RENAME invalidates older snapshots — reconcile with " +
+      "a full list after one.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string", description: "filter to one collection (optional)" },
+        since: { type: "string", description: "opaque cursor from a previous response" },
+        limit: { type: "number", description: "1-500, default 100" },
       },
       additionalProperties: false,
     },
@@ -1764,6 +1786,37 @@ export async function callTool(
           offset,
           hasMore,
           nextOffset: hasMore ? offset + limit : null,
+        });
+      }
+
+      case "get_changes": {
+        const a = z
+          .object({
+            collection: z.string().optional(),
+            since: z.string().optional(),
+            limit: z.number().optional(),
+          })
+          .parse(rawArgs);
+        const collectionId = a.collection ? (await mustCollection(projectId, a.collection)).id : undefined;
+        const since = a.since !== undefined ? decodeChangeCursor(a.since) : undefined;
+        const { changes, hasMore, cursor } = await listChanges(projectId, {
+          since,
+          collectionId,
+          limit: a.limit,
+        });
+        return ok({
+          changes: changes.map((c) => ({
+            cursor: encodeChangeCursor(Number(c.seq)),
+            collection: c.collectionName,
+            id: c.entryId,
+            kind: c.kind,
+            at: c.createdAt,
+            changedFields: c.changedFields,
+            data: c.data,
+            ...(c.prevData ? { prevData: c.prevData } : {}),
+          })),
+          cursor: encodeChangeCursor(cursor),
+          hasMore,
         });
       }
 

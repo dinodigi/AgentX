@@ -404,10 +404,17 @@ Last on purpose: by now every mutation path exists (trash, restore, purge,
 transact, workflow transitions) and the CAS pre-image is canonical — the feed
 is written **once** against the final set instead of chasing it.
 
-- [ ] 17.1 `H1` (M) — append-only `entry_changes` (bigserial cursor, write-time
-      `vis` capture) + `get_changes` MCP tool. **Must cover all mutation paths
-      incl. trash/restore/transact/transitions; `entry_changes` is the single
-      tombstone mechanism** (entries_trash is storage, not a second feed).
+- [x] 17.1 `H1` (M) — append-only `entry_changes` (bigserial cursor, write-time
+      `vis` capture: publicRead names + publicFilter-match + read/ownerField) +
+      `get_changes` MCP tool (full-trust). Inline `recordChange` on ALL mutation
+      paths — create/update/updateIf/delete/bulk **and transact** (post-commit) and
+      restore_entry_version. Review pre-fixes folded in: CAS updates DO carry
+      `prevData` (the G4b self-join / advisory pre-image — openMinor #1); a
+      `(project_id, created_at)` index for the prune (#9); 2s hold-back keeps the
+      cursor monotone. Bad cursor → E_VALIDATION w/ hint. Adversarial review found
+      a real omission the spec itself made: `vis` left out `access.org` — an
+      independent fail-closed scope that must be captured at write time or H2 can
+      never enforce the org intersection; now captured. ✅ 2026-07-08, 28-changes smoke (7)
 - [ ] 17.2 `H2` (M) — `GET /v1/changes?since=` polling endpoint, then-AND-now
       privacy gating (write-time vis ∩ current rules — evaluated against F's
       preset-union shapes), ETag 304; `changes` reserved name (verify first).

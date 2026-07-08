@@ -4,6 +4,7 @@ import {
   text,
   boolean,
   integer,
+  bigserial,
   jsonb,
   timestamp,
   uniqueIndex,
@@ -460,6 +461,66 @@ export const projectSchedules = pgTable(
   ],
 );
 
+/**
+ * Write-time visibility of a change-feed row — the "then" half of the read-time
+ * intersection gate (H). Broadening a collection's visibility later can never
+ * retroactively expose history: a row is served only if it passed BOTH the
+ * visibility captured here AND the collection's CURRENT rules.
+ */
+export interface ChangeVis {
+  /** publicRead field names at write time. */
+  fields: string[];
+  /** did the snapshot match publicFilter at write time. */
+  pf: boolean;
+  /** did prevData match publicFilter at write time (plain updates only). */
+  prevPf?: boolean;
+  /** access.read mode at write time. */
+  read: "public" | "authenticated" | "owner" | ClaimRule | (string | ClaimRule)[];
+  /** ownerField at write time (owner-gated collections). */
+  ownerField?: string;
+  /** org row scope at write time (F3). Captured here so removing an org scope
+   *  later can't retroactively expose historical org-scoped rows through the
+   *  feed — the org dimension of the then-AND-now intersection gate (H2). */
+  org?: { claim: string; field: string };
+}
+
+export type ChangeKind = "created" | "updated" | "deleted";
+
+/**
+ * Append-only change feed (H1). Written INLINE (not deferred) by every mutation
+ * path right after the entry write, so a sync cursor never loses a row to a
+ * crash. `seq` (bigserial) is the monotone cursor key; `collectionId` is a PLAIN
+ * uuid (NO FK) so feed rows can OUTLIVE a collection delete — which lets H3 append
+ * per-entry tombstones on delete instead of cascading the history away (H3 adds
+ * that; today a collection delete leaves its feed rows orphaned). `vis` captures
+ * write-time visibility for H2's then-AND-now read gate.
+ */
+export const entryChanges = pgTable(
+  "entry_changes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    collectionId: uuid("collection_id").notNull(),
+    collectionName: text("collection_name").notNull(),
+    entryId: uuid("entry_id").notNull(),
+    kind: text("kind").$type<ChangeKind>().notNull(),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+    prevData: jsonb("prev_data").$type<Record<string, unknown>>(),
+    changedFields: jsonb("changed_fields").$type<string[]>(),
+    vis: jsonb("vis").$type<ChangeVis>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("entry_changes_project_seq_idx").on(t.projectId, t.seq),
+    index("entry_changes_collection_seq_idx").on(t.collectionId, t.seq),
+    // Supports the retention prune (DELETE older than 30 days) without a seq-scan.
+    index("entry_changes_project_created_idx").on(t.projectId, t.createdAt),
+  ],
+);
+
 export interface Branding {
   displayName?: string;
   logoUrl?: string;
@@ -478,5 +539,6 @@ export type AuditLogRow = InferSelectModel<typeof auditLog>;
 export type TransactReceipt = InferSelectModel<typeof transactReceipts>;
 export type Job = InferSelectModel<typeof jobs>;
 export type ProjectSchedule = InferSelectModel<typeof projectSchedules>;
+export type EntryChange = InferSelectModel<typeof entryChanges>;
 export type TrashedEntry = InferSelectModel<typeof entriesTrash>;
 export type EntryVersion = InferSelectModel<typeof entryVersions>;

@@ -6,6 +6,7 @@ import { recordAudit } from "./audit";
 import { defer } from "./defer";
 import { ValidationError } from "./validation";
 import { rethrowUnique, dbErrorText, sweepExpiredTrash } from "./entries";
+import { recordChange } from "./changes";
 
 /**
  * Trash lifecycle — restore and list. The delete → trash MOVE lives in
@@ -72,6 +73,9 @@ export async function restoreEntry(
   if (!row) throw new ValidationError(`no trashed entry ${id} in "${collection.name}"`, "E_NOT_FOUND");
 
   const restored = { id: row.id, data: row.data };
+  // Feed a `created` change (inline) — a synced client that saw the delete
+  // tombstone must see the entry reappear.
+  await recordChange({ projectId, collection, kind: "created", entryId: row.id, data: row.data });
   defer(() =>
     emitEntryEvent(collection, "created", restored, undefined, {
       restored: true,

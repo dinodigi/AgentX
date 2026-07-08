@@ -33,6 +33,7 @@ import {
 } from "./query";
 import { emitEntryEvent, runEventAction, type EntryEvent } from "./events";
 import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workflow";
+import { recordChange, recordChanges, type ChangeInput } from "./changes";
 import type { WorkflowActor } from "@/db/schema";
 import { recordAudit } from "./audit";
 import { defer } from "./defer";
@@ -287,6 +288,9 @@ export async function createEntry(
     idempotencyKey: opts.idempotencyKey,
   });
   if (emit) {
+    // Inline change-feed write (H) BEFORE the deferred side-work — a sync cursor
+    // must not lose the row to a crash. Idempotency replays (emit=null) record nothing.
+    await recordChange({ projectId, collection, kind: "created", entryId: entry.id, data: entry.data });
     defer(() => emitEntryEvent(collection, emit.event, emit.entry, emit.previous));
     recordAudit({
       projectId,
@@ -392,6 +396,15 @@ export async function updateEntry(
   await verifyRefs(projectId, patch, refChecks);
 
   const { entry, emit } = await updateEntryCore(db, collection, id, patch, workflowActor(actor));
+  await recordChange({
+    projectId,
+    collection,
+    kind: "updated",
+    entryId: entry.id,
+    data: entry.data,
+    prevData: emit.previous,
+    changedFields: Object.keys(patch),
+  });
   defer(() => emitEntryEvent(collection, emit.event, emit.entry, emit.previous));
   fireTransition(collection, emit);
   if (emit.previous) {
@@ -745,6 +758,17 @@ export async function updateEntryIf(
 
   const { entry, emit, changedFields } = result;
   const actor = opts.actor ?? UNKNOWN_ACTOR;
+  // CAS carries a pre-image too (advisory pre-read, or the G4b self-join on the
+  // workflow path), so CAS updates get feed tombstones like plain updates.
+  await recordChange({
+    projectId,
+    collection,
+    kind: "updated",
+    entryId: entry.id,
+    data: entry.data,
+    prevData: emit.previous,
+    changedFields,
+  });
   defer(() => emitEntryEvent(collection, emit.event, emit.entry, emit.previous));
   fireTransition(collection, emit);
   // C8: CAS captures a version too, from the advisory pre-read (not a self-join).
@@ -839,6 +863,15 @@ export async function restoreEntryVersion(
   const changedFields = Object.keys({ ...current.data, ...clean }).filter(
     (k) => JSON.stringify(current.data[k]) !== JSON.stringify(clean[k]),
   );
+  await recordChange({
+    projectId,
+    collection,
+    kind: "updated",
+    entryId,
+    data: row.data,
+    prevData: current.data,
+    changedFields,
+  });
   defer(() => emitEntryEvent(collection, "updated", { id: row.id, data: row.data }, current.data));
   recordVersion({
     projectId,
@@ -921,6 +954,14 @@ export async function deleteEntry(
   const result = await deleteEntryCore(db, collection, id, actor);
   if (result) {
     const { entry, emit } = result;
+    // Feed tombstone (pre-delete snapshot) — inline so a synced client converges.
+    await recordChange({
+      projectId: collection.projectId,
+      collection,
+      kind: "deleted",
+      entryId: entry.id,
+      data: entry.data,
+    });
     defer(() => emitEntryEvent(collection, emit.event, emit.entry, emit.previous));
     defer(() => sweepExpiredTrash(collection.projectId));
     recordAudit({
@@ -1154,6 +1195,7 @@ export async function transact(
   }
 
   const emitPlan: { collection: Collection; emit: EmitDescriptor }[] = [];
+  const changePlan: ChangeInput[] = [];
   const auditPlan: {
     collection: Collection;
     id: string;
@@ -1196,11 +1238,15 @@ export async function transact(
         try {
           if (p.kind === "create") {
             const { emit } = await createEntryCore(tx, projectId, p.collection, p.clean!, { id: p.id });
-            if (emit) emitPlan.push({ collection: p.collection, emit });
+            if (emit) {
+              emitPlan.push({ collection: p.collection, emit });
+              changePlan.push({ projectId, collection: p.collection, kind: "created", entryId: p.id, data: emit.entry.data ?? {} });
+            }
             auditPlan.push({ collection: p.collection, id: p.id, action: "create", changedFields: p.changedFields });
           } else if (p.kind === "update") {
             const { emit } = await updateEntryCore(tx, p.collection, p.id, p.clean!, workflowActor(actor));
             emitPlan.push({ collection: p.collection, emit });
+            changePlan.push({ projectId, collection: p.collection, kind: "updated", entryId: p.id, data: emit.entry.data ?? {}, prevData: emit.previous, changedFields: p.changedFields });
             auditPlan.push({ collection: p.collection, id: p.id, action: "update", changedFields: p.changedFields });
             if (emit.previous) {
               versionPlan.push({ collection: p.collection, entryId: p.id, previous: emit.previous, changedFields: p.changedFields });
@@ -1214,6 +1260,7 @@ export async function transact(
               throw new TransactError(i, code, `update_if "${p.collection.name}": ${r.diagnosis.message}`);
             }
             emitPlan.push({ collection: p.collection, emit: r.emit });
+            changePlan.push({ projectId, collection: p.collection, kind: "updated", entryId: p.id, data: r.emit.entry.data ?? {}, prevData: r.emit.previous, changedFields: r.changedFields });
             auditPlan.push({ collection: p.collection, id: p.id, action: "update", changedFields: r.changedFields });
             if (r.emit.previous) {
               versionPlan.push({ collection: p.collection, entryId: p.id, previous: r.emit.previous, changedFields: r.changedFields });
@@ -1222,6 +1269,7 @@ export async function transact(
             const del = await deleteEntryCore(tx, p.collection, p.id, actor);
             if (!del) throw new ValidationError(`no entry ${p.id} in "${p.collection.name}"`, "E_NOT_FOUND");
             emitPlan.push({ collection: p.collection, emit: del.emit });
+            changePlan.push({ projectId, collection: p.collection, kind: "deleted", entryId: p.id, data: del.emit.entry.data ?? {} });
             auditPlan.push({ collection: p.collection, id: p.id, action: "delete" });
           }
         } catch (e) {
@@ -1249,7 +1297,9 @@ export async function transact(
     throw e;
   }
 
-  // Committed — fan out events (deferred, in order) and record audit rows.
+  // Committed — record the change feed synchronously (post-commit; the batch is
+  // atomic, so this is one insert for all rows), then fan out events deferred.
+  await recordChanges(changePlan);
   defer(async () => {
     for (const { collection, emit } of emitPlan) {
       await emitEntryEvent(collection, emit.event, emit.entry, emit.previous);
@@ -1361,6 +1411,16 @@ export async function bulkCreateEntries(
     } catch (e) {
       rethrowUnique(e);
     }
+    // One multi-row feed insert for the whole batch (inline, before side-work).
+    await recordChanges(
+      rows.map((created) => ({
+        projectId,
+        collection,
+        kind: "created" as const,
+        entryId: created.id,
+        data: created.data,
+      })),
+    );
     valid.forEach((v, i) => {
       results.push({ index: v.index, ok: true, id: rows[i].id });
       const created = rows[i];
