@@ -1,0 +1,256 @@
+{
+  "design": {
+    "gap": "GAP E — Search: today's only text search is `contains` → ILIKE substring. Add (1) Postgres full-text search over declaratively-marked searchable fields with ranked results on both the MCP and delivery surfaces, then (2) BYO-key semantic/vector search on Neon pgvector with embed-on-write and a hybrid rank option.",
+    "approach": "FTS rides entirely on primitives the codebase already has. A new per-field knob `searchable?: boolean` (valid on text/richtext only) joins `publicRead` in FieldBase (lib/field-types.ts:21-44), meta-validated in fieldDefSchema's superRefine (lib/validation.ts:59-93) and documented in COMMON_FIELD_CONFIG so list_field_types self-describes it. A new lib/search.ts owns ONE canonical builder, searchVectorExpr(fields), that turns any field subset into the tsvector expression `to_tsvector('simple', coalesce(data->>'a','') || ' ' || regexp_replace(coalesce(data->>'b',''),'<[^>]+>',' ','g'))` (richtext gets the immutable tag-strip; field names sorted, inlined via sql.raw only because they pass NAME_RE meta-validation — the exact safety argument syncUniqueIndexes already makes at lib/collections.ts:256-262). Matching uses `websearch_to_tsquery('simple', $q)` with the query text always a bind parameter. Two distinct field subsets exist by design and the design says so out loud: MCP search_entries searches the FULL searchable set (privileged agent surface, may include private fields), while delivery ?q= searches only searchable ∧ publicRead (searching a private field leaks contents through result differences — route.ts:74's own rule). The per-collection GIN expression index (entries_fts_<8hex>, partial on collection_id) is therefore built over the PUBLIC-searchable subset — delivery is the unbounded-traffic path and must be indexed; MCP full-set search runs as a filtered scan inside the collection partition whenever the sets differ, which the tool description states and which is acceptable for low-volume privileged tooling (it is exactly today's pre-index status quo). syncSearchIndex recomputes the index whenever the public-searchable subset changes — i.e. on `searchable` OR `publicRead` toggles — and the EXPLAIN smoke assertion runs against a mixed-visibility collection using the delivery-shaped expression, so the planner-matching guarantee is tested on the surface that carries traffic. Delivery ?q= is a reserved param on the existing GET list route (composing with publicFilter + ownerClause + toPublicView + ETag as always) and — new — every ?q GET passes through rateLimit() with the same `${projectId}:${ip}` key the POST path uses, closing the unthrottled-scan DoS hole for the interval before the index exists and for any expensive query after.\n\nSemantic search adds one unifying integrity mechanism that fixes both the stale-embedding privacy leak and silent model drift: every entry_embeddings row stores an `indexHash` = sha256(`${provider}:${model}` + '|' + sorted searchable field names), computed at embed time from the live connector config and field defs. Every semantic/hybrid query recomputes the current indexHash and filters `WHERE index_hash = $current` — a vector built from a superseded field set or a different embedding model can never serve a query, structurally, no matter what else goes wrong. Belt on top of those braces: defineCollection, whenever the searchable field set or the search config changes, DELETEs the collection's entry_embeddings rows in the same operation (derived data — no confirm gate needed, stated in the define_collection description), so the leak path the reviewers found (unmark internalNotes.searchable → gate passes → stale vectors still encode private content) is closed twice over: rows are gone, and even if the delete raced, their hash no longer matches. Model/provider changes don't pass through defineCollection, so the hash filter is the load-bearing guard there; upsertConnector for type=embeddings additionally returns a machine-readable note when provider/model changed ('existing embeddings are stale — run sync_semantic_index per semantic collection'). batchEmbedMissing treats hash-mismatched rows exactly like missing rows, so one resync loop repairs both drift kinds. When a semantic query finds zero current-hash rows while the collection has entries, it refuses with E_INDEX_STALE ('embeddings were built with a previous model or field set — run sync_semantic_index') rather than silently returning nothing; partial staleness degrades gracefully (stale rows excluded, MCP results carry a `stale` count so the agent knows to sync; delivery is best-effort but can never leak).\n\nThe rest of the semantic design is as before, split smaller. An `embeddings` connector type (BYO key, AES-GCM in project_connectors.secretEnc, validate-before-save, dimension-1536 probe at connect/health time). A derived-data entry_embeddings table (entryId PK FK CASCADE, contentHash, indexHash, vector(1536), HNSW cosine index) plus collections.search jsonb ({semantic?: boolean}) validated at define time (needs ≥1 searchable field + connected embeddings connector, E_CONNECTOR_REQUIRED mirroring the resend/email check). Because collections.search is a new column, lib/manifest.ts is plumbed in the same increment: ProjectManifest + manifestSchema gain `search`, exportProject maps it, importProject passes it through — and import into a project without an embeddings connector downgrades that collection (imports it with search omitted) and appends a machine-readable warning to the result instead of failing mid-import, because connectors can never travel in a manifest (secrets rule) and a hard failure would leave partial imports; the import_project description states this. Embed-on-write is a platform step at the top of emitEntryEvent inside the existing defer(); failures log to webhook_deliveries as url='embed:<model>' rows. Backfill/repair is the agent-driven sync_semantic_index tool (≤50 rows/call, {embedded, remaining}, contentHash+indexHash idempotent). Query-side, search_entries gains mode keyword|semantic|hybrid (hybrid = RRF in JS over top-50 of each ranking), and delivery gains ?mode= with the all-searchable-fields-public 422 precondition — now honest, because the invalidation mechanism guarantees the vectors being served were built from the field set the gate just checked.",
+    "keyDecisions": [
+      {
+        "decision": "websearch_to_tsquery('simple', $q) for parsing user queries, with 'simple' as the fixed v1 text-search config",
+        "rationale": "websearch_to_tsquery accepts arbitrary user input without ever raising a syntax error (quoted phrases, OR, -negation), so an agent or public visitor can never trigger an unrepairable 500; 'simple' is language-neutral and deterministic for non-English tenants — a per-collection language knob is a clean later addition",
+        "alternativeRejected": "to_tsquery (throws on malformed input — violates machine-repairable errors for free text) and defaulting to 'english' (silent stemming misbehavior for non-English content with no signal to the agent)"
+      },
+      {
+        "decision": "Per-field `searchable` boolean on FieldBase, exactly parallel to publicRead",
+        "rationale": "Follows the documented new-constraint-knob recipe (field-types + fieldDefSchema superRefine + FIELD_TYPE_SPECS docs), is diffed by define_collection for free, survives renames with the field, and shows up in describe_collection with zero extra plumbing",
+        "alternativeRejected": "A collection-level searchFields[] array — drifts from fields[] on rename/drop, needs its own validation and diff handling, and splits self-description across two places"
+      },
+      {
+        "decision": "The single GIN index per collection is built over the PUBLIC-searchable subset (searchable ∧ publicRead); MCP full-set search accepts unindexed scans when the sets differ, and the tool description says so",
+        "rationale": "Fixes the reviewers' expression-mismatch finding (issues 2/4): delivery ?q= is the unbounded, unauthenticated-traffic surface and MUST planner-match its index, while MCP search_entries is privileged, low-volume agent tooling for which a filtered scan inside the collection_id partition is the pre-existing status quo; one index also avoids doubling GIN write amplification on every entry mutation in mixed-visibility collections. syncSearchIndex triggers on changes to EITHER searchable or publicRead (the subset is a function of both), and the EXPLAIN smoke test asserts index usage for the delivery-shaped expression on a collection with a private searchable field",
+        "alternativeRejected": "(a) Two GIN indexes when the sets differ (entries_fts_ full + entries_ftsp_ public) — indexes the cold path at the cost of double index maintenance on the hot write path and more DDL lifecycle to get wrong; (b) the original design's single full-set index — provably unindexed delivery search on any mixed-visibility collection, the exact defect found"
+      },
+      {
+        "decision": "rateLimit() applies to ALL delivery search GETs (?q= keyword included), not only semantic/hybrid",
+        "rationale": "Keyword search is CPU-bound SQL on an unauthenticated GET path that today has no rate limiting at all (confirmed: rateLimit only at route.ts:147 POST and uploads:40); even indexed queries are more expensive than eq filters, and the pre-index window plus pathological websearch queries make unthrottled ?q a cheap DoS. Reuses the existing `${projectId}:${ip}` key and 429/retry-after envelope",
+        "alternativeRejected": "Rate-limiting only provider-cost paths (semantic/hybrid) as the original design did — treats dollars as the only scarce resource and leaves compute unmetered on the public surface"
+      },
+      {
+        "decision": "Every entry_embeddings row carries indexHash = sha256(provider:model + sorted searchable field names); semantic queries filter WHERE index_hash = current, and defineCollection deletes a collection's embeddings whenever the searchable set or search config changes",
+        "rationale": "One mechanism closes both the blocker and the model-drift finding structurally: a vector encoding a superseded field set (e.g. a formerly-searchable private field) or a superseded model can never be served, because the query-time hash won't match — even if the define-time DELETE raced or failed. The DELETE needs no confirm gate (derived data, rebuildable via sync_semantic_index — stated in the define_collection description). Model changes, which never pass through defineCollection, are caught purely by the hash filter, and batchEmbedMissing treats hash mismatch as stale so one resync loop repairs everything",
+        "alternativeRejected": "Request-time-only gating against current field defs (the original design — leaks via stale rows, reachable through the error's own fix hint); contentHash-only staleness (covers text drift but is blind to field-set and model changes); per-row doc recomputation at query time (impossible — the source text may have changed)"
+      },
+      {
+        "decision": "Zero current-hash coverage on a non-empty semantic collection refuses with a new E_INDEX_STALE error code; partial staleness degrades gracefully (stale rows excluded, MCP results include a `stale` count)",
+        "rationale": "Silent empty results after a model swap or field-set change would be an undetectable failure (rule 2 violation); a named, append-only code whose message is the fix ('run sync_semantic_index') makes it agent-repairable. Refusing on ANY stale row would make delivery brittle during normal embed-on-write lag, so partial staleness serves current-hash rows only — which can never leak — while surfacing the count to agents",
+        "alternativeRejected": "Refuse whenever any row is stale (breaks delivery mid-resync and during routine write lag) or serve stale rows with a warning (re-opens the privacy leak the hash filter exists to close)"
+      },
+      {
+        "decision": "Delivery search is a reserved ?q= param on the existing GET /api/v1/[collection] route, not a /search subroute",
+        "rationale": "The list route already owns token resolve, publicFields 404 gate, gateRead, publicFilter+ownerClause composition, select projection, ETag, and CORS — ?q composes with all of it by adding one name to the reserved-param skip list (route.ts:78); rank-order conflicts with ?sort are a crisp 422",
+        "alternativeRejected": "app/api/v1/[collection]/search/route.ts — duplicates every gate and header concern"
+      },
+      {
+        "decision": "Embed-on-write as a platform step inside emitEntryEvent, guarded by collection.search?.semantic, inside the existing defer()",
+        "rationale": "emitEntryEvent is the documented single emit point every mutation path already flows through — one hook site, inherits after()-survival, and entry deletion cleans up via FK cascade with no code",
+        "alternativeRejected": "New defer() call sites beside each of the five emitEntryEvent calls — five places to keep in sync and a violation of the 'never emit elsewhere' contract in lib/events.ts:10-19"
+      },
+      {
+        "decision": "Platform-fixed vector(1536) enforced by a connect/health-time provider probe; model identity is tracked per-row via indexHash rather than per-project DDL",
+        "rationale": "HNSW needs a typed fixed-dimension column; OpenAI text-embedding-3-* and Voyage's output_dimension models all emit 1536; the probe turns config mismatch into an immediate explained failure. Same-dimension model swaps — which the probe cannot catch — are caught by the indexHash filter, and upsertConnector's result flags 'model changed — resync required' for type=embeddings",
+        "alternativeRejected": "Per-project dynamic dimensions (per-project DDL, unverifiable at connect time); trusting the dimension probe alone (silently garbage cosine distances after any same-dimension model change — the exact defect found)"
+      },
+      {
+        "decision": "Backfill/repair via agent-driven batched sync_semantic_index ({embedded, remaining} per call, contentHash+indexHash idempotent), not a background indexer",
+        "rationale": "Neon + serverless means no long-running worker; a bounded batch per call is host-agnostic, self-describing, resumable, and is now also the single repair verb for text drift, field-set changes, and model rotation alike; GAP G's jobs runner can later drive the identical batch function",
+        "alternativeRejected": "A long-running or cron-driven indexer — vendor-specific scheduling, invisible to the tool surface"
+      },
+      {
+        "decision": "Hybrid rank = Reciprocal Rank Fusion in JS over the top-50 of the FTS and vector rankings",
+        "rationale": "RRF needs no score normalization across incomparable scales (ts_rank vs cosine distance), has no tunables, and at K=50 two bounded queries plus an O(K) merge beats SQL-side blending on the transactionless neon-http driver",
+        "alternativeRejected": "SQL-side weighted score fusion — normalizing incompatible score distributions, magic constants, and a query shape neither index serves"
+      },
+      {
+        "decision": "Delivery semantic/hybrid is refused (422, fields listed) unless every searchable field is publicRead — kept from the original design, now made sound by the indexHash + delete-on-change invalidation",
+        "rationale": "One embedding per entry covers all searchable fields; a private searchable field would leak through result ordering. The original gate was request-time-only and its own fix hint opened the stale-vector leak; with embeddings invalidated on any searchable-set change and hash-filtered at query time, the gate's check and the served vectors are guaranteed to describe the same field set",
+        "alternativeRejected": "Dual embeddings per entry (full doc + public doc) — doubles provider cost and storage for an edge case; keyword ?q= already handles mixed visibility correctly via the public-only tsvector"
+      },
+      {
+        "decision": "import_project downgrades a semantic collection (imports it with `search` omitted) and appends a machine-readable warning when the target project lacks an embeddings connector, rather than failing mid-import",
+        "rationale": "Connectors can never travel in a manifest (secrets are references), so a hard E_CONNECTOR_REQUIRED would make every semantic-collection manifest non-portable to fresh projects and could leave a partial import; the warning names the fix (connect embeddings, re-run define_collection with search:{semantic:true}, then sync_semantic_index) and the tool description states the behavior",
+        "alternativeRejected": "Failing the import (partial-state hazard, breaks the replicate-elsewhere promise) or silently dropping `search` (the original design's accidental behavior — invisible data loss on a tool that promises full portability)"
+      },
+      {
+        "decision": "E5 split into E5a (schema + define-time plumbing + manifest) and E5b (embedding pipeline + sync tool), per the reviewers' sizing finding",
+        "rationale": "The original E5 bundled a new table + extension, a provider-call library, a change to the most invariant-laden choke point (emitEntryEvent), tool + manifest plumbing, and a mock provider — L-sized by the project's own bar. E5a is independently shippable and verifiable via define/describe/export/import round-trips with zero provider calls; E5b layers the pipeline on top. E5a keeps the E4 dependency (rather than stubbing getConnector as the reviewers floated) because the E_CONNECTOR_REQUIRED validation needs 'embeddings' in the ConnectorType union — E4 is S-sized, has no dependencies, and lands in parallel with E1, so the dependency costs nothing and avoids a type-cast stub that would ship then be deleted",
+        "alternativeRejected": "Keeping E5 monolithic (violates the split-anything-larger-than-M bar); making E5a E4-free via a stubbed connector check (temporary type hack against the ConnectorType union with no schedule benefit)"
+      }
+    ],
+    "increments": [
+      {
+        "id": "E1",
+        "name": "searchable knob + FTS core + search_entries MCP tool",
+        "what": "Add `searchable?: boolean` to FieldBase in lib/field-types.ts (document in COMMON_FIELD_CONFIG) with a fieldDefSchema superRefine in lib/validation.ts restricting it to text/richtext ('searchable is only valid on text/richtext fields'). New lib/search.ts: `searchableFields(fields)` and `publicSearchableFields(fields)` (searchable ∧ publicRead — both subsets are first-class from day one); `searchVectorExpr(fields)` — the canonical sorted-field tsvector expression ('simple' config, coalesce per field, regexp_replace tag-strip for richtext, names inlined via sql.raw after NAME_RE validation, query text always a bind param via websearch_to_tsquery); `searchEntriesPage(collection, {q, fields, where?, limit?, offset?})` — ValidationError with fix hint when the given subset is empty, q trimmed/1..500 chars, conditions = collectionId + buildWhere(where) + tsquery match, ORDER BY ts_rank DESC, id, limit+1 hasMore, rank per row. New search_entries tool in lib/mcp/tools.ts: ToolDef (description states: keyword FTS over ALL fields marked searchable:true including non-public ones; websearch syntax; ranked; offset paging only; may run unindexed when the collection has private searchable fields — the index covers the public subset; NOT semantic) + zod schema {collection, q, where?, select?, limit?, offset?} reusing whereItemSchema + callTool case (mustCollection → validateSelect → search → projectData → resolveRefsForRead → {entries:[{id,rank,data}], limit, offset, hasMore, nextOffset}). Smoke test: define collection with searchable fields, create entries, MCP round-trip asserting match, ranking, phrase query, and the no-searchable-fields error.",
+        "filesTouched": [
+          "lib/field-types.ts",
+          "lib/validation.ts",
+          "lib/search.ts (new)",
+          "lib/mcp/tools.ts",
+          "scripts/smoke/search.test.mjs (new)"
+        ],
+        "surface": "New MCP tool search_entries; searchable knob visible via list_field_types and describe_collection; no delivery or admin change",
+        "size": "M",
+        "migration": "none (knob lives inside the fields JSONB)",
+        "dependsOn": []
+      },
+      {
+        "id": "E2",
+        "name": "Delivery keyword search: ?q= on GET list, rate-limited",
+        "what": "In app/api/v1/[collection]/route.ts GET: add 'q' to the reserved-param skip list (line 78); when present, compute publicSearchableFields — empty set 422s with 'search is not enabled for this collection — no public searchable fields; mark a searchable field publicRead via define_collection'; q + ?sort 422s ('search results are rank-ordered — drop sort'); apply the existing rateLimit(`${projectId}:${ip}`) to the request BEFORE running the query (keyword search is CPU-bound SQL on an unauthenticated GET — the 429/retry-after envelope and CORS-exposed retry-after header already exist), then call searchEntriesPage with the public-searchable subset and effectiveWhere = publicFilter + ownerClause + eq filters, then the existing resolveRefsForRead → toPublicView → ?select pipeline and cachedJson (ETag unchanged). Update get_project_info's deliveryApi.read string in lib/mcp/tools.ts to document '?q=… full-text search over public searchable fields, rank-ordered (websearch syntax), rate-limited'. Smoke test drives the HTTP round-trip including publicFilter interaction, the private-searchable-field exclusion (a match found only in a private searchable field must NOT surface via ?q), and a 429 on burst.",
+        "filesTouched": [
+          "app/api/v1/[collection]/route.ts",
+          "lib/search.ts",
+          "lib/mcp/tools.ts",
+          "scripts/smoke/delivery-search.test.mjs (new)"
+        ],
+        "surface": "Delivery endpoint: GET /api/v1/{collection}?q=…(&select/&limit/&offset/eq-filters), 429s under burst; self-described via get_project_info",
+        "size": "S",
+        "migration": "none",
+        "dependsOn": [
+          "E1"
+        ]
+      },
+      {
+        "id": "E3",
+        "name": "GIN expression index over the public-searchable subset",
+        "what": "lib/collections.ts: `syncSearchIndex(collectionId, oldFields, newFields)` beside syncUniqueIndexes — computes publicSearchableFields for old and new; when that subset changes (a `searchable` OR a `publicRead` toggle both change it), DROP INDEX IF EXISTS \"entries_fts_<8hexOfCollId>\" then (if the new subset is non-empty) CREATE INDEX ... ON entries USING GIN ((<searchVectorExpr(publicSubset) from lib/search.ts, identical text>)) WHERE collection_id='<id>' via sql.raw (identifiers meta-validated, id DB-generated — the existing DDL safety argument). Call from defineCollection next to the syncUniqueIndexes calls and from deleteCollection so the partial index never outlives the collection (the documented unique-index gotcha). The index deliberately covers the DELIVERY expression: delivery ?q= is always planner-matched because both come from searchVectorExpr(publicSubset); MCP search_entries over the full set scans when the sets differ (stated in its description in E1). Smoke test: collection with one public-searchable and one private-searchable field — EXPLAIN of the delivery-subset query references entries_fts_*; toggling publicRead off rebuilds the index (pg_indexes probe via the smoke helper's direct SQL); collection delete drops it.",
+        "filesTouched": [
+          "lib/collections.ts",
+          "lib/search.ts",
+          "scripts/smoke/search.test.mjs"
+        ],
+        "surface": "No new surface — pure performance; define_collection and delete_collection gain the index side-effect silently",
+        "size": "S",
+        "migration": "none (dynamic DDL, same lifecycle as entries_uq_* partial unique indexes)",
+        "dependsOn": [
+          "E1"
+        ]
+      },
+      {
+        "id": "E4",
+        "name": "BYO embeddings connector",
+        "what": "lib/connectors.ts: add 'embeddings' to ConnectorType + CONNECTOR_SPECS (label 'Embeddings (semantic search)'; configFields: provider 'openai'|'voyage', model e.g. 'text-embedding-3-small', baseUrl optional override — enables the in-process smoke mock, same idiom as startMockIssuer; secretLabel 'API key'). rotateConnectorSecret and checkConnectorHealth gain an embeddings branch: POST a one-word embed request, require HTTP 200 AND returned vector length === 1536 (detail message states the dimension rule and how to set output dimensions per provider). upsertConnector: when type='embeddings' and config.provider/model changed from the stored row, include a machine-readable note in the result ('embedding model changed — existing embeddings are stale; run sync_semantic_index for each semantic collection') so the operator UI and any caller see the resync obligation at the moment it is created. Admin connectors page auto-renders from CONNECTOR_SPECS; widen the settings save action enum (app/admin/[projectId]/settings/actions.ts:157-196). Secrets stay AES-GCM in project_connectors.secretEnc; list_connectors returns only {type, status, non-secret config} unchanged. Verifiable alone: connect in settings, list_connectors MCP round-trip shows {type:'embeddings', status:'connected'}; smoke exercises the wrong-dimension health failure and the model-changed note.",
+        "filesTouched": [
+          "lib/connectors.ts",
+          "app/admin/[projectId]/settings/actions.ts",
+          "scripts/smoke/helpers.mjs (mock embeddings server)",
+          "scripts/smoke/embeddings-connector.test.mjs (new)"
+        ],
+        "surface": "Admin connectors UI (auto-rendered) + list_connectors/get_project_info report the embeddings connector; model-change resync note in the save result; no schema/data surface yet",
+        "size": "S",
+        "migration": "none (connector type is a text column)",
+        "dependsOn": []
+      },
+      {
+        "id": "E5a",
+        "name": "entry_embeddings schema + search:{semantic} opt-in + invalidation + manifest plumbing",
+        "what": "db/schema.ts: entryEmbeddings table (entryId uuid PK FK→entries onDelete cascade, projectId, collectionId, contentHash text, indexHash text, embedding vector(1536), updatedAt) with HNSW vector_cosine_ops index, plus new `search` jsonb column on collections ({semantic?: boolean}). lib/collections.ts: plumb `search` through DefineCollectionInput; validate semantic:true requires ≥1 searchable field (hint names the fix) and a connected embeddings connector (E_CONNECTOR_REQUIRED, mirroring the resend/email check at :131); persist in values + onConflict set; AND — the invalidation half of the leak fix — when the searchable field set or the search config changes for an existing collection, DELETE that collection's entry_embeddings rows in the same operation (derived data, rebuildable, no confirm gate; the define_collection description states 'changing searchable fields invalidates the semantic index — run sync_semantic_index after'). lib/search.ts: `currentIndexHash(connectorConfig, fields)` = sha256(`${provider}:${model}|` + sorted searchable names) — the single definition both embed and query sides will use. lib/mcp/tools.ts: defineArgs + describe_collection gain `search` (describe echoes it). lib/manifest.ts: ProjectManifest + manifestSchema gain `search: {semantic?: boolean} | null`; exportProject includes it; importProject passes it through defineCollection — if the target project has no embeddings connector, import that collection WITH search omitted and append {collection, warning: 'semantic search skipped — connect an embeddings connector, then re-run define_collection with search:{semantic:true} and sync_semantic_index', code:'E_CONNECTOR_REQUIRED'} to the import result (import_project description documents the downgrade). Verifiable with zero provider calls: define/describe round-trip, export→import round-trip preserving search, downgrade-warning path, and direct-SQL probe that a searchable-set change empties entry_embeddings (seed a row via smoke helper SQL).",
+        "filesTouched": [
+          "db/schema.ts",
+          "lib/collections.ts",
+          "lib/search.ts",
+          "lib/mcp/tools.ts",
+          "lib/manifest.ts",
+          "scripts/smoke/semantic-schema.test.mjs (new)"
+        ],
+        "surface": "define_collection/describe_collection gain search:{semantic}; export_project/import_project carry it (with documented downgrade warning); new entry_embeddings table + collections.search column; no embedding calls yet",
+        "size": "M",
+        "migration": "npm run db:push adds entry_embeddings (+HNSW index) and collections.search; ONE-TIME manual `CREATE EXTENSION IF NOT EXISTS vector` on the Neon database (drizzle-kit push does not create extensions) — document in README/scripts",
+        "dependsOn": [
+          "E1",
+          "E4"
+        ]
+      },
+      {
+        "id": "E5b",
+        "name": "embed-on-write pipeline + sync_semantic_index tool",
+        "what": "New lib/embeddings.ts: embedTexts(projectId, texts[]) calling the connector provider with connectorSecret (10s timeout, batched); buildSearchDoc(fields, data) — concatenation of searchable-field text, tag-stripped, sha256 contentHash; syncEmbedding(collection, entry) — compute contentHash + currentIndexHash, skip when BOTH match the stored row, upsert with both hashes, log failures to webhook_deliveries as url='embed:<model>' (the email:<to> discriminator idiom, visible in get_deliveries); batchEmbedMissing(collection, limit≤50) — rows missing OR with contentHash/indexHash mismatch (model rotation and field-set changes are repaired by the same loop), returns {embedded, remaining}. lib/events.ts emitEntryEvent: platform step before declared-action filtering — if collection.search?.semantic and event created/updated and entry.data, await syncEmbedding (inside the existing defer, try/catch-swallowed like all side-work; deletes need nothing — FK cascade). lib/mcp/tools.ts: new tool sync_semantic_index {collection, limit?} → {embedded, remaining, hint:'call again while remaining > 0'} (description: bounded batch per call — loop until remaining is 0; requires search.semantic; also the repair verb after model changes or searchable-set changes). Smoke: mock provider + semantic collection + create entry → embedding row appears with both hashes; mutate → contentHash changes; sync_semantic_index backfills pre-seeded rows; change mock model config → batchEmbedMissing reports all rows stale and re-embeds.",
+        "filesTouched": [
+          "lib/embeddings.ts (new)",
+          "lib/events.ts",
+          "lib/mcp/tools.ts",
+          "scripts/smoke/semantic-index.test.mjs (new)"
+        ],
+        "surface": "New MCP tool sync_semantic_index; embed failures visible in get_deliveries; no query surface yet",
+        "size": "M",
+        "migration": "none",
+        "dependsOn": [
+          "E5a"
+        ]
+      },
+      {
+        "id": "E6",
+        "name": "semantic + hybrid query: search_entries mode + delivery ?mode=",
+        "what": "lib/embeddings.ts: semanticSearchPage(collection, {q, where?, limit}) — embed the query once, then SELECT entries joined to entry_embeddings ordered by `embedding <=> $qvec::vector` (vector bind serialized as '[…]' string for the neon-http driver) with collectionId + buildWhere(where) conditions AND `index_hash = $currentIndexHash` — vectors from a superseded field set or model can never serve; also returns staleCount (cheap count of hash-mismatched rows). lib/error-codes.ts: append E_INDEX_STALE ('semantic index was built with a different model or field set — run sync_semantic_index'). lib/search.ts: hybridSearch — FTS and vector top-50 in parallel, RRF merge (score = Σ 1/(60+rank)), stable id tie-break. lib/mcp/tools.ts: search_entries gains `mode: 'keyword'|'semantic'|'hybrid'` (default keyword — pure append to E1's schema); mode semantic/hybrid without the connector → E_CONNECTOR_REQUIRED; without search.semantic → E_VALIDATION 'enable via define_collection search:{semantic:true}, then sync_semantic_index'; zero current-hash coverage on a non-empty collection → E_INDEX_STALE; results include `stale` count when > 0. app/api/v1/[collection]/route.ts: reserved param 'mode' beside 'q'; semantic/hybrid additionally require every searchable field to be publicRead else 422 listing offending fields and both fixes (single shared embedding must not leak private fields through ranking — sound now because E5a invalidates embeddings on any searchable-set change and the hash filter excludes residue); publicFilter + ownerClause compose into the vector query; rateLimit() already covers all search GETs from E2 (semantic adds provider cost on top of the same budget); zero-coverage → 422 E_INDEX_STALE. get_project_info deliveryApi.read documents ?mode. Smoke: mock provider with deterministic vectors — semantic ordering differs from keyword; hybrid fuses both; private-searchable-field 422; leak regression: embed with a private searchable field, unmark searchable via define_collection, assert entry_embeddings emptied AND ?mode=semantic returns E_INDEX_STALE (never old-vector results); model-change → E_INDEX_STALE until sync.",
+        "filesTouched": [
+          "lib/embeddings.ts",
+          "lib/search.ts",
+          "lib/error-codes.ts",
+          "lib/mcp/tools.ts",
+          "app/api/v1/[collection]/route.ts",
+          "scripts/smoke/semantic-search.test.mjs (new)"
+        ],
+        "surface": "search_entries mode param + stale count; delivery GET /api/v1/{collection}?q=…&mode=semantic|hybrid; new E_INDEX_STALE error code; documented via get_project_info + tool descriptions",
+        "size": "M",
+        "migration": "none",
+        "dependsOn": [
+          "E5b",
+          "E2"
+        ]
+      }
+    ],
+    "invariantCompliance": "Rule 1 (declarative + self-describing): search capability is declared per-field (searchable) and per-collection (search:{semantic}) through define_collection, echoed by describe_collection, documented in list_field_types' COMMON_FIELD_CONFIG, and — new — carried by export_project/import_project so the manifest remains the complete project definition; search_entries' description states its boundaries out loud (full-set vs public-subset scope, offset-only paging, may-scan-when-mixed-visibility, keyword vs semantic); define_collection's description states that searchable-set changes invalidate the semantic index; import_project's description states the connector-missing downgrade; get_project_info documents ?q/?mode and rate limiting; upsertConnector's result surfaces the model-changed resync obligation. Rule 2 (machine-readable errors with fix hints): every refusal names its fix — 'no searchable fields — set searchable:true…', 'drop sort', E_CONNECTOR_REQUIRED reusing the resend pattern, the delivery-semantic privacy 422 listing offending fields and both remedies, and the new append-only E_INDEX_STALE that converts the previously-silent model-drift failure into 'built with a different model or field set — run sync_semantic_index'; websearch_to_tsquery guarantees free text never 500s; the import downgrade emits a coded warning instead of silent data loss. Rule 3 (secrets are references): the embeddings API key lives AES-256-GCM in project_connectors.secretEnc, set/rotated operator-side only, read via connectorSecret at call time; list_connectors returns type+status+non-secret config; manifests never carry connectors, which is exactly why import downgrades rather than pretending portability of a secret. Rule 4 (destructive = plan + confirm): dropping/retyping fields still flows through the existing diff/confirm plan; the new defineCollection DELETE of entry_embeddings is derived, rebuildable data (like the entries_uq_* index rebuilds already performed without confirm) and is disclosed in the tool description rather than gated — data the plan protects is user data, not caches. Rule 5 (strict validation never weakens): all query text and vectors are bind parameters; the only sql.raw is NAME_RE-meta-validated field names and DB-generated uuids in DDL — the syncUniqueIndexes argument reused verbatim; delivery keyword search matches only searchable ∧ publicRead fields and output still passes toPublicView with publicFilter + ownerClause prepended; MCP search validates where/select through buildWhere/validateSelect; delivery semantic adds a strictly tighter precondition (all searchable fields public) that is now enforceable in fact, not just at check time, because the indexHash filter makes it structurally impossible to serve a vector built from a field set the gate did not approve.",
+    "crossGapDependencies": [
+      "GAP G (jobs runner / time-flow), optional: automating the sync_semantic_index backfill loop (including the mandatory resync after model changes or searchable-set changes) and retrying failed embed side-work; fully functional without it via agent-driven batching",
+      "GAP on caching/portability (Render move): lib/collections.ts unstable_cache already propagates searchable/search changes via revalidateTag — whatever replaces unstable_cache on Render must keep tag invalidation; that migration is owned elsewhere",
+      "Rate-limiting durability (SYSTEM-REVIEW C2 / infra gap): E2 now applies lib/ratelimit to ALL delivery search GETs and E6 inherits it; the per-lambda MemoryStore looseness is inherited until the durable store lands — the search design needs no change when it does, but search widens the surface that benefits from it"
+    ],
+    "risks": [
+      "Planner expression matching is load-bearing for the delivery index: guaranteed only because delivery queries and the GIN index both come from searchVectorExpr(publicSearchableFields) — the E3 smoke EXPLAIN assertion runs specifically against a mixed-visibility collection to keep this honest; MCP full-set search is deliberately allowed to scan and that tradeoff is stated in its tool description",
+      "'simple' text-search config means no stemming — quality ceiling for English-heavy tenants; the follow-up per-collection language knob changes the index expression and forces a rebuild (same syncSearchIndex machinery)",
+      "Rank ordering has no keyset cursor — search paginates by offset only; deep paging degrades (accepted: search UX is top-N; documented in tool description)",
+      "Neon HTTP driver specifics need verification in E5a/E6: vector bind serialization ('[…]'::vector) and CREATE INDEX over the transactionless driver; CREATE EXTENSION vector is a one-time manual step outside db:push and easy to forget on a fresh database — documented, but still a human step",
+      "Invalidation cost: any searchable-set change (or model rotation) empties/stales the whole collection's embeddings and semantic search refuses with E_INDEX_STALE until sync_semantic_index completes — correct-by-construction but means semantic downtime proportional to collection size on schema churn; the agent loop (or GAP G later) bounds it, and keyword search keeps working throughout",
+      "Embedding drift from defer()-lost work: a crash after response leaves a missing/stale row with no automatic repair until GAP G — contentHash+indexHash make it detectable, sync_semantic_index fixable, failures visible in get_deliveries; freshness is best-effort and partial staleness silently shrinks semantic recall (MCP surfaces a stale count; delivery does not)",
+      "Per-request provider cost/latency on delivery semantic search — every ?mode=semantic GET is a paid embeddings call; the shared rateLimit budget mitigates abuse but a hot legitimate site accrues cost; query-embedding caching is a likely fast follow",
+      "Connector config.baseUrl override (for smoke testability) lets an operator point the key at an arbitrary host — same trust level as all operator-side connector config (never settable over MCP); state it in the connector help text",
+      "HNSW index is global across collections with collectionId + indexHash filters — post-filtered ANN can under-return for tiny collections inside a huge table, and the indexHash filter tightens post-filtering further during partial resync; acceptable at v1 scale, per-collection partial vector indexes are the escape hatch",
+      "rateLimit on delivery ?q GETs shares the POST budget (`${projectId}:${ip}`, 20/60s) — a form-heavy page that also searches could starve one path; if observed, split the key by verb (a one-line change at the call sites)"
+    ]
+  },
+  "openMinor": [
+    {
+      "severity": "minor",
+      "issue": "refire_delivery on E5's embed-failure log rows (url='embed:<model>') falls through to the webhook branch: refireDelivery discriminates only on url.startsWith('email:') (lib/events.ts:166) and otherwise calls deliverWebhook (lib/events.ts:181), which will attempt three signed HTTP POSTs to the invalid URL 'embed:<model>' and append junk failure rows to the log. The design adopts the email:<to> discriminator idiom for embed rows but never specifies the corresponding refire branch.",
+      "suggestedFix": "In E5, add an embed: branch to refireDelivery that re-runs syncEmbedding for the logged entry (or returns E_VALIDATION 'embed deliveries are re-driven via sync_semantic_index, not refire' with the tool name as the fix hint). Also specify that the embed log row's payload contains entry id + contentHash + error only — not the search-doc text — so the deliveries log doesn't become a second copy of entry content."
+    },
+    {
+      "severity": "minor",
+      "issue": "buildSearchDoc's contentHash is not injective as specified: 'concatenation of searchable-field text' without delimiters or field-name framing means field values ('ab','c') and ('a','bc') produce identical docs/hashes (skipping a needed re-embed), and value moves between fields or field renames are not guaranteed to dirty the hash.",
+      "suggestedFix": "Specify the hash input as a canonical framed encoding — e.g. sha256(JSON.stringify(sortedFieldNames.map(n => [n, strippedText(n)]))) — so any change to which fields participate, their names, or their values changes the hash. This also dovetails with the blocker fix if the searchable-set fingerprint is part of the same hash."
+    },
+    {
+      "severity": "minor",
+      "issue": "E3's smoke verification plan ('assert an EXPLAIN over a searched collection references entries_fts_*') is an implementer trap: with the handful of rows a smoke test creates, the Postgres planner will prefer a seq scan over the GIN index even when the expressions match, so the assertion is flaky-to-always-failing. And the neon-http driver is one statement per request with no session state, so `SET enable_seqscan = off` cannot be applied before the EXPLAIN through the same connection the app uses.",
+      "suggestedFix": "Assert index existence + expression text via pg_indexes/pg_get_indexdef through the smoke helper's direct SQL (helpers.mjs already talks to DATABASE_URL), and verify expression identity by comparing the indexdef against searchVectorExpr output as a string. Keep planner matching honest with a one-off manual EXPLAIN against a seeded dataset, documented rather than smoke-asserted."
+    },
+    {
+      "severity": "minor",
+      "issue": "E6 says delivery semantic/hybrid GETs 'pass through the existing rateLimit()' but the existing limiter is a single 20 req/60s window keyed `${projectId}:${ip}` shared with POST creates (app/api/v1/[collection]/route.ts:146-152). If semantic search reuses that key, a visitor doing a few searches consumes the same budget as form submissions — search traffic can starve writes for that IP (and vice versa). The design doesn't specify the key or budget.",
+      "suggestedFix": "Specify a namespaced key (e.g. `search:${projectId}:${ip}`) with its own limit in E6, using the same RateLimitStore. One line of design text; without it an implementer will silently couple the two surfaces."
+    },
+    {
+      "severity": "minor",
+      "issue": "Hybrid/semantic pagination contract is unspecified. E1's search_entries has limit/offset/hasMore; E6 computes hybrid as RRF over the top-50 of each ranking, which yields a bounded fused list (≤100). What offset=60 means, what hasMore means at the fusion boundary, and whether semantic mode paginates by offset into the ANN result are all left to the implementer — and the mcp-surface gotcha list shows tool contracts like this (cursor/orderBy exclusivity) are stated explicitly everywhere else.",
+      "suggestedFix": "State it in E6: hybrid returns at most K fused results (document K), offset beyond the fused set returns empty with hasMore:false, and the tool description says 'hybrid returns the top ~N only — no deep paging'. Same for semantic mode's offset semantics."
+    },
+    {
+      "severity": "minor",
+      "issue": "get_client_code drifts. E2/E6 update get_project_info's deliveryApi.read string but not get_client_code, whose output is a generated schema/usage snapshot of the delivery API (mcp-surface map: 'must be regenerated after any define_collection change'). Generated client code won't mention ?q=/?mode= — agents copying it will under-use the new surface, a Rule-1 (self-describing) gap.",
+      "suggestedFix": "Add lib/mcp/tools.ts get_client_code generation to E2's and E6's scope: include a search example when the collection has public searchable fields (and a mode example when search.semantic is set)."
+    },
+    {
+      "severity": "minor",
+      "issue": "bulk_create_entries (≤100 rows) defers one emitEntryEvent per entry (lib/entries.ts:426), so E5's embed-on-write turns one bulk call into up to 100 sequential provider round-trips inside a single after() task — likely exceeding the serverless post-response window (the webhook precedent is 3 attempts for ONE delivery, not 100), silently dropping most embeds. The failures are repairable via sync_semantic_index, but the design presents embed-on-write as the primary freshness mechanism and lib/embeddings.ts already defines a batched embedTexts that this path doesn't use.",
+      "suggestedFix": "State in E5 that the bulk path skips per-entry embedding (or batches via embedTexts in one deferred task) and that bulk_create_entries' description tells the agent to run sync_semantic_index afterwards — one sentence each, but an implementer needs the decision made."
+    }
+  ]
+}

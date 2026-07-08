@@ -1,0 +1,183 @@
+{
+  "design": {
+    "gap": "GAP A — Field constraints: complete the declarative constraint vocabulary (pattern/regex, date bounds, integer), make every violation machine-readable as structured issues with fix hints, and define the semantics of tightening constraints over existing data. Fresh code reading shows the foundation already exists — unique (DB partial indexes, lib/collections.ts:236-274), min/max for text-length and number-value (lib/validation.ts:148-161), enum options, and requiredIf (lib/validation.ts:219-233) all ship today with smoke coverage (scripts/smoke/13-constraints.test.mjs). This design fills the missing constraints and hardens the error/lifecycle story rather than rebuilding what exists.",
+    "approach": "The design keeps AgentX's two-layer constraint architecture and completes it. Layer 1 (meta-schema): every constraint is a declarative knob on FieldDef (lib/field-types.ts FieldBase), validated at define time by fieldDefSchema's superRefine (lib/validation.ts:59-93) so an agent can never store a definition the runtime can't enforce. Layer 2 (runtime): valueSchemaFor (lib/validation.ts:148-177) compiles knobs into the strict Zod schema that ALL write paths — MCP tools, admin server actions, delivery POST/PATCH, bulk — already funnel through. Because the codebase has exactly one write choke point and no raw SQL escape hatch, validator-level enforcement is provably complete for any per-row constraint (a constraint that depends only on the row's own payload). This is the central mechanism-fit argument: we do NOT need dynamic CHECK constraints for pattern/min/max/enum/requiredIf, and we DO need DB enforcement only where a constraint is cross-row — uniqueness — which already has it (partial unique indexes created before the definition is persisted, so the schema never claims a constraint the DB doesn't hold).\n\nNew constraints: (1) pattern — a JS-RegExp source string on text fields, compiled and length-capped at define time, enforced in valueSchemaFor after length bounds; a per-field `patternHint` lets the agent supply a human/agent-friendly fix hint (\"must look like an email\") since raw regexes are poor hints. Pattern is deliberately never evaluated in SQL: Postgres POSIX regex and JS RegExp diverge silently, so one engine (JS, inside the single validator) is the only way to keep list-gating (buildWhere) and write validation from ever disagreeing. (2) min/max on date fields as ISO strings — the existing min/max knobs become z.union([number, string]) in the meta-schema with per-type superRefine (string+parseable only on date), keeping knob economy instead of minting minDate/maxDate. (3) integer:boolean on number fields → z.number().int(), plus a JS-side integer check on update_entry_if's increment.by so the WHERE-clause CAS path stays inductively integer (old value is integer by validation, by is integer by the new check, sum is integer — no SQL change).\n\nErrors become structured without breaking the stable format. ValidationError (lib/validation.ts:28) gains an optional issues: ConstraintIssue[] — {field, constraint: 'type'|'required'|'required_if'|'min'|'max'|'pattern'|'enum'|'unique'|'unknown_field'|'ref_missing', limit?, allowed?, pattern?, hint} — derived from ZodIssue codes (too_small/too_big/invalid_string/invalid_enum_value/unrecognized_keys map 1:1) plus the field's own def, and attached by rethrowUnique for DB unique violations (lib/entries.ts:120-126). The MCP err() keeps its `Error [E_*]: message` first line (append-only contract honored, no new codes needed) and appends a `issues:` JSON block; deliveryError's {error, code} envelope gains an optional issues array on 422s. An agent can now repair a multi-field bulk failure field-by-field from one response.\n\nConstraint lifecycle: tightening a validator-level constraint on a collection with existing rows is forward-looking (writes validate the new rule; stored rows are untouched and still readable), so it is NOT confirm-gated — nothing is destroyed. Instead, defineCollection detects tightened knobs against the current definition and returns constraintWarnings: [{field, constraint, existingViolations, scannedRows, hint}] in the applied result — numeric/length/enum violations counted by one parameterized SQL count per field (length(data->>'f'), ::numeric casts, NOT IN — same meta-validated-identifier discipline as syncUniqueIndexes), pattern violations counted by a JS scan over SELECT data->>'f' capped at 5000 rows (reported via scannedRows so partiality is explicit). Unique keeps its existing harder rule — the index physically cannot be created over duplicates, so enabling it still fails with the dedupe hint and the definition is not saved. Finally, the design closes the requiredness hole on updates: explicit null in an update payload unsets an optional field (rejected with a hint on required fields), which is what makes `required` a real invariant rather than a create-time-only check.",
+    "keyDecisions": [
+      {
+        "decision": "Per-row constraints (pattern, min/max, integer, enum, requiredIf) are enforced validator-level only; DB-level enforcement is reserved for cross-row constraints (unique, already done via partial unique indexes synced before definition persist).",
+        "rationale": "Every write path (MCP, admin actions, delivery, bulk, CAS-patch) already funnels through buildEntrySchema's strict parse — the codebase invariant 'one definition of valid' plus 'no raw SQL escape hatch' makes validator enforcement complete for constraints that depend only on the row's own payload; there is no race a concurrent writer can exploit. The one genuine bypass, update_entry_if's SQL-computed increment, already puts min/max guards in the UPDATE's WHERE (lib/entries.ts:294-295) and needs only a JS integer check on `by`.",
+        "alternativeRejected": "Dynamic Postgres CHECK constraints over JSONB expressions per field (like the unique indexes). Rejected because: ADD CONSTRAINT must validate the whole table or juggle NOT VALID states on every schema edit; the neon-http driver has no transactions to make DDL+definition-write atomic; Postgres POSIX regex semantics silently diverge from JS RegExp; and CHECK-violation errors are opaque strings an agent cannot repair from — the opposite of design rule 2."
+      },
+      {
+        "decision": "pattern is a JS-RegExp source string, compiled/capped at define time, evaluated exclusively in the JS validator — never translated into SQL, including the define-time violation scan (which fetches values and tests in JS).",
+        "rationale": "One regex engine means write validation, and any future filtering, can never disagree about what matches. Define-time compilation (try { new RegExp(p) }) plus a 200-char source cap and evaluation ordered after length bounds bounds the ReDoS surface; valueSchemaFor is the single seam to swap in RE2 later if needed. patternHint gives agents a legible fix hint because a raw regex in an error message is not one.",
+        "alternativeRejected": "Enforcing/scanning pattern via Postgres `data->>'f' ~ pattern`. Rejected: POSIX ERE vs JS RegExp divergence (\\d, lookahead, unicode flags) would make the SQL scan report violations the validator would accept and vice versa, and it would put user-authored regex into SQL — against the meta-validated-identifiers-only discipline for sql.raw."
+      },
+      {
+        "decision": "Tightening a validator-level constraint over existing data applies immediately and returns constraintWarnings (per-field violation counts + hints) in the applied define result — it is not confirm-gated. Unique keeps its existing hard-fail-with-dedupe-hint behavior.",
+        "rationale": "Design rule 4 gates destruction; tightening a pattern or min destroys nothing — stored rows remain readable and served, and only future writes validate the new rule. Reporting counts keeps the tool self-describing (the agent learns 'this collection has 12 rows that would now fail') without blocking legitimate schema evolution. Unique is different in kind: the partial index physically cannot exist over duplicates, so the DB decides, and the schema-never-lies invariant (index synced before persist, lib/collections.ts:330-335) is preserved verbatim.",
+        "alternativeRejected": "Terraform-style confirm gate on any constraint tightening with existingViolations > 0. Rejected because confirm currently means 'data will be orphaned/destroyed' — overloading it for a non-destructive change dilutes the signal agents rely on, and would make routine schema hardening a two-round-trip operation for zero safety gain."
+      },
+      {
+        "decision": "Structured ConstraintIssue[] is additive: ValidationError grows an optional issues array; the MCP error text keeps `Error [E_*]: message` as line one and appends an `issues:` JSON block; the delivery envelope stays {error, code} with an optional issues key. No new error codes.",
+        "rationale": "The error-format invariant is explicitly append-only (lib/error-codes.ts:4-5) — existing agents parse the prefix and branch on code; adding a suffix block and an optional JSON key breaks no one while giving new agents field-level, machine-parseable repair data ({field, constraint, limit, hint}) — exactly rule 2 at finer grain. E_VALIDATION already covers all constraint violations semantically.",
+        "alternativeRejected": "A new E_CONSTRAINT error code and/or a structured MCP content type replacing the text error. Rejected: renaming/splitting codes violates the append-only contract's spirit (clients branching on E_VALIDATION for entry-data failures would mis-branch), and MCP ToolResult text content is the established transport — a second content shape would fork the parsing contract for every existing client."
+      },
+      {
+        "decision": "Overload the existing min/max knobs for date fields (ISO-string bounds, meta-validated per type) rather than adding minDate/maxDate; add integer as a separate boolean on number.",
+        "rationale": "Knob economy is a feature of the declarative surface — list_field_types stays one screen, and 'min/max, meaning depends on type: length for text, value for number/date' is already the established mental model (lib/field-types.ts:39). The meta-schema union (number | ISO string) with per-type superRefine keeps definitions unambiguous and rejects a string bound on a number field with a fix hint.",
+        "alternativeRejected": "Separate minDate/maxDate (or a nested bounds object). Rejected as vocabulary sprawl: every new knob is another thing the agent must discover and another superRefine cross-check; the union costs one meta-schema branch and zero new concepts."
+      }
+    ],
+    "increments": [
+      {
+        "id": "A1",
+        "name": "pattern constraint on text fields",
+        "what": "Add pattern?: string and patternHint?: string to FieldBase (lib/field-types.ts:21-44). Meta-schema (lib/validation.ts fieldDefSchema): knobs accepted, superRefine enforces text-only, source length <= 200, and compilability via try { new RegExp(pattern) } catch -> issue 'pattern is not a valid JS regular expression: <RegExp error>'. Runtime (valueSchemaFor text case): after min/max length checks, s.regex(new RegExp(field.pattern), patternHint ?? `must match pattern ${pattern}`) — hint-first message so violations are agent-repairable. Document in FIELD_TYPE_SPECS.text.config ('pattern?: string (JS RegExp source; add patternHint for a human-readable rule)') which list_field_types serves verbatim; extend the define_collection tool description one clause. Smoke: define a collection with pattern+patternHint, assert create/update/bulk rejections carry the hint, assert bad-regex definition is rejected with the compile error, assert delivery POST 422s identically.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\field-types.ts",
+          "C:\\dev\\AgentX\\lib\\validation.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\13-constraints.test.mjs"
+        ],
+        "surface": "define_collection accepts pattern/patternHint on text fields; list_field_types documents them; create_entry/update_entry/bulk_create_entries and delivery POST/PATCH reject violations with the hint. Admin EntryForm needs no change (validation core returns {error} through saveEntry as today).",
+        "size": "S",
+        "dependsOn": [],
+        "migration": "none (fields is JSONB; drizzle-kit push not even needed)"
+      },
+      {
+        "id": "A2",
+        "name": "structured ConstraintIssue[] on every validation failure",
+        "what": "Define ConstraintIssue {field: string, constraint: 'type'|'required'|'required_if'|'min'|'max'|'pattern'|'enum'|'unique'|'unknown_field'|'ref_missing', limit?: number|string, allowed?: string[], pattern?: string, hint: string} in lib/validation.ts. ValidationError gains readonly issues?: ConstraintIssue[]. New issuesFromZod(err, fields) maps ZodIssue codes (too_small/too_big -> min/max with limit from the field def; invalid_string -> pattern; invalid_enum_value -> enum with allowed=options; invalid_type+received undefined -> required; unrecognized_keys -> unknown_field per key; custom requiredIf path -> required_if) — used by validate() in lib/entries.ts:99-111 to construct ValidationError(formatZodError(e), 'E_VALIDATION', issues). rethrowUnique (lib/entries.ts:120) attaches [{field, constraint:'unique', hint:'value already exists — this field is unique; query_entries to find the holder'}]; verifyRefs failures attach ref_missing. MCP err() (lib/mcp/tools.ts:630) gains optional issues param: text stays `Error [CODE]: message` on line 1, followed by 'issues: ' + JSON.stringify(issues) when present (cap 20 issues); callTool's ValidationError catch passes e.issues through. deliveryError (lib/delivery-http.ts:30) gains optional issues, emitted as {error, code, issues}; the four ValidationError catch sites in app/api/v1 routes pass them. GET /api/mcp self-description mentions the issues block. Smoke: assert a multi-violation create returns parseable issues with correct constraint kinds and limits, on both MCP and delivery surfaces.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\validation.ts",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\lib\\delivery-http.ts",
+          "C:\\dev\\AgentX\\app\\api\\v1\\[collection]\\route.ts",
+          "C:\\dev\\AgentX\\app\\api\\v1\\[collection]\\[id]\\route.ts",
+          "C:\\dev\\AgentX\\app\\api\\mcp\\route.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\13-constraints.test.mjs"
+        ],
+        "surface": "Every MCP tool error for entry-data/definition failures carries an appended machine-readable issues block; delivery 422/409 responses gain an optional issues array in the {error, code} envelope. No new tools; error-text line 1 and all ErrorCodes unchanged.",
+        "size": "M",
+        "dependsOn": [],
+        "migration": "none"
+      },
+      {
+        "id": "A3",
+        "name": "date min/max bounds and integer numbers",
+        "what": "Meta-schema: min/max become z.union([z.number(), z.string()]); superRefine adds — string bounds only on date fields and must Date.parse; number bounds only on text/richtext/number (existing rule); date allowed in the min/max type whitelist (lib/validation.ts:84-92); min<=max compares via Date.parse when strings. Add integer?: z.boolean().optional(), superRefine: number-only. Runtime: valueSchemaFor date case chains .refine(s => Date.parse(s) >= Date.parse(min), `must be on or after ${min}`) (and max mirror); number case adds .int('must be an integer') when field.integer. update_entry_if: when incField.integer and !Number.isInteger(by), throw ValidationError with hint 'increment.by must be an integer for integer field \"<name>\"' (beside the existing number-field check at lib/entries.ts:280) — result integrality then holds inductively, no SQL change. FIELD_TYPE_SPECS: date.config gains 'min/max?: ISO string (value bounds)', number.config gains 'integer?: boolean'. Smoke: date bounds on create/update, integer rejection of 1.5, increment.by 0.5 rejection on an integer field.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\field-types.ts",
+          "C:\\dev\\AgentX\\lib\\validation.ts",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\13-constraints.test.mjs",
+          "C:\\dev\\AgentX\\scripts\\smoke\\14-update-if.test.mjs"
+        ],
+        "surface": "define_collection accepts min/max on date and integer on number; list_field_types documents both; violations rejected across all write surfaces (with A2 shipped, as structured issues).",
+        "size": "S",
+        "dependsOn": [],
+        "migration": "none"
+      },
+      {
+        "id": "A4",
+        "name": "define-time tightening scan with constraintWarnings",
+        "what": "In defineCollection (lib/collections.ts:286), after the destructive gate and before persist, diff each surviving field's constraint knobs old-vs-new to detect tightening: min raised/added, max lowered/added, pattern added/changed, enum options removed, integer added. For each tightened field on an existing collection, count entries whose stored value would now fail: one parameterized SQL count per field for numeric/length/enum/integer (WHERE collection_id=$1 AND data ? 'f' AND (length(data->>'f') < $min | (data->>'f')::numeric > $max | data->>'f' NOT IN (...) | (data->>'f')::numeric % 1 <> 0) — field name inlined only after NAME_RE meta-validation, values always bound, same discipline as syncUniqueIndexes); for pattern, SELECT data->>'f' capped at 5000 rows and test with the compiled JS RegExp (never SQL regex). Result type DefineResult applied:true gains constraintWarnings?: [{field, constraint, existingViolations, scannedRows?, hint: 'existing rows keep their values and stay readable; new writes must satisfy the constraint — patch or leave them'}]. define_collection tool passes warnings through; describe_collection echoes the current knobs per field (it already returns fields[] verbatim — add a note in its description that constraints are enforced on write only). Smoke: seed rows, tighten min and add pattern, assert applied:true with correct counts and that an old violating row is still readable via get_entry/delivery while a new violating write fails.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\collections.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\13-constraints.test.mjs"
+        ],
+        "surface": "define_collection result gains constraintWarnings[] on tightening redefinitions; tool description states the enforce-on-write semantics out loud. No endpoint or admin changes.",
+        "size": "M",
+        "dependsOn": [
+          "A1",
+          "A3"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "A5",
+        "name": "unique on date fields with canonical ISO normalization",
+        "what": "Extend the unique whitelist to date (lib/validation.ts:78-83 superRefine; FieldBase doc lib/field-types.ts:36-38). To make textual index equality mean value equality, valueSchemaFor's date case gains .transform(s => new Date(s).toISOString()) so all NEW date writes store canonical UTC ISO — '2026-07-04T10:00+02:00' and '2026-07-04T08:00:00.000Z' collide as they should. syncUniqueIndexes needs zero changes (it is name-driven and type-agnostic, lib/collections.ts:240-274); enabling unique over existing duplicate dates already fails with the dedupe hint. Document in FIELD_TYPE_SPECS.date that values are stored normalized to UTC ISO-8601. Verify buildWhere date filtering is unaffected (::timestamptz cast in lib/query.ts compileClause parses canonical ISO fine) and that cursor pagination is untouched (cursors ride createdAt, not data). Smoke: unique date field rejects the same instant written in two different offsets; delivery gt/lt filters still match normalized values.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\field-types.ts",
+          "C:\\dev\\AgentX\\lib\\validation.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\13-constraints.test.mjs"
+        ],
+        "surface": "define_collection accepts unique on date fields (booking-slot use case); list_field_types documents unique's extended whitelist and the normalization; DB partial unique index enforces it race-free like text/number.",
+        "size": "S",
+        "dependsOn": [],
+        "migration": "none (index DDL is created lazily per field, as today)"
+      },
+      {
+        "id": "A6",
+        "name": "explicit unset via null + required enforced on update",
+        "what": "Close the 'no way to unset a key' gotcha and make required meaningful beyond create. buildEntrySchema partial mode (lib/validation.ts:198-216): each non-required field's schema becomes v.nullable().optional(); required fields reject null via superRefine issue 'field is required and cannot be unset' (constraint:'required' issue with A2). updateEntry (lib/entries.ts:182-228): after validate, split patch into sets and unsets (null values); merged = {...current.data, ...sets} minus unset keys; changedFields includes unset keys. updateEntryIf (lib/entries.ts:271-274): dataExpr becomes (data - $nullKeys::text[]) || $sets::jsonb when nulls present. requiredIf stays create-only (documented — its condition is ambiguous against a merged row; revisit with transact). Bulk create unaffected (create path rejects null already via non-nullable base schemas — verify and keep). Admin: coerceFormData unchanged this increment (clearing a field still omits it); update_entry tool description and COMMON_FIELD_CONFIG state 'set a field to null to unset it (optional fields only)'. Smoke: unset an optional field, see it absent from get_entry and delivery; null on a required field rejected with hint; CAS unset via update_entry_if.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\validation.ts",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\field-types.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\02-entries.test.mjs",
+          "C:\\dev\\AgentX\\scripts\\smoke\\13-constraints.test.mjs"
+        ],
+        "surface": "update_entry / update_entry_if / delivery PATCH accept null to unset optional fields and reject null on required fields with a machine-readable issue; tool descriptions updated.",
+        "size": "M",
+        "dependsOn": [
+          "A2"
+        ],
+        "migration": "none"
+      }
+    ],
+    "invariantCompliance": "Rule 1 (declarative + self-describing): every new knob (pattern, patternHint, date min/max, integer, unique-on-date, null-unset) lives on FieldDef JSONB and is documented in FIELD_TYPE_SPECS / COMMON_FIELD_CONFIG, which list_field_types serves verbatim — the agent discovers the full constraint vocabulary from the tool surface; define_collection and update_entry descriptions state the boundaries (create-time vs write-time enforcement, enforce-on-write tightening semantics) out loud, and A4's constraintWarnings make the data/schema relationship visible in the tool result itself. Rule 2 (machine-readable errors): A2 upgrades every constraint violation to ConstraintIssue[] carrying field, constraint kind, the actual limit/allowed/pattern, and a hint — while preserving the stable `Error [E_*]: message` first line and the append-only ERROR_CODES registry (no code added, none renamed); patternHint exists specifically so regex failures produce human/agent-legible hints. Rule 3 (secrets are references): untouched — constraints carry no secrets and no new secret path is created; nothing in this design reads connectors or secretEnc. Rule 4 (destructive = plan + confirm): the existing destructive gate (drop/retype -> plan + confirm, lib/collections.ts:312-328) is not modified; constraint tightening is deliberately classified as non-destructive (no stored data changes) and reports counts instead of gating, keeping the confirm signal reserved for actual data loss; unique-enable keeps its hard DB-decides failure with dedupe hint. Rule 5 (strict validation never weakens): all new constraints compile into buildEntrySchema, the single choke point every write path already traverses — nothing bypasses it, publicRead projection (toPublicView) is untouched, and no user input ever reaches sql.raw: A4's scan binds all values and inlines only NAME_RE-validated field names (the syncUniqueIndexes discipline), and pattern evaluation never enters SQL at all. The one Zod-bypassing path in the system, update_entry_if's SQL increment, is explicitly covered (integer guard on `by` plus the existing min/max WHERE guards).",
+    "crossGapDependencies": [
+      "transact([ops]) (business-logic ladder, later rung) is a consumer, not a dependency: it should compose the same validate()/ConstraintIssue machinery from A2 per op — this design intentionally keeps validate() and issuesFromZod exported from lib/validation.ts / lib/entries.ts so transact needs no rework.",
+      "A4's inline violation scan is capped (SQL counts are cheap; the pattern scan caps at 5000 rows with scannedRows reported). An exhaustive scan over very large collections would belong on the pg-backed jobs runner from the time-flow/queues gap — do not build that here; the capped scan ships standalone and states its partiality.",
+      "Admin-UI per-field inline error rendering (mapping ConstraintIssue.field to EntryForm inputs instead of the single {error} string from saveEntry) is an admin-ui gap improvement; A2 keeps the existing {error: string} server-action contract intact so nothing there blocks.",
+      "update_entry_if currently conflates precondition-failure and bounds-violation in reason:'conflict' (lib/entries.ts:292-296, 310-312) — a finer reason field would help agents but touches the CAS result contract owned by the business-logic-ladder gap; noted, not designed here."
+    ],
+    "risks": [
+      "ReDoS via agent-authored regex: mitigated by the 200-char pattern source cap, define-time compilation, and running the pattern check after length bounds — but a hostile pattern plus a long-but-legal value can still burn CPU in the request; valueSchemaFor is the single seam to swap in RE2 if this bites. Public-write (form) collections with pattern fields are the exposed surface since delivery POST is rate-limited but attacker-controlled.",
+      "JS RegExp vs Postgres regex divergence is designed around (pattern never enters SQL), but a future contributor adding a `matches` where-operator in lib/query.ts could reintroduce it — the design docs the rule in the pattern knob's code comment; keep buildWhere free of pattern semantics.",
+      "A5's date canonicalization changes what echoes back on reads for NEW writes ('2026-07-04T10:00+02:00' comes back as '2026-07-04T08:00:00.000Z'), and old non-canonical rows keep their stored strings — unique-on-date can therefore miss a logical duplicate against a pre-normalization row; the dedupe/enable-unique failure path plus FIELD_TYPE_SPECS documentation carries this, but it is a real seam on collections with pre-existing date data.",
+      "A6 changes partial-schema semantics (nullable optionals) — any code that assumed 'null never validates' (e.g. admin coerceFormData omission behavior, export/import round-trips of entries containing no nulls) must be re-verified; the smoke suite additions in 02/13 are the guard. updateEntryIf's new (data - keys) || patch expression must be verified against the neon-http single-statement constraint (it remains one UPDATE, so it should hold).",
+      "A2's issues block appended to MCP error text could break naive clients that JSON.parse the entire text content expecting non-JSON — mitigated by keeping line 1 byte-identical to today's format and capping issues at 20, but a client regexing the FULL text for `^Error \\[...\\]: (.*)$` with $ anchoring multiline could mis-capture; smoke 10-mcp-surface should assert the first-line contract explicitly.",
+      "A4's ::numeric cast in violation counts will throw on rows whose stored value predates the number type (e.g. after a confirmed retype) — the scan queries must guard with a numeric-shape check (data->>'f' ~ '^-?[0-9]') or catch and report scan-failed per field rather than failing the define call.",
+      "TOOL_DEFS JSON inputSchema and the zod defineArgs are maintained separately (known drift gotcha) — every increment touching define_collection's accepted knobs must update BOTH plus FIELD_TYPE_SPECS, or list_field_types/tools-list will lie about the surface; fields passes through z.array(z.any()) at the tool layer so the meta-schema is the real gate, making the hand-written docs the only discoverability channel."
+    ]
+  },
+  "openMinor": [
+    {
+      "severity": "minor",
+      "issue": "A3's integer-induction argument is false for pre-tightening data, leaving a real write path that produces constraint-violating values. The claim 'old value is integer by validation, by is integer by the new check, sum is integer' assumes all stored values already satisfy integer — but A4's own semantics allow adding integer to a field with existing non-integer rows (enforce-on-write, warnings only). update_entry_if's increment computes the new value in SQL (lib/entries.ts:289-296) with WHERE guards only for min/max; incrementing a legacy 1.5 by an integer keeps WRITING new non-integer values forever, through the one Zod-bypassing path. This contradicts the design's stated coverage of that path.",
+      "suggestedFix": "When incField.integer, add an integrality guard to the CAS WHERE alongside the min/max guards: sql`(${oldValue}) % 1 = 0` — a legacy non-integer value then surfaces as reason:'conflict' (consistent with the existing bounds-violation semantics), and the induction actually holds. Document in the update_entry_if description that increments on integer fields conflict when the stored value predates the constraint."
+    },
+    {
+      "severity": "minor",
+      "issue": "A5's canonicalization widens the buildWhere/matchesClauses date-eq divergence, making publicFilter row-gating inconsistent between list and single-entry reads. SQL eq on date compares instants ((data->>'f')::timestamptz = $param, lib/query.ts:64,114 — the param is inferred as timestamptz), but matchClause eq on date is a raw STRING comparison (String(v ?? '') === String(c.value), lib/query.ts:160). Post-A5, a stored value is rewritten to '...T08:00:00.000Z' while an agent-authored publicFilter eq value of '...T10:00+02:00' (or even '...T08:00:00Z') matches in SQL but fails the JS string compare — the entry appears in GET /v1/list but 404s on GET /v1/{id}. Hide-only (equal strings imply equal instants, so it cannot leak), but it breaks the 'same semantics' contract the two implementations claim, precisely because A5 guarantees stored spellings differ from author spellings.",
+      "suggestedFix": "In the A5 increment, change matchClause's date eq (and 'in' on any future date whitelist) to compare Date.parse values, mirroring the existing gt/lt branches (lib/query.ts:164-170). Add a smoke asserting list-vs-single-entry publicFilter agreement for a date eq filter written in a non-canonical offset."
+    },
+    {
+      "severity": "minor",
+      "issue": "A2's issuesFromZod mapping 'invalid_string -> pattern' mislabels non-pattern string failures. z.string().uuid() on asset/relation fields (lib/validation.ts:172-175) and the date refine both surface as string-validation ZodIssues; mapping all invalid_string to constraint:'pattern' would tell an agent a malformed relation uuid is a regex problem — a wrong fix hint, which is the failure mode rule 2 exists to prevent.",
+      "suggestedFix": "Discriminate on the ZodIssue's validation kind and the field def's type: validation==='regex' AND field.pattern set -> 'pattern'; uuid failures on asset/relation -> constraint:'type' (hint: 'value must be a uuid of an existing <asset|target> — use list_assets/query_entries'); date refine failures -> 'type'. Add a smoke case per mislabel-prone kind."
+    },
+    {
+      "severity": "minor",
+      "issue": "A4's tightening diff does not exclude retyped fields, and a confirmed retype + knob change in one define call compares incommensurable knobs and scans mistyped data. After a confirmed text->number retype, old rows hold strings; the 'integer added' or 'min raised' scan's ::numeric cast throws on them (the acknowledged '^-?[0-9]' regex guard is insufficient — '12abc' passes it and still throws), and old min (length) vs new min (value) is a meaningless tightening comparison. A failed scan inside defineCollection after the DDL/persist sequencing risks a half-applied define result.",
+      "suggestedFix": "Compute constraint tightening only for fields whose type is unchanged between old and new defs (skip anything in diff.retyped and diff.renamed-to targets), and wrap each per-field count/scan in try/catch that degrades to {field, constraint, scanFailed: true, hint} rather than failing the define call. State in the A4 increment text that scan failure never blocks or rolls back the definition write."
+    },
+    {
+      "severity": "minor",
+      "issue": "A2 advertises 'an agent can now repair a multi-field bulk failure field-by-field from one response', but bulkCreateEntries per-item failures serialize only e.message (lib/entries.ts:404: `error: e instanceof Error ? e.message : String(e)`) — the new ConstraintIssue[] on ValidationError is dropped for every per-item bulk validation failure, which is the one surface where structured issues matter most. A2's spec text never mentions BulkItemResult, so an implementer following the increment as written ships the claim unfulfilled.",
+      "suggestedFix": "Extend BulkItemResult with issues?: ConstraintIssue[] populated when the caught error is a ValidationError (lib/entries.ts:404), and pass it through the bulk_create_entries tool result; add a smoke asserting a bulk call with two invalid items returns per-item issues. Alternatively, scope the A2 claim to single-entry errors and defer bulk issues explicitly."
+    },
+    {
+      "severity": "minor",
+      "issue": "A3 widens min/max to z.union([number, string]) in the meta-schema and implies FieldBase.min/max: number | string at the type level. That ripples into every number-typed consumer: valueSchemaFor calls z.string().min(field.min)/z.number().min(field.min) which require number (lib/validation.ts:153-160), and updateEntryIf's CAS bound guards interpolate incField.min/max into SQL (lib/entries.ts:294-295). Without a typing plan, implementers scatter `as number` casts or runtime narrowing through the validation core.",
+      "suggestedFix": "Keep FieldBase.min/max typed as number and override on DateField only (min?: string; max?: string), or split the knob typing per interface in lib/field-types.ts so the discriminated union narrows naturally — the runtime meta-schema union stays as designed, but downstream consumers keep number types without casts."
+    }
+  ]
+}

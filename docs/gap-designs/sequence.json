@@ -1,0 +1,156 @@
+{
+  "phases": [
+    {
+      "title": "Phase 1 — Constraint vocabulary + structured errors (GAP A, complete)",
+      "rationale": "Smallest, zero-migration foundation with the widest fan-out: ConstraintIssue[] (A2) is explicitly composed by transact (B), delivery/authz denials (F), hooks (I), and every later error surface; the null-unset semantics (A6) and completed constraint knobs harden the single write choke point before B's structural refactor of lib/entries.ts. A1/A2/A3/A5 are mutually independent and can interleave; A4 needs A1+A3, A6 needs A2.",
+      "items": [
+        "A1",
+        "A2",
+        "A3",
+        "A5",
+        "A4",
+        "A6"
+      ]
+    },
+    {
+      "title": "Phase 2 — CAS completion + transact (GAP B, complete)",
+      "rationale": "This is the shared-machinery phase: withTransaction/db-tx (B2) is the interactive-tx primitive the jobs runner (G) and any future queue reuse; buildWhereParts (B1) is the seam D3's related-filter compiler builds on; the *Core(dbc) refactor of createEntry/updateEntry/deleteEntry (B2) restructures lib/entries.ts and must land BEFORE C/H/I bolt their behavior onto those functions, or every later gap rebases the choke point. B1's SQL-faithful CAS diagnosis + pre-image also becomes the canonical pre-image mechanism C8/G4/H later consume.",
+      "items": [
+        "B1",
+        "B2",
+        "B3",
+        "B4",
+        "B5"
+      ]
+    },
+    {
+      "title": "Phase 3 — Trash, purge, versions (GAP C, complete)",
+      "rationale": "Highest pure user-value-per-effort after the foundations, and the safety net you want in place BEFORE dogfooding a real site (recoverable deletes make aggressive schema/content iteration cheap). Landing after B means C1 rewires deleteEntryCore, so transact delete ops trash uniformly; C8's self-join pre-image supersedes B1's advisory pre-read (converge to one mechanism); entries_trash rows double as tombstones the realtime feed (H) later reads. Order within: C1→C2→C3 (lifecycle), C4→C5/C6→C7 (versions), C8 anytime after C4.",
+      "items": [
+        "C1",
+        "C2",
+        "C3",
+        "C4",
+        "C5",
+        "C8",
+        "C6",
+        "C7"
+      ]
+    },
+    {
+      "title": "Phase 4 — Query power + keyword search (GAP D complete, E1–E3)",
+      "rationale": "The delivery-facing features a real site actually consumes: depth-1 expansion kills the N+1 (D1/D2), dotted filters ride B1's buildWhereParts (D3/D4), reverse includes complete the read story (D5/D6), and FTS with the public-subset GIN index (E1–E3) gives every content site search with zero provider dependency. All read-path, no migrations except none — cheap to ship, immediately visible value.",
+      "items": [
+        "D1",
+        "D2",
+        "D3",
+        "D4",
+        "D5",
+        "D6",
+        "E1",
+        "E2",
+        "E3"
+      ]
+    },
+    {
+      "title": "Phase 5 — Authorization ladder (GAP F, F1–F4; F5 stays deferred)",
+      "rationale": "Claims presets are the first thing every member site needs beyond owner (per the design's own frequency ranking), and F must precede the dogfood acceptance so the real site can exercise role-gated writes, org scoping, and field-level write rules under real Clerk tokens. Pure JSONB + gate-branch work, no migrations, no cross-gap machinery. F3 is independent of F1/F2 and can run in parallel; F5's side-table design stays recorded, not built.",
+      "items": [
+        "F1",
+        "F2",
+        "F3",
+        "F4"
+      ]
+    },
+    {
+      "title": "Phase 6 — REAL-SITE DOGFOOD ACCEPTANCE (existing Phase 2.3 milestone)",
+      "rationale": "Slot the full acceptance pass here, once the platform covers the complete 'real branded site' feature envelope: constraints + repairable errors (A), safe deletes (C), expansion/filtering/search (D/E), and member authz (F). This run generates the evidence that prioritizes everything after it: does search quality demand semantic (Phase 8)? do tenants ask for scheduled/delayed actions and approval workflows (Phase 7 scope confirmation)? is payments or realtime the next revenue/differentiator ask (Phases 9 vs 11)? do custom-validation requests justify hooks now (Phase 10)? Phases 8–11 are explicitly reorderable on this evidence.",
+      "items": []
+    },
+    {
+      "title": "Phase 7 — Jobs runner, delayed actions, schedules, workflows (GAP G, complete)",
+      "rationale": "G1's pg jobs table + hardened drain endpoint is the LAST piece of shared machinery: E's embed backfill automation, C's retention sweep upgrade, H's feed pruning, and K's reconciliation sweep all name it as their eventual runner — so it must precede Phases 8–11 even though each of them functions without it. G4's workflow enforcement reuses B/C's proven self-join pre-image (G4b is the dedicated proof increment), and the actors gate lands after F so claim-aware actor refinement is a natural fast-follow.",
+      "items": [
+        "G1",
+        "G2",
+        "G3",
+        "G4",
+        "G4b",
+        "G5"
+      ]
+    },
+    {
+      "title": "Phase 8 — Semantic + hybrid search (E4, E5a, E5b, E6) — gated on dogfood evidence",
+      "rationale": "BYO-key embeddings are the most speculative piece of GAP E: real cost per query, a provider dependency, a pgvector extension step, and an invalidation lifecycle — ship only if Phase 6 shows keyword FTS quality is an actual ceiling for real tenants. E4 (connector, S, dependency-free) can be slipped into any idle slot earlier; the G1 runner is available to automate sync_semantic_index loops from day one.",
+      "items": [
+        "E4",
+        "E5a",
+        "E5b",
+        "E6"
+      ]
+    },
+    {
+      "title": "Phase 9 — Payments (GAP K, complete)",
+      "rationale": "Highest concrete tenant value of the remaining gaps (sellable collections + checkout + paid-order fulfillment via existing declarative events), and everything it leans on is now shipped: the connector idiom, updateEntryIf CAS (with B1's honest failure diagnosis), and rateLimit. Stripe's own retry loop means no G dependency, but G1 enables the stranded-pending-order reconciliation sweep as a follow-up. K1→K2a→K2b→K3→K4, with K5/K6 as polish.",
+      "items": [
+        "K1",
+        "K2a",
+        "K2b",
+        "K3",
+        "K4",
+        "K5",
+        "K6"
+      ]
+    },
+    {
+      "title": "Phase 10 — Hosted-compute boundary: hooks + computed fields (GAP I, complete)",
+      "rationale": "Closes the 'custom validation/transformation' ask without hosting code. Deliberately late: I1 wires synchronous calls into createEntry/updateEntry, so it should land after the entries.ts churn from B/C/G has settled, and after dogfood confirms tenant endpoints actually exist to call. Computed fields (I3/I4) are independent of hooks and can be pulled earlier if slug/timestamp derivation bites during dogfood.",
+      "items": [
+        "I1",
+        "I2",
+        "I3",
+        "I4",
+        "I5",
+        "I6"
+      ]
+    },
+    {
+      "title": "Phase 11 — Realtime change feed + SSE (GAP H, complete)",
+      "rationale": "The most speculative capability (sync-primitive positioning) and the one that benefits most from arriving last: by now the CAS pre-image exists (C8/B1) so prevData/tombstone semantics work on every path including CAS; entries_trash provides delete tombstones; the G1 runner replaces the probabilistic retention prune; and H1's inline recordChange can be written once against the final, settled set of mutation paths (trash, workflow transitions, hook-transformed writes) instead of chasing them.",
+      "items": [
+        "H1",
+        "H2",
+        "H3",
+        "H4",
+        "H5"
+      ]
+    },
+    {
+      "title": "Phase 12 — Media transforms + i18n (GAP J, complete)",
+      "rationale": "Explicitly the polish tier per the brief. Image transforms (J1/J2) are self-contained and could be cherry-picked earlier if the dogfood site needs srcsets, but i18n (J3–J8) touches the validation core, delivery projection, admin forms, and the manifest — maximum blast radius for a feature with no confirmed tenant demand yet, so it goes last, after search (E) and the change feed (H) whose localized-field interactions its design already documents.",
+      "items": [
+        "J1",
+        "J2",
+        "J3",
+        "J4",
+        "J5",
+        "J6",
+        "J7",
+        "J8"
+      ]
+    }
+  ],
+  "notes": [
+    "Dogfood slot (Phase 6) is the pivot: Phases 1-5 build the complete envelope a real branded member site consumes; Phases 8-11 are deliberately reorderable based on what the acceptance run surfaces (search quality ceiling -> pull Phase 8; commerce ask -> pull Phase 9; custom-validation ask -> pull Phase 10; sync/polling pain -> pull Phase 11).",
+    "CAS pre-image must converge to ONE mechanism: B1 ships an advisory pre-read + SQL-faithful diagnosis; C8 replaces the pre-read with the single-statement self-join (UPDATE ... FROM ... RETURNING old.data); G4/G4b reuse and prove the same self-join; H1 then consumes prevData for free. Do not let three parallel pre-image implementations exist — C8 should refactor B1's path onto the self-join.",
+    "Ordering collision resolved by sequence: B2 extracts deleteEntryCore, then C1 rewires deletion to trashEntry — C1 must update the transact delete op (and its tool description) so batch deletes trash uniformly; whichever increment lands second owns the reconciliation.",
+    "lib/entries.ts churn discipline drives Phases 1-3: A (validation-layer edits) -> B (*Core structural refactor) -> C (trash/version hooks) -> D/E (read helpers) -> G4/I1/H1 (write-path additions). Violating this order means repeated rebases of the platform's single write choke point.",
+    "B1's buildWhereParts export is the seam D3's related-context compiler is built on — do not parallelize B1 and D3; land B1 first and keep buildWhere byte-identical (existing smoke suite is the guard).",
+    "Shared-machinery gates: G1 (jobs runner) must precede any automation of E's sync_semantic_index, C's retention sweep upgrade, H's feed pruning, and K's reconciliation sweep — but all four function agent-driven/lazily without it, which is why G sits at Phase 7 rather than earlier.",
+    "Reserved-name and data checks before shipping: 'changes' (H2) and 'checkout' (K2a) join RESERVED_NAMES — verify no production collection uses those slugs before those phases; E5a needs the one-time manual CREATE EXTENSION vector on Neon (outside db:push).",
+    "All migrations are additive db:push pushes, one per increment (B5 receipts, C1/C4 tables, G1 jobs, G3 schedules, E5a embeddings+search column, H1 changes, J3 locales, K2a/K3 columns) — no migration-file workflow exists; keep the smoke helpers.mjs seed SQL in sync as schemas grow.",
+    "Render-move interplay: G1's POST /api/jobs/drain is the host-agnostic cron interface (Netlify scheduled function today, Render curl tomorrow); the unstable_cache replacement should land before D-scale expansion multiplies getCollection calls and before F/K grow cached read sites; the durable rate-limit store (infra track) automatically tightens E2, J1, and K2b when it ships — none of them block on it.",
+    "Standing PR checklist across every phase: TOOL_DEFS hand-written JSON inputSchema and its zod twin are maintained separately (documented drift gotcha) — nearly every increment touches both; and webhook_deliveries becomes a multi-shape log (email:*, embed:*, hook.*, stripe:*) across Phases 8-10, so audit listDeliveries renderers once when the second new shape lands.",
+    "Deliberately deferred and recorded, not lost: F5 per-row ACL (side-table design captured in the F spec), depth-2 expansion (D), avif/png transforms (J), member-only checkout (K), and per-role workflow actors (G — natural follow-up once F's claim vocabulary is proven in production)."
+  ]
+}

@@ -1,0 +1,256 @@
+{
+  "design": {
+    "gap": "GAP J — content-layer polish: (1) image transforms/derivatives for R2 assets, (2) per-field i18n/localization with delivery fallback and admin locale switcher",
+    "approach": "IMAGE TRANSFORMS — an on-demand transform route with R2-cached derivatives, built on sharp (Cloudflare Image Resizing rejected: vendor-locked, untestable in smoke; sharp-on-upload rejected: eager cost + backfill). URL contract, tightened after recomputing the abuse bound honestly: `GET {deliveryBase}/assets/{assetId}/image?w=&h=&fit=&format=` — at least one of w/h, snapped UP to the 12-value ladder [64,96,128,256,320,480,640,768,960,1200,1600,2000]; format webp|jpeg only (avif dropped as the encode-cost outlier, png dropped since webp covers transparency); fit is accepted ONLY when both dims are given (cover|inside; single-dim requests with a fit param are 422'd and the canonical derivative key for single-dim has no fit segment). Corrected worst-case key space: single-dim 24 combos + both-dims 144×2 fits = 312 dimension/fit combos × 2 formats = 624 distinct keys per asset — NOT the ~132 the previous draft claimed, and still too many to leave guarded by a per-lambda in-memory rate limiter alone. So the load-bearing defense is a DURABLE per-asset materialization budget, not the rate limiter: on every cache miss, one ListObjectsV2 (keys-only, single page) on the `${dirname(r2Key)}/_t/` prefix; if ≥40 derivatives already exist, return 429 with a machine-readable hint ('derivative budget reached — reuse an existing variant; a srcset needs ~6'). The budget lives in R2 state, so IP rotation, lambda rotation, and key rotation cannot reset it; worst-case attacker damage per leaked asset id is 40 sharp encodes and 40 stored objects, ever. Rate limiting becomes latency shaping on top: two keys, `img:${ip}` (global per-IP, so per-asset rotation doesn't multiply the budget) and `img:${assetId}:${ip}`, both on the generation path only. sharp gets limitInputPixels and the ladder caps output at 2000px. Derivatives remain pure cache (no table rows, deterministic keys, HeadObject existence check, 302 to R2 public URL with immutable cache-control), and deleteAsset switches to paginated prefix list+delete. The route stays token-free — originals are already world-readable via R2_PUBLIC_BASE_URL, and `assets` is a reserved collection name so the segment can't collide.\n\nI18N — a `localized?: boolean` knob on text/richtext FieldDefs storing `{locale: value}` variant maps in entries.data, gated on project-level locale config (`projects.locales` JSONB {default, supported}, set via a new `set_locales` tool; removing a supported locale with stored variants returns a counted plan requiring confirm:true, copying define_collection's shape). Validation stays single-sourced: buildEntrySchema gains a locales context compiling localized fields to a strict z.record whose keys must be supported locales, values reuse the per-type constrained schema; required = default-locale variant present at create. The locales config is part of the project's portable identity from day one: the manifest schema gains an optional `project.locales` key in the SAME increment that introduces set_locales, exportProject includes it, and importProject applies it BEFORE the topo-sorted defineCollection loop (a locale-drop against a populated target surfaces through importProject's existing pendingPlans/confirm machinery) — so export_project/import_project's replicate-elsewhere contract never has a broken window.\n\nThe rollout is re-sequenced so every increment is genuinely shippable alone, fixing the previous draft's J4→J5/J6 window where delivery leaked raw variant maps and the admin rendered '[object Object]' into uneditable forms. Read-side plumbing ships FIRST as inert code (J4): localizeView flattens localized publicRead fields to defaultLocale strings after toPublicView in both delivery routes, EntryForm/coerceFormData gain a default-locale unwrap/wrap fallback so entries stay editable, and buildWhere/buildOrderBy reject localized fields — all no-ops until localized fields can exist, verified via SQL-seeded entries in the smoke harness (which already seeds via raw SQL). Only then does J5 enable the write side, so from the first moment an agent can define a localized field, delivery serves flat strings and the admin works. The escape-channel audit is also closed at define time: a relation's target labelField may not be localized (resolveRelations would serve label:\"[object Object]\" and aggregate group labels would serve raw JSON), toggling localized on a field that is an inbound relation's labelField is rejected via a planDeleteCollection-style inbound scan, and email event templates ({{field}} in to/subject) referencing localized fields are rejected in validateAccessAndEvents with a fix hint — interpolate stays untouched and no raw variant map can reach an email header. updateEntry deep-merges variant maps; update_entry_if rejects localized fields in its patch with a hint pointing at update_entry. Delivery: no ?locale → defaultLocale flat; ?locale=xx → xx with fallback to default (?locale param + 422 validation is its own small increment); MCP reads stay raw variant maps. Localize/delocalize on populated fields ships last: wrap-backfill (non-destructive, rename-backfill precedent) / plan+confirm collapse.",
+    "keyDecisions": [
+      {
+        "decision": "The transform endpoint's primary abuse defense is a durable per-asset derivative budget (40 objects, counted via one ListObjectsV2 on the _t/ prefix at cache-miss time), with dual-key rate limiting (img:${ip} AND img:${assetId}:${ip}) as latency shaping only; the key space is additionally shrunk by canonicalizing fit away on single-dim requests and trimming formats to webp|jpeg — corrected worst case 624 keys/asset, enforced ceiling 40",
+        "rationale": "The reviewer proved the previous ~132 bound was ~15x wrong (real: 2,016) and that the per-lambda MemoryStore rate limiter is rotatable by IP/lambda/key. A budget stored in R2 itself survives all rotation — worst-case attacker damage per leaked asset id becomes 40 encodes and 40 objects, ever, at one extra LIST per cache miss (misses are rare after warm-up). The global img:${ip} key stops per-asset multiplication of the rate budget",
+        "alternativeRejected": "The reviewer's suggested aspect-set snapping (derive h from w via fixed ratios) — it shrinks the combinatorics but leaves the bound proportional to ladder×aspects×formats and still enforced only by the rotatable in-memory limiter; a durable count is simpler, host-agnostic, and turns the bound argued into the bound enforced. Also rejected: keeping avif (encode-cost outlier, exactly the DoS lever) and png (webp covers transparency)"
+      },
+      {
+        "decision": "Localized values are barred at define time from every channel that stringifies field values: relation target labelField (new-relation validation + inbound-relation scan when a field toggles localized, precedent planDeleteCollection's inboundRelations), email event templates ({{field}} in to/subject parsed and checked in validateAccessAndEvents), in addition to unique/publicFilter/events.when/ownerField/where/orderBy",
+        "rationale": "resolveRelations does String(data[labelField]) (lib/entries.ts:563) and aggregate group labels read data->>'labelField' (lib/entries.ts:729) — a localized labelField serves '[object Object]'/raw JSON through publicRead relation fields, cross-collection and silently; interpolate (lib/events.ts:69) would render a variant map into an email to-address. Define-time rejection with fix hints keeps resolveRelations, aggregateEntries, and interpolate byte-for-byte untouched, and the inbound scan makes the cross-collection localize-toggle case (the reviewer's sharpest finding) an explicit E_VALIDATION instead of silent breakage",
+        "alternativeRejected": "Resolving templates/labels to the default-locale variant at render time — requires plumbing locales context into three read/render paths that currently know nothing about it, and silent default-resolution inside an email `to` header is a footgun no error message can repair; rejection names the fix ('pick a non-localized labelField' / 'reference a non-localized field')"
+      },
+      {
+        "decision": "Read-side localization ships BEFORE the write side as an inert increment (J4: localizeView default-locale flattening in both delivery routes, EntryForm/coerceFormData default-locale fallback, query-layer rejection, plus the FieldBase type knob with a temporary meta-schema rejection of localized:true), and only then does J5 enable defining localized fields",
+        "rationale": "Fixes the shippability break the reviewer proved: in the old J4→J5/J6 window, delivery served raw variant maps through toPublicView (then flipped shape when J5 landed — a consumer-visible contract break) and EntryForm's String(v) rendered '[object Object]' which strict validation then rejected, making entries uneditable. With read-first sequencing there is no moment where a definable capability produces broken output; J4 is verifiable via SQL-seeded variant maps (the smoke harness already seeds via raw SQL), and localizeView defensively passes plain strings through, which J8's backfill window also relies on",
+        "alternativeRejected": "The reviewer's alternative of declaring J4+J5+J6 a single release train — abandons the quality bar's independently-shippable requirement when a clean split exists; also rejected bundling everything into one increment (L-sized)"
+      },
+      {
+        "decision": "Manifest round-trip support for locales lands in J3 (the same increment that introduces set_locales): optional project.locales key in the manifest zod schema (version stays 1 — the schema tolerates absence), exportProject includes it, importProject applies setLocales before the defineCollection loop, and a destructive locale-drop on import surfaces through importProject's existing pendingPlans/confirm machinery",
+        "rationale": "The reviewer showed the old design broke export_project's documented replicate-elsewhere contract: 'localized: true' defs pass through the manifest's z.array(z.any()) fields and then fail import with 'set_locales first'. Bundling manifest support with the config it transports means there is never a deployed state where a valid export cannot be imported — no J4-to-J8-style window",
+        "alternativeRejected": "A separate J4.5 manifest increment (leaves a broken-contract window between the localized-fields increment and it) or bloating J5 with it (manifest is config-transport, conceptually paired with set_locales, and J5 is already the heaviest increment)"
+      },
+      {
+        "decision": "updateEntry deep-merges localized variant maps; update_entry_if rejects localized fields in its data patch with a fix hint pointing at update_entry",
+        "rationale": "A patch of {title:{de:...}} silently wiping the en variant is data loss no error message can repair — merge is the only agent-safe default; the CAS path is one SQL statement where a variant-map merge would need jsonb_set gymnastics in the most atomicity-critical code, so an honest E_VALIDATION boundary is better",
+        "alternativeRejected": "Shallow replace everywhere (documented footgun agents will hit) or SQL-side jsonb merge in updateEntryIf (complexity for a polish feature)"
+      },
+      {
+        "decision": "Localized variant maps are validated strictly against projects.locales.supported inside buildEntrySchema, plumbed through the single validate() choke point in lib/entries.ts; locales are project-level config set via a new set_locales tool with plan+confirm on removal",
+        "rationale": "Preserves 'one definition of valid' — every surface (MCP, admin, delivery, bulk) inherits enforcement from the same compiled schema; fallback chains and the admin switcher are project-wide concerns; locale removal strands stored variants, exactly the destructive-diff shape define_collection already gates",
+        "alternativeRejected": "Lax BCP-47 pattern check without a supported-list (weakens strict validation, garbage keys accumulate); per-collection locales (fragments fallback and switcher)"
+      },
+      {
+        "decision": "Delivery default is FLAT defaultLocale strings from the first shippable moment; ?locale= switches with fallback to default; MCP reads return raw variant maps",
+        "rationale": "Site consumers get one stable payload shape with zero opt-in and zero shape-flip windows; agents need the full map to manage translations — matching the existing split where MCP reads bypass publicFilter but never validation",
+        "alternativeRejected": "Variant objects by default on delivery — pushes fallback logic into every consumer and changes shape based on a schema flag the consumer can't see"
+      },
+      {
+        "decision": "Toggling localized on a populated field: rejected until the final increment, which ships wrap-backfill (localize, non-destructive jsonb UPDATE) / plan+confirm collapse (delocalize); the inbound-labelField scan from J5 guards both toggle paths since it lives in the shared define-time validation",
+        "rationale": "Keeps earlier increments honestly sized; the atomic jsonb rename-backfill at lib/collections.ts:372-378 is the exact precedent; putting the labelField guard in shared define-time code means J8 inherits the cross-collection protection for free",
+        "alternativeRejected": "Treating the toggle as a plain destructive retype (throws away data a one-statement UPDATE preserves); bundling backfill into the core increment (pushes it to L)"
+      }
+    ],
+    "increments": [
+      {
+        "id": "J1",
+        "name": "Image transform route with R2-cached derivatives and durable abuse bounds",
+        "what": "New public endpoint GET /api/v1/assets/[id]/image. New lib/image-transform.ts: zod param schema — w/h ints 16..2000 snapped UP to ladder [64,96,128,256,320,480,640,768,960,1200,1600,2000], at least one required; format webp|jpeg (default webp; avif/png deliberately excluded — encode cost / redundancy); fit cover|inside accepted ONLY when both dims present (fit with single dim → 422 listing the rule), canonical keys: single-dim `_t/w{w}.{fmt}` / `_t/h{h}.{fmt}`, both-dim `_t/w{w}h{h}-{fit}.{fmt}` under dirname(asset.r2Key); fixed quality per format. Corrected worst-case key space documented in code: 24 single-dim + 288 both-dim = 312 combos × 2 formats = 624 keys/asset. ensureDerivative(): HeadObject on derived key → on miss (a) ListObjectsV2 keys-only on the `_t/` prefix; if count ≥ 40 return 429 {error, code} with hint 'derivative budget reached (40/asset) — reuse an existing variant'; (b) rateLimit('img:'+ip) AND rateLimit('img:'+assetId+':'+ip), 429 with retry-after on either; (c) GetObject original, sharp (limitInputPixels set) resize+encode, PutObject with content-type. Route: uuid-gated 404 for unknown asset, 422 via deliveryError for non-image contentType or bad params (message lists ladder/formats/fit rule), then 302 to R2_PUBLIC_BASE_URL/derivedKey with cache-control: public, max-age=31536000, immutable + CORS_HEADERS. Extend lib/r2.ts with headObject/getObject/listPrefix helpers on the lazy client; change deleteAsset to paginated ListObjectsV2 on the `${dirname(r2Key)}/` prefix deleting all keys (originals + derivatives, continuation-token loop). sharp added to package.json + serverExternalPackages. Verify: upload via MCP upload_asset; curl transform URL twice (generate then cache-hit 302); fetch R2 URL, check dimensions; loop distinct params past 40 → 429 budget error; fit-with-single-dim → 422.",
+        "filesTouched": [
+          "app/api/v1/assets/[id]/image/route.ts (new)",
+          "lib/image-transform.ts (new)",
+          "lib/r2.ts",
+          "next.config.ts",
+          "package.json",
+          "scripts/smoke/image-transform.test.mjs (new)"
+        ],
+        "surface": "New delivery endpoint GET /api/v1/assets/{id}/image (token-free, budget-capped); changed deleteAsset behavior (paginated prefix delete); no MCP tool changes yet",
+        "size": "M",
+        "migration": "none",
+        "dependsOn": []
+      },
+      {
+        "id": "J2",
+        "name": "Image transform discoverability + contentType on resolved assets",
+        "what": "Add a `deliveryApi.images` block to get_project_info output documenting the corrected contract verbatim: params, 12-value ladder, formats webp|jpeg, fit only with both dims, the 40-derivative-per-asset budget and its 429 shape, 'no auth header — URLs are directly embeddable', 422 for non-image assets. Mention derived-image URLs in upload_asset and list_assets descriptions. Extend resolveAssets (lib/entries.ts:592) to select contentType and include it in resolved values {id, url, contentType} — additive key so sites/agents know when transform URLs apply. Verify: MCP get_project_info shows the images block including the budget; query_entries returns contentType on asset fields.",
+        "filesTouched": [
+          "lib/mcp/tools.ts",
+          "lib/entries.ts"
+        ],
+        "surface": "get_project_info payload gains deliveryApi.images (incl. budget + 429 documented); resolved asset values gain contentType; upload_asset/list_assets descriptions updated",
+        "size": "S",
+        "migration": "none",
+        "dependsOn": [
+          "J1"
+        ]
+      },
+      {
+        "id": "J3",
+        "name": "Project locales config + set_locales MCP tool + manifest round-trip",
+        "what": "Add `locales` JSONB column to projects (db/schema.ts): {default: string, supported: string[]} | null (nullable — existing projects untouched). New lib/locales.ts: LOCALE_RE (/^[a-z]{2,3}(-[a-z0-9]{2,8})*$/i, normalized lowercase), getLocales(projectId) with unstable_cache tag project:${projectId}, setLocales() enforcing default ∈ supported, and a removal plan: dropping supported locales counts entries per collection holding variants under them (data->field ? locale over localized fields — zero until J5) and returns {applied:false, requiresConfirmation:true, code:'E_CONFIRM_REQUIRED', plan, hint} unless confirm:true, copying lib/mcp/tools.ts:724-731. New MCP tool set_locales (TOOL_DEFS + callTool case + zod schema; description: project-wide, default is the fallback target, removal requires confirm). get_project_info returns locales (null → hint 'call set_locales to enable localized fields'). MANIFEST: extend lib/manifest.ts schema with optional project.locales (version stays 1 — absence tolerated); exportProject includes projects.locales; importProject applies setLocales BEFORE the topo-sorted defineCollection loop, and an import whose locales would drop populated variants in the target surfaces through the existing pendingPlans/confirm machinery. Verify: MCP round-trip set_locales → get_project_info; removal without confirm returns plan; export_project → import_project into a fresh project carries locales.",
+        "filesTouched": [
+          "db/schema.ts",
+          "lib/locales.ts (new)",
+          "lib/manifest.ts",
+          "lib/mcp/tools.ts",
+          "scripts/smoke/locales.test.mjs (new)"
+        ],
+        "surface": "New MCP tool set_locales; get_project_info gains locales; manifest gains optional project.locales (export includes, import applies first); projects.locales column",
+        "size": "M",
+        "migration": "additive nullable JSONB column projects.locales via npm run db:push (no migration files exist in this repo — push is the workflow)",
+        "dependsOn": []
+      },
+      {
+        "id": "J4",
+        "name": "Read-side localization plumbing (inert until localized fields can exist)",
+        "what": "Ships every surface that must already work the moment a localized field becomes definable, as inert code. (1) Add `localized?: boolean` to FieldBase (lib/field-types.ts) as a type only; fieldDefSchema temporarily rejects localized:true with 'localized fields are not yet enabled' so the flag cannot enter the registry before J5 (guarantees inertness even if the meta-schema is lax about unknown keys). (2) lib/locales.ts localizeView(entryView, fields, locales, requested?): for each localized public field, value = variants[requested ?? default] ?? variants[default]; omit key when neither exists; PASS PLAIN STRINGS THROUGH unchanged (defensive — also covers J8's backfill window). Applied after toPublicView in GET list (app/api/v1/[collection]/route.ts) and single GET ([id]/route.ts) — no ?locale param yet. (3) Admin fallback: EntryForm's value unwrap renders variants[defaultLocale] for localized fields (editable as the default locale, small 'default locale' chip); coerceFormData (lib/admin-form.ts) wraps non-empty localized input as {[defaultLocale]: coerced}. (4) lib/query.ts fieldOrThrow: where/orderBy on a localized field throws 'localized fields cannot be filtered or sorted — filter on a non-localized field' (matchesClauses side untouched — localized fields can't appear in publicFilter per J5's guards). Verify: smoke test seeds a collection + variant-map entries via the harness's existing raw-SQL path (helpers.mjs precedent), flips the field def to localized via SQL, then asserts delivery returns flat default-locale strings, admin page renders (no '[object Object]'), and query_entries where on the field 422s.",
+        "filesTouched": [
+          "lib/field-types.ts",
+          "lib/validation.ts",
+          "lib/locales.ts",
+          "app/api/v1/[collection]/route.ts",
+          "app/api/v1/[collection]/[id]/route.ts",
+          "components/EntryForm.tsx",
+          "lib/admin-form.ts",
+          "lib/query.ts",
+          "scripts/smoke/localized-readside.test.mjs (new)"
+        ],
+        "surface": "No agent-visible capability change (localized:true still rejected); delivery/admin/query layers become variant-map-safe",
+        "size": "M",
+        "migration": "none",
+        "dependsOn": [
+          "J3"
+        ]
+      },
+      {
+        "id": "J5",
+        "name": "localized field flag: validation core + write paths + define-time guards",
+        "what": "Replace J4's blanket rejection with real rules. Meta-schema (lib/validation.ts fieldDefSchema): localized only on text/richtext, incompatible with unique. COMMON_FIELD_CONFIG documents it ('stores {locale: value}; requires set_locales'). buildEntrySchema gains locales context: localized fields compile to strict z.record(z.enum(supported), <existing constrained valueSchemaFor base>); required = default-locale key present at create; min/max per variant. lib/entries.ts: validate() takes locales; createEntry/updateEntry/bulkCreateEntries fetch getLocales(projectId) (cached) and pass through; updateEntry merges variant maps per-field {...current.data[f], ...patch[f]}, shallow elsewhere; updateEntryIf rejects localized fields in its patch ('use update_entry — variant maps merge'). lib/collections.ts defineCollection guards, all with fix hints: localized:true requires project locales non-null ('call set_locales first'); toggling localized on/off for a field with existing entries rejected ('only empty fields in this version'); ESCAPE-CHANNEL GUARDS: (a) a relation field's target labelField must not be localized (target fields already loaded for relation validation — hint 'pick a non-localized labelField'); (b) toggling a field to localized when it is an inbound relation's labelField is rejected via an inbound scan copying planDeleteCollection's inboundRelations (lib/collections.ts:406-414), listing the referencing collections; (c) validateAccessAndEvents parses {{field}} tokens in email action to/subject and rejects references to localized fields ('email templates render raw values — reference a non-localized field'), alongside the existing publicFilter/events.when/ownerField rejections. define_collection description updated. Note: aggregate groupBy is enum|relation only so groupBy itself can't hit localized fields; relation group labels are covered by guard (a). Verify: MCP define with localized field; create_entry {title:{en:'Hi'}} ok; {title:'Hi'} / {title:{xx:'?'}} → E_VALIDATION with hints; update_entry {title:{de:'Hallo'}} preserves en; relation targeting a localized labelField rejected; email event {{localizedField}} rejected; delivery immediately serves flat strings (J4) and admin edits work (J4).",
+        "filesTouched": [
+          "lib/field-types.ts",
+          "lib/validation.ts",
+          "lib/entries.ts",
+          "lib/collections.ts",
+          "lib/mcp/tools.ts",
+          "scripts/smoke/localized-fields.test.mjs (new)"
+        ],
+        "surface": "define_collection accepts localized on field defs (with labelField/email-template/publicFilter/when/ownerField guards); list_field_types documents it; create/update/bulk validate variant maps; update_entry_if gains documented rejection",
+        "size": "M",
+        "migration": "none (variant maps live in existing entries.data JSONB)",
+        "dependsOn": [
+          "J3",
+          "J4"
+        ]
+      },
+      {
+        "id": "J6",
+        "name": "Delivery ?locale= parameter",
+        "what": "GET list (app/api/v1/[collection]/route.ts): add 'locale' to the reserved-param skip list at the filter loop; validate against getLocales(projectId).supported → 422 'unknown locale \"xx\" — supported: en, de (default en)' via deliveryError; pass the requested locale into the localizeView call J4 already installed (fallback to default per variant). Same in single GET. ETag correctness free — cachedJson hashes the localized body. The route's pub-field filter loop also rejects localized filter keys with a delivery-phrased hint (the query.ts guard from J4 already covers the SQL path). Update get_project_info deliveryApi.read text: 'localized fields serve the default locale; ?locale=xx switches with fallback to default'. Verify: HTTP round-trip — seed en+de via MCP, GET no-locale / ?locale=de / ?locale=fr (422) / partial translation falls back.",
+        "filesTouched": [
+          "app/api/v1/[collection]/route.ts",
+          "app/api/v1/[collection]/[id]/route.ts",
+          "lib/mcp/tools.ts",
+          "scripts/smoke/delivery-locale.test.mjs (new)"
+        ],
+        "surface": "Delivery GET list + single gain ?locale=; get_project_info read docs updated",
+        "size": "S",
+        "migration": "none",
+        "dependsOn": [
+          "J5"
+        ]
+      },
+      {
+        "id": "J7",
+        "name": "Admin locale switcher on entry forms",
+        "what": "Entry edit/new pages read searchParams.locale (validated against project locales, default = defaultLocale) and render a pill-row switcher (existing chip idiom, links preserving path with ?locale=xx; hidden when locales null). EntryForm's activeLocale prop generalizes J4's defaultLocale fallback: FieldInput unwraps variants[activeLocale], shows a locale chip next to VisibilityPill plus 'n/N translated' hint; hidden __locale input carries the active locale through saveEntry → coerceFormData, which emits {[activeLocale]: coerced} (updateEntry's variant merge preserves other locales — no read-merge-write). Empty stays omitted (matches existing no-unset semantics). List view: Cell shows defaultLocale variant; quick-search picks the first NON-localized text/richtext field. New-entry page pins the switcher to defaultLocale (required = default variant — create first, translate later). Verify: run the app — create in en, switch to de, save translation, en intact, delivery ?locale=de serves it.",
+        "filesTouched": [
+          "components/EntryForm.tsx",
+          "lib/admin-form.ts",
+          "app/admin/actions.ts",
+          "app/admin/[projectId]/[collection]/[entryId]/page.tsx",
+          "app/admin/[projectId]/[collection]/new/page.tsx",
+          "app/admin/[projectId]/[collection]/page.tsx"
+        ],
+        "surface": "Admin UI: locale switcher on entry forms, locale-aware cells and search; no API changes",
+        "size": "M",
+        "migration": "none",
+        "dependsOn": [
+          "J5",
+          "J6"
+        ]
+      },
+      {
+        "id": "J8",
+        "name": "Localize/delocalize populated fields via backfill",
+        "what": "Replace J5's 'empty fields only' rejection with the rename-backfill precedent (lib/collections.ts:372-378). Localize ON for a populated text/richtext field: one atomic UPDATE wrapping existing values — jsonb_set(data,'{f}',jsonb_build_object(<default>, data->'f')) WHERE collection_id=… AND data ? 'f' AND jsonb_typeof(data->'f')='string' — non-destructive, applied immediately, reported ({localized:[{field, entriesWrapped}]}); the inbound-labelField scan from J5 lives in shared define-time validation, so localizing a field that another collection uses as labelField is already rejected here with the referencing collections listed — a smoke case covers this cross-collection rejection explicitly. Delocalize is destructive (non-default variants dropped): plan lists {field, entriesAffected, variantsLost:[locales]}, requires confirm:true (E_CONFIRM_REQUIRED shape); on confirm, UPDATE collapsing data->'f' to data->'f'->>'<default>'. Index-sync/cache-revalidate follow the existing defineCollection sequence; description updated ('localizing wraps existing values under the default locale; delocalizing keeps only the default variant and requires confirm'). Note localizeView's plain-string pass-through (J4) makes the mid-backfill read window safe. Verify: MCP round-trip — define, seed, redefine localized:true, query_entries shows wrapped maps; delocalize without confirm returns plan; localize on an inbound labelField rejected.",
+        "filesTouched": [
+          "lib/collections.ts",
+          "lib/mcp/tools.ts",
+          "scripts/smoke/localized-backfill.test.mjs (new)"
+        ],
+        "surface": "define_collection: localize toggle on populated fields becomes legal (wrap-backfill) / plan+confirm (delocalize); cross-collection labelField rejection covered by smoke",
+        "size": "M",
+        "migration": "none (data backfill is a runtime jsonb UPDATE, same as rename backfill)",
+        "dependsOn": [
+          "J5"
+        ]
+      }
+    ],
+    "invariantCompliance": "Rule 1 (declarative + self-describing): every capability is announced on the tool surface — get_project_info gains deliveryApi.images stating the CORRECTED contract out loud (ladder, webp|jpeg, fit-only-with-both-dims, the 40-derivative budget and its 429) and locales; set_locales is a proper tool with boundary-stating description; localized appears in COMMON_FIELD_CONFIG and define_collection's description, which also states the labelField, email-template, update_entry_if, and delocalize boundaries — none discovered by failure. Rule 2 (machine-readable errors with fix hints): transform 422s list ladder/formats/fit rule, budget 429 says what to do ('reuse an existing variant'), unknown ?locale lists supported+default, every localized-field rejection names the alternative (use update_entry; filter on a non-localized field; pick a non-localized labelField; reference a non-localized field in email templates; call set_locales first) — existing {error,code}/`Error [E_*]` envelopes, no new error codes, ERROR_CODES stays append-only. Rule 3 (secrets are references): zero new secrets — R2 credentials stay in env behind the lazy client, no signed URLs, locales are plain config, the manifest carries only non-secret locale config. Rule 4 (destructive = plan + confirm): three destructive moves — removing a supported locale with stored variants (J3), a manifest import whose locales drop populated variants (J3, via importProject's existing pendingPlans), and delocalizing a field (J8) — all return counted plans with E_CONFIRM_REQUIRED and apply only with confirm:true; localize-ON and derivative generation are non-destructive. Rule 5 (strict validation never weakens): variant maps validate against supported locales inside buildEntrySchema through the single validate() choke point every surface uses (bulk included); toPublicView remains the only delivery projection — localizeView runs strictly on its output so non-publicRead localized fields can never leak; the read-first sequencing means no deployed state ever serves raw variant maps or breaks admin editing; localized fields are barred from unique/publicFilter/events.when/ownerField/where/orderBy AND from relation labelField and email templates, so buildWhere↔matchesClauses parity, resolveRelations, aggregateEntries, and interpolate are all byte-for-byte untouched; transform params are zod-whitelisted, derivative keys built from DB-held r2Key + enum-validated params, the budget check is a LIST not user input — no user-controlled paths, no raw SQL anywhere.",
+    "crossGapDependencies": [
+      "None required — both designs are self-contained on pg + R2 + sharp, deliberately avoiding job-queue/cron machinery (transforms are on-demand in-request; backfills are single-statement UPDATEs; the derivative budget is R2-state, not a queue).",
+      "If the search gap ships cross-field ?q= or FTS (tsvector at lib/query.ts accessor), it must skip or locale-scope localized fields — flag when that gap lands after J5.",
+      "If a change-feed gap ships, its payloads carry raw variant maps for localized fields (consumers localize client-side) — same contract as MCP reads; state it in that gap's docs.",
+      "The transform route's rate limiter uses the in-memory store; the durable pg-backed store planned in infra-ops (SYSTEM-REVIEW C2) tightens it automatically via the one-method interface — but note the abuse bound does NOT depend on it: the R2-backed derivative budget is the durable defense by design.",
+      "export_project/import_project consumers (any gap adding manifest content) should follow J3's precedent: config that gates schema features must be applied before the defineCollection loop."
+    ],
+    "risks": [
+      "sharp native binary bundling on Netlify functions: Next ships sharp for next/image so the platform supports it, but the route's import must be in serverExternalPackages and verified in a deploy preview before J1 is done; Render (plain Node) is risk-free.",
+      "Derivative-budget LIST on every cache miss adds one R2 round-trip to generation latency (not to cache hits); if it shows in p99, the count can be piggybacked on the miss path's existing HeadObject failure only — do not move the budget to memory, durability is the point.",
+      "The 40-derivative budget could pinch a legitimate site using very wide srcsets across two formats (~24 variants is realistic); the cap is an operator-tunable constant in lib/image-transform.ts and the 429 hint names it — revisit with real usage data before raising.",
+      "Format whitelist trimmed to webp|jpeg pre-ship: no consumer exists yet so nothing breaks, but adding avif later means the encode-cost lever returns — if added, pair it with a lower per-format budget or eager-once semantics.",
+      "J4's smoke test seeds variant maps via raw SQL (bypassing validation, matching helpers.mjs precedent) — it exercises exactly the read paths but will silently diverge if the variant-map storage shape changes in J5; keep the seed shape in one shared helper.",
+      "buildEntrySchema signature change (locales context) touches the hottest validation path — mitigated by the single validate() choke point and the full smoke suite; bulkCreateEntries must pass the same context or bulk writes under-validate (called out in J5).",
+      "Variant deep-merge means no way to DELETE one locale's variant via update_entry (mirrors the existing cannot-unset gotcha); documented in define_collection/update_entry descriptions so agents don't fight it; a dedicated unset affordance is future work.",
+      "The email-template guard requires parsing {{field}} tokens in validateAccessAndEvents — templates referencing fields that don't exist are a pre-existing silent behavior; the new guard only rejects localized references, so don't accidentally tighten unknown-field references in the same change (scope creep that could break existing projects).",
+      "getLocales uses unstable_cache (Next-specific) like existing project/token caches — the known Render-move cache replacement grows by one call site; kept in lib/locales.ts so the seam is single-file.",
+      "deleteAsset prefix delete must paginate (continuation token) — with the 40 budget it never exceeds one page, but code it anyway since the budget constant is tunable.",
+      "Smoke helpers seed projects via raw SQL (scripts/smoke/helpers.mjs:30-51) — projects.locales is nullable so existing seeds keep working, but J3's test must exercise set_locales through MCP, not SQL, to cover the real path; J3's manifest test must round-trip export→import to cover the ordering (setLocales before collections)."
+    ]
+  },
+  "openMinor": [
+    {
+      "severity": "minor",
+      "issue": "The transform route's 'non-image contentType => 422' gate uses the image/* prefix, but uploadAsset's allowlist (lib/r2.ts:36) accepts any client-DECLARED image/* type, including image/svg+xml. SVG reaches sharp's librsvg/XML decode path (entity-expansion and rasterization-complexity DoS class; contentType is attacker-declared, not sniffed), and undecodable bytes declared as image/png will make sharp throw, surfacing as a 500 instead of a machine-readable error.",
+      "suggestedFix": "In lib/image-transform.ts, gate on an explicit raster decode whitelist (image/jpeg, image/png, image/webp, image/avif, image/gif) rather than the image/ prefix, set sharp's limitInputPixels (already noted in risks — make it part of J1's acceptance, not a maybe), and catch sharp decode errors mapping them to a 422 deliveryError ('asset is not a decodable raster image') so the error stays agent-repairable per Rule 2."
+    },
+    {
+      "severity": "minor",
+      "issue": "set_locales gates locale REMOVAL with plan+confirm but leaves changing the DEFAULT locale ungated, even though it silently rewrites the delivery contract: no-?locale responses switch language, entries created under the old default that lack the new default variant have their `required` localized fields vanish from delivery output (fallback resolves to a missing variant => key omitted), and J7's delocalize now keeps the NEW default's variant, changing which data a later confirmed collapse discards.",
+      "suggestedFix": "Treat default-locale change as a planned operation in J3: when input.default differs from the stored default, count entries per collection whose localized fields lack the new default variant and return the same {applied:false, requiresConfirmation:true, plan, hint, code:'E_CONFIRM_REQUIRED'} shape as removal. Cheap to implement (same per-collection `data->field ? locale` counting query, inverted) and keeps Rule 4 honest."
+    },
+    {
+      "severity": "minor",
+      "issue": "Confirmed locale removal changes config but leaves removed-locale variants stored in entries. Those keys are then (a) permanently unremovable — updateEntry deep-merges variant maps and the platform has no unset semantics (existing gotcha at lib/entries.ts:204), (b) at-rest data that the strict schema would reject if rewritten, weakening 'one definition of valid', and (c) an export/re-import trap: export_entries returns raw variant maps, and bulk_create_entries of that output fails E_VALIDATION on the stranded keys.",
+      "suggestedFix": "On confirmed removal, purge the dropped locale keys from stored variant maps with one UPDATE per (collection, localized field): SET data = jsonb_set(data, '{f}', (data->'f') - 'xx') WHERE data->'f' ? 'xx' — same single-statement shape as the J7 wrap backfill and the rename backfill precedent (lib/collections.ts:372-378). The plan already counts exactly these entries, so 'confirm' then means 'delete these N variants', which is what Rule 4's counted plan implies anyway."
+    },
+    {
+      "severity": "minor",
+      "issue": "J7's delocalize collapse (jsonb collapse to data->'f'->>'<default>') writes JSON null when an entry has the localized field populated with only non-default variants — producing a text field holding null, a value the validation core can never produce (z.string rejects null) and updateEntry can never fix (null fails type validation, undefined is stripped). At-rest data that violates the compiled schema contradicts the strict-validation invariant.",
+      "suggestedFix": "Make the collapse UPDATE branch on default-variant presence: when data->'f' ? '<default>' collapse to the string; otherwise remove the key entirely (data - 'f'), matching how an absent optional field is normally represented. Include the 'entries that will lose the field entirely' count in the delocalize plan so the confirm is fully informed."
+    },
+    {
+      "severity": "minor",
+      "issue": "J1 changes deleteAsset from a single DeleteObject to ListObjectsV2 + delete over the `${dirname(r2Key)}/` prefix. This is safe only while r2Key always has the projectId/uuid/filename shape uploadAsset mints; if a malformed or legacy row ever holds a key without a directory component, dirname yields '' or '.', and a prefix list-delete on an empty prefix enumerates and deletes the entire bucket across all projects — a catastrophic blast radius for a defensive assumption that is checked nowhere.",
+      "suggestedFix": "In the new deleteAsset path, assert the derived prefix matches /^[0-9a-f-]{36}\\/[0-9a-f-]{36}\\/$/ (projectId/assetUuid/) before issuing ListObjectsV2, and throw (not swallow) on mismatch, falling back to single-key delete. Also honor the design's own note to code the ListObjectsV2 continuation token from day one."
+    },
+    {
+      "severity": "minor",
+      "issue": "J3's verify step ('removal without confirm returns the plan') is untestable as specified: before J4 ships, no localized fields can exist, so the per-collection variant-count query always finds zero and removal always applies without a plan. The removal-plan counting machinery in J3 is dead code with an unverifiable acceptance test until J4 — a mild violation of 'verifiable via a live MCP round-trip'.",
+      "suggestedFix": "Either move the removal-plan counting from J3 into J4 (J3 ships set_locales with removal-always-applies, honestly documented as such in the tool description) and add the confirm-gate smoke test to J4's localized-fields suite, or rewrite J3's verify claim to what it can actually prove (set -> get_project_info -> removal with no variants applies cleanly)."
+    },
+    {
+      "severity": "minor",
+      "issue": "J4 is at the upper edge of M and plausibly L: it touches six files including the hottest path (buildEntrySchema signature change), three write paths (create/update/bulk) plus updateEntryIf rejection, two define-time guard sites (fieldDefSchema superRefine + validateAccessAndEvents), query-time guards in lib/query.ts, tool-description updates, and a smoke matrix covering create/update/CAS/define/query rejection cases. The design's own risks section acknowledges the bulkCreateEntries under-validation hazard, which is a symptom of the breadth.",
+      "suggestedFix": "Either accept it as a large-M with the fix from the shippability issue folded in (making it larger still — then it is L and must split), or split into J4a (meta-schema knob + buildEntrySchema + validate() plumbing + create/bulk, with define_collection still rejecting localized:true so nothing is reachable) and J4b (flip the define gate on together with update merge, updateEntryIf rejection, query guards, and delivery flattening). J4a is then a pure-internal increment verified by unit-level smoke."
+    },
+    {
+      "severity": "minor",
+      "issue": "Two self-description surfaces are missed: get_client_code output is the documented schema snapshot for delivery consumers but no increment updates it for the ?locale param, the flat-string shape of localized fields, or the /assets/{id}/image URL contract (J2 only touches get_project_info); and the admin list-view CSV export (CollectionEntries export links) plus MCP export_entries CSV will stringify variant maps as JSON blobs/[object Object] with no mention in J5/J6.",
+      "suggestedFix": "Add get_client_code template updates to J2 (images block) and J5 (?locale + flat-shape note) — both are string-template edits in lib/mcp/tools.ts already in those increments' filesTouched. For CSV export, either serialize localized fields as the defaultLocale variant (consistent with the list-view Cell decision in J6) or emit one column per locale; a one-line decision now avoids an implementer guessing."
+    }
+  ]
+}

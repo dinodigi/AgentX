@@ -1,0 +1,241 @@
+{
+  "design": {
+    "approach": "Trash is a row move, not a flag. A new `entries_trash` table mirrors `entries` (same primary-key uuid, plus deletedAt + deletedBy AuditActor), and `deleteEntry` (lib/entries.ts:328) becomes a single-statement move: `WITH del AS (DELETE FROM entries WHERE id=$1 AND collection_id=$2 RETURNING *) INSERT INTO entries_trash SELECT ... FROM del RETURNING *`. Restore is the mirror CTE back into `entries`. Single-statement CTEs are the load-bearing atomicity mechanism because the neon-http driver has no transactions — exactly the idiom updateEntryIf already uses. Choosing a separate table over a `deletedAt` column remains the pivotal decision: every VISIBILITY path (queryEntriesPage, aggregateEntries, verifyRefs, resolveRelations, delivery routes, countEntriesWithKeys, the dynamic partial unique indexes `entries_uq_*`) stays byte-for-byte untouched, so \"delivery never sees trashed rows\" is structural. But one read path is NOT a visibility path and MUST change: deleteAsset's reference check (lib/r2.ts:105-116) is a referential-integrity gate, and if it scans only `entries`, trashing the sole referencing entry makes the asset deletable and a later restore resurrects a dangling ref that no pipeline can catch. C1 therefore extends the E_BLOCKED check to also LIKE-scan entries_trash (one extra count, same precise-uuid argument), with a distinct fix hint (\"referenced by N trashed entries — restore-and-clear or purge them first\"), and the purge plan in C2 notes which assets become deletable once the rows are gone. Trashing still frees unique values and idempotency-key slots (partial indexes live on `entries` only) and restore re-collides through existing DB indexes, translated by rethrowUnique.\n\nRestore is an externally visible mutation and therefore fires an entry event — the same argument that pins 'deleted' to trash time (consumers watch the delivery surface, not our internals) pins an emission to restore time. restoreEntry emits 'created' through the single emit point emitEntryEvent, with `restored: true` and `deletedAt` in the payload. 'created' rather than a new 'restored' config key because the desync bug is in the DEFAULT path: a consumer that dropped its copy on entry.deleted must get the row back without opting into new vocabulary; consumers keyed on id upsert correctly (id stability across the trash round-trip is a feature). events.created actions (when-clauses included) evaluate against the restored snapshot, which is exactly what a mirror wants. The tool description states the flag out loud, and the change-feed cross-gap note records that restored rows carry an old createdAt, so createdAt-keyed polling will skip them — the future feed must treat restores as feed events.\n\nVersions are a snapshot table, not audit reconstruction — forced, because audit_log.changedFields stores field NAMES only. `entry_versions` stores the PRE-image on update: updateEntry already holds `current` (lib/entries.ts:193-204), so the snapshot is a deferred insert of in-hand data. Creates need no snapshot, deletes are covered by the trash row. entryId deliberately has no FK to entries (history must survive the trash round-trip), which makes version reaping an explicitly owned work item rather than a footnote: C1/C2 contain ZERO references to entry_versions (the table does not exist yet and conditional SQL against a maybe-table is exactly the runtime crash the reviewers flagged); instead a dedicated increment C5, depending on both C2 (purge exists) and C4 (versions exist), activates the versions-cleanup CTE clause in purgeEntry, empty_trash, and the retention sweep, adds wouldPurgeVersions to the purge/empty plans, and smoke-asserts that purging a trashed entry deletes its version rows. The CAS pre-image gap (updateEntryIf has no previous) closes in C8 via a one-statement `UPDATE ... FROM (SELECT id, data ...) prev ... RETURNING e.*, prev.data`, which also finally gives CAS 'updated' events their missing previous/changedFields.\n\nSemantics under design rule 4: delete_entry becomes non-destructive (trash, restorable ~30 days) and needs NO confirm — friction moves to where destruction actually happens. purge_entry and empty_trash (both in C2, sharing the plan/confirm machinery and CTE shape — this split also cuts C1 back to an honest M) follow the delete_collection pattern: without confirm they return {requiresConfirmation: true, code: 'E_CONFIRM_REQUIRED', plan, hint} as an ok() payload. Retention is a lazy 30-day sweep inside trash reads/writes — boring, pg-native, host-agnostic; upgradeable later to the time-flow gap's jobs runner with zero semantic change. Events: 'deleted' at trash time, 'created'+restored:true at restore time, nothing at purge time (nothing externally visible changes); purge and restore additionally write append-only audit actions 'purge'/'restore'. restore_entry stays a verbatim row move (DB constraints re-fire on insert; stale keys equal the documented post-destructive-define state) while restore_entry_version runs the full strict pipeline and fires 'updated' with previous — the correct event for composing new data onto a live row.",
+    "keyDecisions": [
+      {
+        "decision": "Trash = separate entries_trash table (row move), preserving the original entry uuid — with the explicit exception that deleteAsset's reference check is extended to scan BOTH tables",
+        "rationale": "All visibility paths (queryEntriesPage, aggregateEntries, verifyRefs, resolveRelations, delivery routes, dynamic partial unique indexes) stay unmodified, making 'delivery never sees trash' structural. But deleteAsset's LIKE check is a referential-integrity gate, not a visibility path — leaving it untouched (as the original design wrongly celebrated) lets an asset referenced only by trashed entries be deleted, and a verbatim restore would then resurrect a dangling ref nothing can catch. The fix is one extra count query over entries_trash with a distinct E_BLOCKED hint, preserving the infra-ops invariant 'asset deletion is blocked while any entry references the asset id' across the trash lifecycle; a C1 smoke test asserts delete_asset still E_BLOCKs when the only referencing entry is trashed.",
+        "alternativeRejected": "Running verifyRefs on restore_entry and downgrading dangling refs to E_VALIDATION — weaker: it makes some trash rows unrestorable-as-is (a dead end the agent must hand-repair) and still lets the R2 object be destroyed while a recoverable row references it. Guarding the delete is the fix that keeps the invariant intact rather than detecting its violation later."
+      },
+      {
+        "decision": "restoreEntry emits an entry event: 'created' via emitEntryEvent with payload flags {restored: true, deletedAt}",
+        "rationale": "Restore is externally visible (the row reappears in GET /api/v1, ETags change) — by the design's own trash-time-event argument, firing nothing permanently desyncs every event-driven consumer: one that dropped its copy on entry.deleted never re-adds it, and old createdAt means polling skips it too. 'created' repairs the DEFAULT sync path: existing consumers subscribed to created/updated/deleted get the row back with no config change, and id stability makes upsert-on-id correct. The flag lets consumers that care distinguish genesis from resurrection. This also keeps the events-webhooks invariant that all externally visible entry mutations flow through the single emit point.",
+        "alternativeRejected": "Adding an append-only 'restored' key to the events config vocabulary — opt-in vocabulary leaves every EXISTING consumer exactly as desynced as firing nothing, which is the bug being fixed; the key can still be added append-only later (consumers wanting restore-specific actions) without breaking created-with-flag. Also rejected: firing nothing and documenting the gap — documentation does not resync a mirror."
+      },
+      {
+        "decision": "Version reaping on purge is its own increment (C5) depending on both C2 and C4; C1/C2 contain zero entry_versions references",
+        "rationale": "The original design put a versions-cleanup CTE clause into C1/C2 SQL against a table that only exists after C4 — a runtime crash if shipped in dependency order, and if written conditionally, no later increment re-touched lib/trash.ts, permanently orphaning version rows of purged entries (entry_versions has no FK to entries by design). C5 gives the wiring a named owner: activate the cleanup clause in purgeEntry/empty_trash/sweep, add wouldPurgeVersions to both plans, smoke-assert purge deletes version rows. Until C5 ships, purged entries' versions are reaped only by collection cascade — a bounded, stated gap in the C4 tool description.",
+        "alternativeRejected": "Making C2 depend on C4 so the clause is always valid — inverts the natural shipping order (trash lifecycle is user-visible value, versions are independent) and still leaves the plan-count wiring implicit; an explicit owned increment is smaller and verifiable on its own."
+      },
+      {
+        "decision": "C1 ships only delete→trash + list_trash + restore_entry; purge_entry moves to C2 beside empty_trash",
+        "rationale": "The original C1 bundled ~6 work items across 7 files (table, four lib functions incl. per-entry inbound-ref plan computation, three dual-schema tools, description/BOUNDARIES/E_NOT_FOUND rewrites, rename backfill, multi-scenario smoke) — an L wearing an M label. purge_entry and empty_trash share the plan/confirm machinery, the inboundRefCount scan, and the bulk-purge CTE shape, so they belong together in C2. C1 is then independently verifiable as a pure delete/restore round-trip and honestly M. Rename-backfill-on-trash also moves to C2 (schema-evolution lifecycle concern); during the C1-only window a rename can leave stale keys in trash, which is exactly the already-tolerated documented state.",
+        "alternativeRejected": "Keeping purge in C1 'because trash without purge is incomplete' — trash without purge is merely non-destructive, which is safe to ship; retention and permanent removal arrive one increment later with the confirm machinery built once, not twice."
+      },
+      {
+        "decision": "delete_entry trashes WITHOUT confirm; purge_entry/empty_trash get plan+confirm",
+        "rationale": "Rule 4 targets destruction. Once delete is recoverable it is no longer destructive; the confirm gate moves to purge, whose plan counts trash rows, inbound relation references, assets that become deletable, and (after C5) dependent version rows — same ok() payload shape as delete_collection (tools.ts:781-788).",
+        "alternativeRejected": "Confirm on every delete_entry — punishes the common safe case and trains agents to reflexively pass confirm:true, eroding the gate where it matters."
+      },
+      {
+        "decision": "Version history = snapshot table (entry_versions) storing the PRE-image at update time",
+        "rationale": "audit_log stores only changedFields names, never values — reconstruction from diffs is impossible, so this is forced. Pre-image capture is free: updateEntry already holds `current` (lib/entries.ts:193-204); creates need no snapshot and deletes are covered by the trash row. Snapshot restore is O(1) regardless of history length.",
+        "alternativeRejected": "Reconstructing state from audit diffs — no values stored; even if they were, point-in-time reconstruction is O(history) and fragile under shallow-merge semantics."
+      },
+      {
+        "decision": "restore_entry (trash) is a verbatim row move with DB-constraint enforcement; restore_entry_version runs the full strict-validation pipeline and fires 'updated' with previous",
+        "rationale": "Trash-restore un-deletes a state strictly validated at write time; stale keys equal the tolerated post-destructive-define state, and unique/idempotency indexes fire on re-insert (rethrowUnique gives the fix hint). The dangling-asset loophole this posture would otherwise open is closed on the DELETE side (trash-aware deleteAsset gate), not the restore side. Version-restore composes a new payload onto a live entry — a data write — so it takes buildEntrySchema (partial=false) + verifyRefs + pre-image snapshot + 'updated' event like every other write; its event story was already correct and is unchanged.",
+        "alternativeRejected": "Strictly re-validating trash-restores against the current schema — any field dropped while the entry sat in trash would make it permanently unrestorable (trash data is immutable), a dead end the agent cannot repair."
+      },
+      {
+        "decision": "Atomicity via single-statement data-modifying CTEs; retention = lazy 30-day sweep; version cap = last 20 per entry, deferred prune",
+        "rationale": "neon-http has no interactive transactions — one statement is atomic by definition and matches updateEntryIf's existing idiom. Lazy sweep inside trash reads/writes is pg-native and host-agnostic (Netlify today, Render tomorrow); both limits are stated out loud in tool descriptions (rule 1).",
+        "alternativeRejected": "Two sequential statements (stranded-row correctness hole), a pooled-driver migration (out of scope), or a dedicated cron/queue worker (belongs to the time-flow gap; the sweep upgrades to it later with zero semantic change)."
+      }
+    ],
+    "gap": "GAP C — Versioning / trash / soft-delete: recoverable deletes (trash + restore + plan/confirm purge), entry version snapshots on update with list/inspect/restore, surfaced via MCP tools and the admin UI, with delivery API guaranteed never to see trashed rows.",
+    "increments": [
+      {
+        "id": "C1",
+        "name": "Trash core: recoverable delete + restore over MCP, trash-aware asset gate, restore event",
+        "what": "Add entriesTrash table to db/schema.ts (id uuid PK = original entry id, projectId/collectionId FKs cascade, data jsonb, idempotencyKey, handledAt, createdAt/updatedAt carried over, deletedAt timestamptz default now, deletedBy jsonb AuditActor; indexes (collectionId, deletedAt) and (projectId, deletedAt)). New lib/trash.ts: trashEntry (single-statement CTE move DELETE entries → INSERT entries_trash; defers 'deleted' event + audit 'delete'), restoreEntry (mirror CTE back; 23505 via existing rethrowUnique for unique fields plus an idempotency-index branch → ValidationError 'idempotency key back in use — a retried create replaced it; purge the trash row instead'; on success defers emitEntryEvent('created', entry, {restored: true, deletedAt}) — the single emit point — plus audit 'restore'), listTrash (limit+1 hasMore, newest-deleted first). NO references to entry_versions anywhere (table doesn't exist until C4). Rewire deleteEntry (lib/entries.ts:328) to call trashEntry so MCP delete_entry, admin deleteEntryAction, and delivery DELETE all trash uniformly. Extend deleteAsset's E_BLOCKED reference check (lib/r2.ts:105-116) to also LIKE-scan entries_trash.data::text; when only trash rows match, the message reads 'referenced by N trashed entries — restore-and-clear the field or purge them first'. MCP surface: 2 new tools list_trash / restore_entry; rewrite delete_entry description ('moves to trash; restorable ~30 days via restore_entry; permanent removal ships as purge_entry'); restore_entry description states the restored:true 'created' event and old-createdAt polling caveat out loud; update BOUNDARIES (tools.ts:46) to drop 'no versioning/trash'; extend get_audit_log action enum with 'restore' (both TOOL_DEFS JSON schema and zod twin — maintained separately, diff both in review). Smoke: create → delete_entry → query_entries and GET /api/v1/{collection} exclude it → list_trash shows it → restore_entry returns same id, entry reappears everywhere, webhook receiver observes entry.created with restored:true → asset gate: entry referencing an asset, trash it, delete_asset still E_BLOCKED with the trashed-entries hint.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\db\\schema.ts",
+          "C:\\dev\\AgentX\\lib\\trash.ts",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\r2.ts",
+          "C:\\dev\\AgentX\\lib\\audit.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\trash.test.mjs"
+        ],
+        "surface": "New MCP tools: list_trash, restore_entry. Changed: delete_entry semantics + description, BOUNDARIES constant, get_audit_log action enum (+'restore'), delete_asset E_BLOCKED now counts trashed references with a distinct hint. Events: restore emits entry.created with {restored:true}. Delivery API: no route changes (trashed rows structurally invisible).",
+        "size": "M",
+        "dependsOn": [],
+        "migration": "New table entries_trash via `npm run db:push` (schema-push workflow; no migration files exist in this repo)"
+      },
+      {
+        "id": "C2",
+        "name": "Purge + retention lifecycle: purge_entry, empty_trash, 30-day sweep, plan visibility, rename backfill",
+        "what": "purgeEntry in lib/trash.ts: plan computation (trashed row summary + inboundRefCount via the planDeleteCollection-style relation-field scan applied per-entry + assetsFreed: asset ids referenced by this row and by no other live-or-trashed row, i.e. what becomes deletable after purge) and single-statement DELETE with audit 'purge'; empty_trash {collection?, confirm?} bulk variant sharing the same plan/confirm machinery — both without confirm return {requiresConfirmation: true, code: 'E_CONFIRm_REQUIRED'.toUpperCase(), plan, hint} as ok() payloads matching delete_collection (tools.ts:781-788) — plan fields for version counts arrive in C5, not here (entry_versions doesn't exist yet; no SQL references it). sweepExpiredTrash(projectId): DELETE FROM entries_trash WHERE project_id=$1 AND deleted_at < now() - interval '30 days', invoked via defer() at the top of list_trash and after every trashEntry, error-swallowed like recordAudit. Extend planDeleteCollection (lib/collections.ts:391) to count trashed entries → delete_collection plan gains trashedEntries. Run the rename-backfill UPDATE (lib/collections.ts:372-378) a second time against entries_trash so trashed rows follow renames. Extend get_audit_log action enum with 'purge' (both schemas). State the 30-day window out loud in delete_entry, list_trash, restore_entry, purge_entry, empty_trash descriptions. Smoke: purge_entry without confirm returns plan (incl. inboundRefCount) → with confirm removes row → restore now E_NOT_FOUND → delete_asset on an asset whose only reference was purged now succeeds; backdated deletedAt row (direct SQL, helpers.mjs pattern) swept by list_trash; empty_trash plan/confirm round-trip; rename a field with a trashed row, restore, data under new key.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\trash.ts",
+          "C:\\dev\\AgentX\\lib\\collections.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\trash-lifecycle.test.mjs"
+        ],
+        "surface": "New MCP tools: purge_entry, empty_trash (both plan+confirm). Changed: delete_collection plan gains trashedEntries; get_audit_log action enum (+'purge'); tool descriptions state the retention window; purge plans surface inboundRefCount and assetsFreed.",
+        "size": "M",
+        "dependsOn": [
+          "C1"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "C3",
+        "name": "Admin Trash page: restore + purge in the client UI",
+        "what": "New app/admin/[projectId]/trash/page.tsx following the Media/Settings sibling pattern: lists trash rows across collections (collection displayName, compact data preview via first text field, deletedAt, deletedBy actor chip), per-row Restore and Purge buttons. New server actions restoreEntryAction / purgeEntryAction in app/admin/actions.ts following the saveEntry idiom (getProjectRole gate, actor {type:'admin', userId}, return {error} on ValidationError, revalidatePath); purge button gets a client-side confirm dialog mirroring the MCP confirm gate. Add item('Trash') to the Project group in components/Sidebar.tsx (:127-132). Relabel the entry-page delete button 'Move to Trash'. Verify live: delete an entry in the admin, see it on the Trash page, restore it, confirm it reappears in the collection list; purge one and confirm it is gone.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\app\\admin\\[projectId]\\trash\\page.tsx",
+          "C:\\dev\\AgentX\\app\\admin\\actions.ts",
+          "C:\\dev\\AgentX\\components\\Sidebar.tsx",
+          "C:\\dev\\AgentX\\app\\admin\\[projectId]\\[collection]\\[entryId]\\page.tsx"
+        ],
+        "surface": "Admin UI: new Trash sidebar page with restore/purge; entry delete button relabeled. No MCP/delivery changes.",
+        "size": "S",
+        "dependsOn": [
+          "C1",
+          "C2"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "C4",
+        "name": "Version snapshots on update + list_entry_versions",
+        "what": "Add entryVersions table to db/schema.ts (id uuid PK defaultRandom, projectId FK cascade, collectionId FK cascade, entryId uuid — deliberately NO FK to entries so history survives the trash round-trip, data jsonb = pre-image, changedFields jsonb string[], actor jsonb AuditActor, createdAt; index (entryId, createdAt)). New lib/versions.ts: recordVersion (deferred insert + deferred prune 'DELETE ... WHERE entry_id=$1 AND id NOT IN (SELECT id ... ORDER BY created_at DESC, id DESC LIMIT 20)', error-swallowed per the recordAudit contract) and listEntryVersions (projectId+entryId scoped, newest first, limit+1). Hook recordVersion into updateEntry beside recordAudit (lib/entries.ts:219) passing the already-fetched current.data — zero extra reads. New MCP tool list_entry_versions {collection, id, limit?, offset?} returning {versions:[{versionId, createdAt, actor, changedFields, data}], hasMore, nextOffset}; description states boundaries out loud: 'pre-image snapshots on update_entry and admin edits; capped at last 20 per entry; update_entry_if captures land later (C8); until C5 ships, purging a trashed entry leaves its version rows until collection delete' — the second caveat is removed by C5. Smoke: create → update twice → list_entry_versions shows 2 snapshots matching the two pre-states, newest first.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\db\\schema.ts",
+          "C:\\dev\\AgentX\\lib\\versions.ts",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\versions.test.mjs"
+        ],
+        "surface": "New MCP tool: list_entry_versions. New schema table entry_versions. No delivery/admin changes.",
+        "size": "M",
+        "dependsOn": [],
+        "migration": "New table entry_versions via `npm run db:push`"
+      },
+      {
+        "id": "C5",
+        "name": "Version reaping on purge: wire entry_versions cleanup into trash lifecycle",
+        "what": "The explicitly owned cross-wiring increment (this work belonged to no increment in the earlier draft). In lib/trash.ts: extend purgeEntry and empty_trash to the two-stage CTE 'WITH purged AS (DELETE FROM entries_trash ...) DELETE FROM entry_versions WHERE entry_id IN (SELECT id FROM purged)' — still one statement; extend sweepExpiredTrash identically so expired trash reaps its versions. Add wouldPurgeVersions / versionsAlsoPurged counts to the purge_entry and empty_trash plans (COUNT over entry_versions by entryId). Remove the 'purge leaves version rows' caveat from list_entry_versions' description and state the new behavior in purge_entry/empty_trash descriptions. Smoke: create → update (snapshot exists) → delete → purge with confirm → direct SQL asserts zero entry_versions rows for that entryId; empty_trash plan shows wouldPurgeVersions > 0 before confirm.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\trash.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\versions-reaping.test.mjs"
+        ],
+        "surface": "Changed: purge_entry/empty_trash plans gain wouldPurgeVersions; purge and sweep now delete dependent version rows; descriptions updated. No new tools.",
+        "size": "S",
+        "dependsOn": [
+          "C2",
+          "C4"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "C6",
+        "name": "restore_entry_version: validated point-in-time restore over MCP",
+        "what": "restoreEntryVersion(projectId, collection, entryId, versionId) in lib/versions.ts + lib/entries.ts: load the version row (scoped by projectId AND entryId — cross-entry versionIds are E_NOT_FOUND), run the FULL write pipeline on the snapshot — validate(fields, snapshot, partial=false) strict parse, verifyRefs — then full-replace UPDATE (set data = snapshot, not a merge, so fields added after the snapshot are removed: a true point-in-time restore), recordVersion of the replaced current state (history append-only — restoring never rewrites it), defer 'updated' event WITH previous (the correct event for composing data onto a live row), audit action 'restore'. Unique collisions surface via existing rethrowUnique. New MCP tool restore_entry_version {collection, id, versionId}; description states: full re-validation against the CURRENT schema, so snapshots predating dropped/renamed fields fail E_VALIDATION naming the offending key (repair: re-add the field or use update_entry with a corrected payload), and the replaced state is itself snapshotted (undo-of-undo works). Smoke: create → update → restore version → data equals original → list_entry_versions has the pre-restore state on top → restore a snapshot violating a unique value → E_VALIDATION naming the field → webhook receiver sees 'updated' with previous.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\versions.ts",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\versions.test.mjs"
+        ],
+        "surface": "New MCP tool: restore_entry_version. Audit gains 'restore' rows for version restores (action already in enum from C1).",
+        "size": "S",
+        "dependsOn": [
+          "C4"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "C7",
+        "name": "Admin version history panel with one-click restore",
+        "what": "Extend the metadata aside on the entry edit page (app/admin/[projectId]/[collection]/[entryId]/page.tsx:77-130, beside the existing audit history) with a Versions section: listEntryVersions rendered as timestamp + actor chip + changedFields summary, each with a Restore button posting to a new restoreVersionAction server action in app/admin/actions.ts (getProjectRole gate, calls restoreEntryVersion with actor {type:'admin', userId}, returns {error} on ValidationError so unique/schema conflicts show inline, revalidatePath). Verify live: edit an entry twice, restore the first version from the panel, see the form repopulate with the original values and a new version row appear.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\app\\admin\\[projectId]\\[collection]\\[entryId]\\page.tsx",
+          "C:\\dev\\AgentX\\app\\admin\\actions.ts"
+        ],
+        "surface": "Admin UI: Versions panel on the entry page with restore. No MCP/delivery changes.",
+        "size": "S",
+        "dependsOn": [
+          "C4",
+          "C6"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "C8",
+        "name": "CAS pre-image: versions + event previous for update_entry_if",
+        "what": "Rework updateEntryIf's single UPDATE (lib/entries.ts:301-305) into a raw-SQL form via db.execute: UPDATE entries e SET data = <dataExpr>, updated_at = now() FROM (SELECT id, data FROM entries WHERE id = $1 AND collection_id = $2) prev WHERE e.id = prev.id AND <existing if/increment conditions> RETURNING e.*, prev.data AS prev_data — still ONE statement (the FROM subquery sees pre-update values in Postgres), preserving the CAS atomicity invariant exactly. Feed prev_data into recordVersion and into emitEntryEvent as previous, closing the documented gotcha that CAS 'updated' events lack previous/changedFields (lib/entries.ts:316, lib/events.ts). Update list_entry_versions description to drop the CAS caveat and update_entry_if description to state snapshots + changedFields are now captured. Smoke: update_entry_if with passing condition → list_entry_versions shows the pre-CAS snapshot; webhook receiver asserts the updated payload carries previous + changedFields.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\versions-cas.test.mjs"
+        ],
+        "surface": "Changed behavior: update_entry_if now emits previous/changedFields on its 'updated' event and captures version snapshots; tool descriptions updated. No new tools.",
+        "size": "S",
+        "dependsOn": [
+          "C4"
+        ],
+        "migration": "none"
+      }
+    ],
+    "invariantCompliance": "Rule 1 (declarative + self-describing): every capability is a named tool — list_trash, restore_entry, purge_entry, empty_trash, list_entry_versions, restore_entry_version — with limits stated out loud (30-day retention, 20-snapshot cap, restored:true event semantics and the old-createdAt polling caveat, CAS caveat until C8, versions-not-reaped-on-purge caveat until C5, trash data frozen against schema evolution, versionIds scoped per entry). BOUNDARIES (tools.ts:46) and delete_entry's 'Permanent — no trash' claim are rewritten in C1 so the tool surface never contradicts reality; each later increment updates the descriptions whose caveats it retires. Rule 2 (machine-readable errors with fix hints): no new error codes — delete_asset's E_BLOCKED gains a trash-specific hint naming the repair ('restore-and-clear or purge'); restore unique collisions reuse rethrowUnique; the idempotency-slot collision on restore gets its own ValidationError naming purge as the repair; version-restore schema mismatches produce the standard strict-parse error naming the offending key; purge/empty_trash without confirm return the established {requiresConfirmation, code:'E_CONFIRM_REQUIRED', plan, hint} ok() payload; ERROR_CODES stays append-only. Rule 3 (secrets are references): no secrets anywhere — trash and version rows contain only entry data already readable over MCP; deletedBy/actor are existing non-secret AuditActor shapes. Rule 4 (destructive = plan + confirm): the confirm gate moves to where destruction actually is — delete_entry is recoverable (no confirm); purge_entry and empty_trash return counted plans (entries, inbound relation references, assets freed, dependent version rows after C5, oldest deletedAt) and require confirm:true, copying delete_collection verbatim. Rule 5 (strict validation never weakens): the separate-table design means no visibility path gains a forgettable filter — toPublicView, publicFilter, ownerClause, publicFields gating, ETags are byte-identical, so delivery structurally cannot serve a trashed row; the ONE integrity path that must change (deleteAsset's reference check) is changed explicitly in C1 rather than silently weakened, keeping 'asset deletion is blocked while any entry references it' true across the trash lifecycle; restore_entry_version runs the full buildEntrySchema strict parse (partial=false) + verifyRefs like every write; trash-restore is a verbatim row move whose constraints are DB-enforced on re-insert (partial unique + idempotency indexes fire, violations become ValidationErrors), and its stale-key tolerance equals the documented post-destructive-define state of live rows; restore's externally visible reappearance flows through the single emitEntryEvent point like every other mutation, preserving the events-webhooks invariant; all new SQL is parameterized — CTEs interpolate only DB-generated uuids and drizzle-bound parameters, no user-controlled raw SQL.",
+    "crossGapDependencies": [
+      "Scheduled retention purge: the lazy 30-day sweep in C2 is deliberately upgradeable to a real scheduled job once the time-flow gap ships its pg-backed jobs runner — the sweep is already a standalone single-statement call; only the trigger changes, never the semantics. We do NOT design that runner here.",
+      "Change feed / sync gap: entries_trash rows double as tombstones (id + deletedAt + deletedBy) — a delivery change feed can read deletions from there instead of inventing a tombstone table; purge-after-30-days bounds tombstone history. Additionally, restored entries carry their ORIGINAL createdAt, so any createdAt-keyed polling skips them — the feed must treat both the trash-time 'deleted' and the restore-time 'created'+restored:true emissions as feed events, not reconstruct from timestamps.",
+      "transact([ops]) ladder rung: the single-statement CTE idiom used for trash moves and version-reaping purges is a precedent for whatever atomicity approach transact adopts under the neon-http no-transaction constraint; no dependency, but the designs should share the idiom.",
+      "Render migration (infra-ops): trash/versions use no unstable_cache (entries are never cached), no vendor cron, and pure pg statements — nothing here adds Netlify coupling."
+    ],
+    "risks": [
+      "Restore emits 'created' for an id the consumer may have seen before — consumers that INSERT (rather than upsert) on entry.created can key-conflict; the restored:true payload flag and tool description mitigate, but this is a behavioral contract webhook receivers must honor. A future append-only 'restored' events key can give restore-specific routing without breaking this default.",
+      "Delivery owner-deletes now trash: an end-user DELETE /v1/{collection}/{id} leaves their data admin-visible in trash for up to 30 days — a privacy tradeoff vs today's immediate hard delete; may warrant a per-collection 'purge on owner delete' knob later.",
+      "Idempotency drift across a trash cycle: trashing frees the idempotency-index slot, so a retried create with the same key produces a NEW entry; a subsequent restore then 23505s — mapped to a ValidationError naming purge as the repair, but the duplicate-entry window is real.",
+      "deleteAsset's reference check is now two LIKE scans (entries + entries_trash) — still precise only because asset ids are uuids; any future feature storing uuids elsewhere in data could false-positive block deletion in either table, and the scan cost doubles on large projects.",
+      "Two parallel schemas per tool: six new TOOL_DEFS JSON inputSchemas and their zod twins are maintained separately (known repo gotcha) — drift breaks agents silently; C1/C2/C4 reviews must diff both.",
+      "Ship-order window between C4 and C5: purged entries orphan their version rows until C5 lands (no FK, collection cascade is the only other reaper) — bounded and stated in the C4 tool description, but a long gap between the two increments accumulates dead rows.",
+      "Version storage growth on richtext-heavy collections: 20 snapshots × large documents multiplies row size; the prune is deferred, error-swallowed side-work and can lag under crash conditions.",
+      "Single-statement CTEs are load-bearing atomicity: any refactor splitting trash-move, purge, or the C5 purge+versions CTE into two statements over the neon-http driver reintroduces stranded-row/orphaned-version risk — code comments must state this the way updateEntryIf's do.",
+      "Deferred snapshot/audit/event writes share the existing defer() weakness: a crash after the row move but before after() runs can lose the restore event or a version snapshot — same exposure recordAudit already accepts, but a lost restore 'created' event re-opens the consumer-desync this design closes; refire via get_deliveries remains the manual recovery.",
+      "Audit action vocabulary grows ('restore', 'purge'): external consumers that branched on the closed set create|update|delete must tolerate unknown actions; get_audit_log's description should call the set append-only, mirroring ERROR_CODES."
+    ]
+  },
+  "openMinor": [
+    {
+      "severity": "minor",
+      "issue": "Rename backfill becomes two sequential non-atomic statements (UPDATE entries, then UPDATE entries_trash) over the neon-http driver that has no transactions — the design's own key-decision text calls single statements 'the load-bearing atomicity mechanism,' then C1 introduces a two-statement schema mutation. If the second UPDATE fails (timeout, transient error), the collection definition has the new field name persisted but trash rows still carry the old key; a later restore_entry resurfaces data under a key the current schema no longer knows, and — unlike the tolerated destructive-drop stale-key case — the agent confirmed nothing destructive and has no signal anything went wrong.",
+      "suggestedFix": "Order the statements so failure is safe: run the entries_trash backfill FIRST (trash keys under the new name are harmless while the definition still has the old name; the operation is idempotent jsonb key-move so a retry heals it), then the entries backfill, then persist the definition. Add a code comment stating the ordering is load-bearing, matching the updateEntryIf idiom the design cites."
+    },
+    {
+      "severity": "minor",
+      "issue": "The C4 version-prune SQL as specified is ambiguous and dangerous if transcribed literally: 'DELETE ... WHERE entry_id=$1 AND id NOT IN (SELECT id ... ORDER BY created_at DESC, id DESC LIMIT 20)' — if the inner SELECT is not itself scoped by entry_id=$1, the NOT IN keeps only the 20 globally newest version rows, so the DELETE wipes essentially all of the target entry's history on every prune. The elided subquery WHERE clause is the entire correctness of the statement.",
+      "suggestedFix": "Spell out the subquery in the increment text: DELETE FROM entry_versions WHERE entry_id=$1 AND id NOT IN (SELECT id FROM entry_versions WHERE entry_id=$1 ORDER BY created_at DESC, id DESC LIMIT 20), and add a smoke assertion in versions.test.mjs that pruning entry A's versions leaves entry B's history intact (two entries, 21+ updates on A, count B's rows)."
+    },
+    {
+      "severity": "minor",
+      "issue": "Project/collection scoping of the trash operations is never stated. The C5 spec is explicit ('scoped by projectId AND entryId — cross-entry versionIds are E_NOT_FOUND') but C1's restoreEntry/purgeEntry/listTrash CTEs are written only as 'WHERE id=$1'-shaped moves. entries_trash rows are keyed by a bare uuid; any restore/purge whose WHERE clause omits collection_id (resolved via mustCollection under the caller's projectId) is a cross-project IDOR — a token for project X restoring or permanently purging project Y's trashed rows by guessed/leaked uuid.",
+      "suggestedFix": "State the scoping requirement in C1 the same way C5 does: every entries_trash read/write includes collection_id = <mustCollection(projectId, name).id> (or project_id = $ for the cross-collection list/empty_trash paths), with misses returning E_NOT_FOUND. Add a smoke test asserting a second ephemeral project's token gets E_NOT_FOUND on restore_entry/purge_entry against the first project's trashed id (helpers.mjs already supports minting two projects)."
+    },
+    {
+      "severity": "minor",
+      "issue": "Verbatim trash-restore bypasses verifyRefs for outbound RELATION values too (beyond the asset case above): while an entry sits in trash, a relation target can be purged (purge_entry/empty_trash/delete_collection) — restore then re-inserts a relation uuid that no write path ever re-validates. The design's parity defense ('exactly today's hard-delete behavior') covers dangling INBOUND refs created by deletes; it does not cover restore-as-a-write inserting refs, which every other insert path (createEntry, bulkCreate, update, restore_entry_version) checks. The result surfaces in delivery as an unresolvable relation on a publicRead field.",
+      "suggestedFix": "Either (a) have the purge plan count and display outbound refs FROM the rows being purged that point at live/trash targets is unnecessary — instead count inbound refs from TRASH when purging a live-relation target, i.e., extend planDeleteCollection/purge plans' inboundRefCount to include references held by trashed rows; or (b) run verifyRefs on restore_entry in warn-only mode, returning the restored entry plus a machine-readable danglingRefs[] list so the agent can repair. Document whichever posture is chosen in the restore_entry description (rule 1)."
+    },
+    {
+      "severity": "minor",
+      "issue": "trashEntry and restoreEntry living in lib/trash.ts and emitting events/audit themselves violates the documented single-emit contract (lib/events.ts:10-19: 'every entry mutation flows through the entries layer, which calls emitEntryEvent' — and the events-webhooks invariant 'lib/entries.ts is the only caller of emitEntryEvent — never emit elsewhere'). A second emitting module is exactly the discipline erosion that invariant exists to prevent, and restore inserting into entries from outside lib/entries also sidesteps the 'all mutations flow through lib/entries' claim.",
+      "suggestedFix": "Either keep the emit/audit calls at the lib/entries.ts call sites (deleteEntry calls trashEntry for the row move, then defers emit/audit itself; add restoreEntry/purgeEntry wrappers in lib/entries.ts that delegate to lib/trash.ts for SQL only), or explicitly amend the lib/events.ts doc contract to name lib/trash.ts as a sanctioned second caller — silence is not an option."
+    },
+    {
+      "severity": "minor",
+      "issue": "C2's smoke test as specified will fail or flake: the sweep is invoked via defer() (Next after(), i.e. post-response) at the top of list_trash, so the SAME list_trash call that triggers the sweep still returns the expired row — the test 'call list_trash, assert the expired row was swept' checks before the sweep runs. Related semantic wrinkle left unstated: expired-but-unswept rows remain restorable past 30 days, and defer() outside request scope (the documented gotcha) means the smoke harness path may behave differently than prod.",
+      "suggestedFix": "Specify the test as call list_trash, then waitFor (existing helpers.mjs poll) a second list_trash to observe the sweep; or run the sweep synchronously before the read (it's one indexed DELETE on a low-traffic table — defer buys little on a read path). State '~30 days, swept opportunistically' in the tool description either way."
+    },
+    {
+      "severity": "minor",
+      "issue": "export_project / import_project are never addressed: an export→import round-trip silently drops all trash and version history, and import_project of entries whose ids collide with trashed rows in the target project has undefined interaction with restore (same-uuid trash row now shadows a different live entry). Rule 1 says boundaries are stated out loud; these tools' descriptions will now be silently wrong about what a 'full' export contains.",
+      "suggestedFix": "Add one line to C1/C4 scope: update export_project/import_project descriptions to state 'trash and version history are not exported'. Optionally note the id-collision case in restore_entry's error path (the entries PK conflict on restore already surfaces as 23505 — map it to a hint)."
+    }
+  ]
+}

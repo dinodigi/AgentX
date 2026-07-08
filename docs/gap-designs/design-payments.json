@@ -1,0 +1,248 @@
+{
+  "design": {
+    "gap": "GAP K — Payments (Stripe connector): connector with encrypted secret-key reference, declarative collection-to-price checkout (POST /v1/checkout returning a Stripe Checkout Session URL with server-side price lookup), and signed Stripe webhook ingestion that translates checkout.session.* events into AgentX entry writes + the existing declarative event fan-out. Subscription lifecycle, invoicing, fraud, and refunds stay in the tenant app layer.",
+    "approach": "Stripe becomes the third connector type in the existing BYO-infra model (lib/connectors.ts CONNECTOR_SPECS), following the Resend idiom exactly: plain fetch against Stripe's REST API (form-encoded, pinned Stripe-Version header), no stripe npm dependency, secret key AES-256-GCM encrypted in project_connectors.secretEnc, publishable key as non-secret config visible through list_connectors. Because Stripe needs a second secret (the whsec_ webhook signing secret), project_connectors grows a nullable secretsEnc JSONB column — a slot map {slotKey: encryptedString} — leaving the existing single-secret path (and rotate/health machinery) untouched for clerk/resend. lib/stripe.ts reads its base URL from STRIPE_API_BASE (default https://api.stripe.com) so the smoke harness can point it at an in-process mock — the Stripe mock is scoped, designed, and shipped as part of its own increment, not smuggled into the endpoint work.\n\nCheckout is a collection-level declarative behavior, exactly like access and events: a new nullable collections.checkout JSONB column, declared via define_collection, validated in the validateAccessAndEvents pattern (lib/collections.ts:94-138). checkout = { priceField, successUrl, cancelUrl, orders? }. priceField names a text field holding a Stripe Price id — what is sellable and at what price is server-side content. Sellable collections must be publicly readable: define-time validation rejects checkout on collections with access.read 'authenticated'/'owner' (fix hint: \"checkout requires access.read: 'public' (or absent); owner/authenticated collections cannot be sold — model member-only pricing in your app layer via events\"), and the /v1/checkout route applies the SAME gates as a public delivery read — zero-publicRead-fields ⇒ 404 (mirroring app/api/v1/[collection]/route.ts:50) and per-item publicFilter via matchesClauses, with one indistinguishable miss message (\"items[2]: entry <id> not found or not available\") whether the entry is absent or gated. With access.read pinned to public, ownerClause can never apply, so publicFilter genuinely IS the complete row gate and the trust boundary is identical to the delivery read path — now by construction, not by claim. Clients send only entry uuids and quantities; the server loads entries, reads Price ids from priceField, creates the Checkout Session, returns {url, sessionId}.\n\nWebhook ingestion reuses AgentX's own signing scheme in reverse: lib/webhook.ts:38-43 already computes t=,v1=HMAC_SHA256(secret,`${t}.${body}`) — Stripe-Signature is the identical construction, so verification is ~20 lines of node:crypto with timingSafeEqual and 5-minute tolerance. The endpoint is POST /api/stripe/webhook/[projectId] (Stripe cannot send Authorization headers; the whsec signature is the authenticator; middleware.ts matcher gains the exclusion). Security invariant, stated explicitly because a shared Stripe account delivers signed events from OUTSIDE AgentX: project identity comes ONLY from the verified URL path — session metadata carries {collection, orderEntryId} but never projectId, and both metadata values are untrusted inputs that must resolve to a collection inside the path project which declares checkout.orders, else the event is acknowledged 200 and ignored. On checkout.session.completed the handler flips the order entry pending→paid via updateEntryIf (single-statement CAS, scoped by collection_id in its WHERE) — but ONLY when event.data.object.payment_status === 'paid': Stripe fires 'completed' with payment_status 'unpaid' for delayed methods (OXXO, SEPA debit, konbini), and firing fulfillment before money exists is a payment bug. Async methods are handled, not excluded: checkout.session.async_payment_succeeded flips pending→paid, async_payment_failed and checkout.session.expired flip pending→expired (the tool description says out loud that 'expired' covers both expiry and async-payment failure in v1). CAS makes Stripe's webhook retries idempotent no-ops, and Stripe itself is the durable retry queue (non-2xx retried for days) — no jobs runner, no vendor cron, host-agnostic. Because the flip rides the entries layer's single emit point, tenants get fulfillment declaratively: events.updated with when:[{field:'status',op:'eq',value:'paid'}] fires their webhook/email the moment an order is actually paid.\n\nWhat AgentX deliberately does NOT do is stated in the tool surface: mode:'payment' Checkout Sessions only — no subscription lifecycle, no invoicing, no refunds, no fraud logic, no member-only storefronts; those belong to the tenant's app layer via declarative events or their own Stripe dashboard. Every mapped inbound event is logged to webhook_deliveries (url discriminator 'stripe:<eventType>', following the 'email:<to>' precedent) so get_deliveries shows the payment pipeline end to end.",
+    "keyDecisions": [
+      {
+        "decision": "Checkout requires access.read 'public' (or absent) at define time, plus the route re-applies delivery's zero-publicRead 404 gate and per-item publicFilter — rather than plumbing gateRead/ownerClause/X-User-Token into /v1/checkout (reviewer issue 1's suggested route-level fix).",
+        "rationale": "One define-time validation line with a fix hint collapses both confirmed gate-bypass issues (1 and 3) at the declarative layer where every other capability boundary lives; with read pinned to public, ownerClause is unreachable by construction, so publicFilter + the 404 gate make the checkout trust boundary provably identical to a public delivery read, and existence-probing via checkout reveals exactly what a delivery GET already reveals. Route-level gateRead would add identity plumbing for a v1 use case (member-only commerce) the boundary statement explicitly excludes.",
+        "alternativeRejected": "Applying gateRead + ownerClause inside the checkout handler (issue 1's suggestion): correct but heavier — X-User-Token verification, JWKS config errors, and owner-scoped carts enter a surface with no v1 consumer, and 'sellable iff owner-visible' is a subtler contract for agents than a hard declarative rule. If member commerce is ever wanted, relaxing the define-time check plus adding gateRead is a clean follow-up."
+      },
+      {
+        "decision": "Project identity for inbound webhooks comes ONLY from the verified URL path; session metadata carries {collection, orderEntryId} but never projectId, and both are treated as untrusted — they must resolve to a collection within the path project that declares checkout.orders, else the event is 200-acknowledged and logged as ignored.",
+        "rationale": "A shared or multi-app Stripe account delivers correctly-signed events for sessions AgentX never created, with attacker-chosen metadata; the whsec proves 'this came from project A's Stripe account', nothing more. Deriving everything else from the path-pinned project (collection lookup scoped by projectId; updateEntryIf's WHERE collection_id as second fence) makes cross-tenant writes structurally impossible. A smoke test asserts a correctly-signed event referencing another project's collection/entry is a no-op.",
+        "alternativeRejected": "Trusting metadata.projectId for routing (or resolving metadata.collection globally) — a signed event from a shared Stripe account could then flip entries in another project; also rejected: omitting metadata.collection and searching all orders collections for the entry id, which is slower and still needs the same project pinning."
+      },
+      {
+        "decision": "The paid flip is gated on event.data.object.payment_status === 'paid', and async payment methods are mapped: checkout.session.async_payment_succeeded → pending→paid, async_payment_failed → pending→expired, alongside completed and expired (K5 provisions all four enabled_events).",
+        "rationale": "Stripe fires 'completed' with payment_status 'unpaid' for OXXO/SEPA/konbini/boleto — flipping unconditionally marks orders paid and fires tenant fulfillment before money exists. Mapping the two async events costs two more branches through the exact same CAS helper, so tenants who enable async methods in their Stripe dashboard just work; 'completed but unpaid' leaves the entry pending and logs the row with the reason.",
+        "alternativeRejected": "Option (a), instant-methods-only boundary ('async methods stay pending forever, documented'): cheaper but leaves a tenant-visible dead end (pending orders that paid days later never flip) triggered by a Stripe dashboard toggle AgentX cannot see; the extra two event mappings are trivially small. Also rejected: requiring a fourth 'failed' enum option to distinguish async failure from expiry — it forces schema churn on every tenant for a distinction the description can state instead."
+      },
+      {
+        "decision": "No Stripe SDK — plain fetch with application/x-www-form-urlencoded bodies and a pinned Stripe-Version header, matching how lib/events.ts:117 calls Resend; base URL from STRIPE_API_BASE for harness mockability.",
+        "rationale": "Zero new dependencies, identical idiom to the existing connector, and the env-selected base URL makes the whole surface testable against an in-process mock; inbound signature verification is ~20 lines of node:crypto AgentX already writes for outbound signing (lib/webhook.ts:38-43).",
+        "alternativeRejected": "The stripe npm package — heavyweight, drags in its own request layer and types for hundreds of unused endpoints, and its webhook helper duplicates crypto the codebase already has."
+      },
+      {
+        "decision": "Checkout config lives per-collection in a new collections.checkout JSONB column (like access/events), not per-project or in connector config.",
+        "rationale": "Sellable things are collections (products, tickets); the config is declared/validated/described through define_collection exactly like every other declarative behavior, and describe_collection shows it — the agent self-serves 'this collection is sellable via this field'.",
+        "alternativeRejected": "Project-level mapping inside the Stripe connector's config — connectors are operator-side, their config is not validated against collection fields, and the capability would be invisible to define_collection."
+      },
+      {
+        "decision": "Order entry is created BEFORE the Stripe session (status 'pending', entry id in session metadata + client_reference_id), and the webhook flips it with updateEntryIf CAS (if status='pending').",
+        "rationale": "The entry id is the correlation key both ways; CAS makes Stripe's retried webhooks idempotent (second delivery gets {ok:false,reason:'conflict'}, handler returns 200) with no dedup table; the flip rides the entries layer's single emit point so declarative events fire on paid.",
+        "alternativeRejected": "Session-first then entry (window where a completed session references no entry) and a stripe_events dedup table (extra migration; CAS already makes the v1 mappings idempotent)."
+      },
+      {
+        "decision": "Second secret slot via a generic project_connectors.secretsEnc JSONB map ({slot: encryptedString}) rather than a Stripe-specific column or overloading secretEnc with JSON.",
+        "rationale": "secretEnc keeps its exact current semantics (rotateConnectorSecret validate-before-save, health checks, clerk/resend untouched); the slot map generalizes to future multi-secret connectors; reads fall back secretsEnc[slot] ?? secretEnc.",
+        "alternativeRejected": "Encrypting a JSON blob of both keys into secretEnc — silently changes what connectorSecret returns and breaks the existing rotation path for the primary key."
+      },
+      {
+        "decision": "Inbound endpoint is /api/stripe/webhook/[projectId], authenticated solely by the whsec signature (projectId in the path is not a secret).",
+        "rationale": "Stripe cannot set Authorization headers; HMAC verification with timestamp tolerance is the industry-standard authenticator; the per-project path selects which whsec must verify — and is the sole project authority (see metadata decision).",
+        "alternativeRejected": "Minting a token into the URL as a query param — a secret in a URL violates rule 3 in spirit (proxies log URLs) and adds token-scope complexity for no security gain over HMAC."
+      },
+      {
+        "decision": "The original K2 is split into K2a (declarative checkout config, define-time validation, MCP schema twins) and K2b (lib/stripe.ts client, /v1/checkout route, E_UPSTREAM, and the smoke-harness Stripe mock as an explicit deliverable).",
+        "rationale": "K2 as written bundled a schema migration, validation plumbing, a new HTTP client, a new public endpoint, an error-code addition, both hand-maintained MCP twins, AND a brand-new mock-Stripe harness component — L-sized against the stated S/M bar. K2a is independently shippable and verifiable over MCP with zero Stripe network (define/describe round-trip, E_CONNECTOR_REQUIRED, bad-priceField, non-public-read rejection); K2b verifies against the mock or STRIPE_TEST_SK.",
+        "alternativeRejected": "Keeping K2 monolithic ('the pieces are cohesive') — cohesion doesn't cap size, and the mock harness alone has its own design surface (which endpoints to fake, env selection) that deserves a named deliverable."
+      }
+    ],
+    "increments": [
+      {
+        "id": "K1",
+        "name": "Stripe connector type",
+        "what": "Add 'stripe' to ConnectorType and CONNECTOR_SPECS in lib/connectors.ts: configFields [{key:'publishableKey', label:'Publishable key (pk_...)'}], secretLabel 'Secret key (sk_...)'. Health check branch in checkConnectorHealth: GET {STRIPE_API_BASE}/v1/account with Bearer <sk>, 8s timeout, writes status back. rotateConnectorSecret gains the same probe branch (validate-before-save, old key kept on failure). saveConnector in settings/actions.ts validates pk_/sk_ prefixes before upsert. The admin connectors page auto-renders from CONNECTOR_SPECS — no UI code. Update list_connectors and get_project_info tool descriptions in lib/mcp/tools.ts to name stripe and state that connecting/rotating is operator-side. Verify: connect a test-mode sk via admin settings, run health check, then MCP round-trip list_connectors shows {type:'stripe', status:'connected', config:{publishableKey}} and never the secret.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\connectors.ts",
+          "C:\\dev\\AgentX\\app\\admin\\[projectId]\\settings\\actions.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\stripe-connector.test.mjs"
+        ],
+        "surface": "list_connectors / get_project_info now report stripe; admin Connectors page gains a Stripe card (auto-rendered from CONNECTOR_SPECS); no new endpoints",
+        "size": "S",
+        "dependsOn": [],
+        "migration": "none (project_connectors.type is a text column)"
+      },
+      {
+        "id": "K2a",
+        "name": "Declarative checkout config on collections",
+        "what": "New nullable collections.checkout JSONB column: {priceField: string, successUrl: string, cancelUrl: string} (orders mapping added in K4). Plumb through DefineCollectionInput and defineCollection's values + onConflict set (lib/collections.ts:58-89, 337-365). Validate in the validateAccessAndEvents pattern (lib/collections.ts:94-138): priceField must name an existing text field; URLs must be https; stripe connector connected else existing E_CONNECTOR_REQUIRED; access.read must be 'public' or absent else E_VALIDATION with fix hint \"checkout requires access.read: 'public'; owner/authenticated collections cannot be sold — member-only pricing belongs in your app layer via events\". Add 'checkout' to RESERVED_NAMES (lib/validation.ts:126) so the future static route can never collide with a collection slug. MCP surface: define_collection gains checkout in BOTH the hand-written TOOL_DEFS inputSchema and the defineArgs zod twin (documented drift gotcha — update both); describe_collection echoes it; the description states the boundary out loud: payment-mode Checkout Sessions only, publicly-readable collections only, 'expired' status will cover both session expiry and async-payment failure, no subscriptions/invoicing/refunds — tenant app layer owns those via events. Verify (no Stripe network needed): MCP round-trip — define a products collection with checkout config, describe_collection shows it; assert E_CONNECTOR_REQUIRED without the connector, E_VALIDATION for bad priceField, non-https URL, and access.read:'owner'.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\db\\schema.ts",
+          "C:\\dev\\AgentX\\lib\\collections.ts",
+          "C:\\dev\\AgentX\\lib\\validation.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\checkout-config.test.mjs"
+        ],
+        "surface": "define_collection/describe_collection gain checkout config (MCP); 'checkout' becomes a reserved collection name; no HTTP endpoint yet",
+        "size": "M",
+        "dependsOn": [
+          "K1"
+        ],
+        "migration": "collections.checkout jsonb nullable — add to db/schema.ts + npm run db:push (no migration files exist by design)"
+      },
+      {
+        "id": "K2b",
+        "name": "POST /v1/checkout endpoint + Stripe client + smoke mock",
+        "what": "New lib/stripe.ts: stripeRequest(sk, method, path, formParams) — plain fetch, form-encoded, pinned Stripe-Version, base URL from STRIPE_API_BASE (default https://api.stripe.com) — and createCheckoutSession(). New static route app/api/v1/checkout/route.ts (static segment wins over [collection]; slug reserved in K2a): POST {collection, items:[{id, quantity 1..100}], successUrl?, cancelUrl?} — bearer resolve via resolveProjectId, rateLimit(`${projectId}:${ip}`) like the entries POST, load collection + require checkout config, zod-parse body, apply the SAME read gates as delivery: publicFields(collection) empty ⇒ 404 (mirror of app/api/v1/[collection]/route.ts:50), then per-item matchesClauses(publicFilter) — misses get one indistinguishable message 'items[N]: entry <id> not found or not available' whether absent or filtered (access.read is guaranteed public by K2a validation, so publicFilter is the complete row gate; no ownerClause can exist). Read priceField values (must match price_*), request-level successUrl/cancelUrl overrides accepted only when their origin matches the configured URL's origin, create the session with metadata {collection} ONLY (never projectId — the webhook path is the project authority, see K4), return 201 {url, sessionId} with CORS headers. Stripe API failure → 502; add E_UPSTREAM to ERROR_CODES ('the external provider rejected the request — the message carries the provider's reason; fix the referenced config or retry') and map 502→E_UPSTREAM in deliveryError's status map (lib/delivery-http.ts). get_project_info deliveryApi gains the checkout endpoint doc + boundary line. Smoke-harness deliverable: scripts/smoke/stripe-mock.mjs — in-process HTTP server faking POST /v1/checkout/sessions (returns deterministic session id + url, records requests for assertions) and GET /v1/account, selected by setting STRIPE_API_BASE in the test env; real test-mode runs via optional STRIPE_TEST_SK. Verify: POST /v1/checkout against the mock asserts a session URL, correct Price ids sent, and no amounts/price ids accepted from the client; assert non-public item, zero-publicRead 404, missing-connector, and rate-limit paths return machine-readable errors.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\stripe.ts",
+          "C:\\dev\\AgentX\\app\\api\\v1\\checkout\\route.ts",
+          "C:\\dev\\AgentX\\lib\\error-codes.ts",
+          "C:\\dev\\AgentX\\lib\\delivery-http.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\stripe-mock.mjs",
+          "C:\\dev\\AgentX\\scripts\\smoke\\checkout.test.mjs"
+        ],
+        "surface": "New delivery endpoint POST /api/v1/checkout; get_project_info documents it; new error code E_UPSTREAM; new harness component stripe-mock",
+        "size": "M",
+        "dependsOn": [
+          "K2a"
+        ],
+        "migration": "none (rides K2a's column)"
+      },
+      {
+        "id": "K3",
+        "name": "Signed Stripe webhook ingestion endpoint",
+        "what": "Add nullable project_connectors.secretsEnc jsonb ($type Record<string,string>, slot → AES-GCM ciphertext). Extend lib/connectors.ts: connectorSecret gains an optional slot param (reads secretsEnc[slot]; default slot falls back to secretEnc); CONNECTOR_SPECS.stripe gains a second secret slot rendered in the admin card ('Webhook signing secret (whsec_...)'), saved via saveConnector into secretsEnc.webhookSigning (upsert keeps existing slots when the form omits them, mirroring the empty-secret behavior at lib/connectors.ts:120). New verifyStripeSignature(rawBody, sigHeader, secret, toleranceSec=300) in lib/stripe.ts using node:crypto timingSafeEqual — the mirror of the outbound scheme at lib/webhook.ts:38-43. New route app/api/stripe/webhook/[projectId]/route.ts: read raw body via req.text() BEFORE parsing, load whsec via connectorSecret(projectId,'stripe','webhookSigning') (503 unconfigured if absent), verify signature (400 on mismatch/stale timestamp so Stripe surfaces the failure and retries), parse the event, return 200 {received:true} for all event types (translation lands in K4). CRITICAL: extend the middleware.ts matcher exclusion (currently only api/mcp|api/v1) with api/stripe, or Clerk intercepts Stripe's POSTs. get_project_info urls gains stripeWebhook: `${baseUrl}/api/stripe/webhook/${projectId}` with a hint to register it with checkout.session.completed, checkout.session.expired, checkout.session.async_payment_succeeded, checkout.session.async_payment_failed. Verify: smoke test signs a payload with a known whsec and asserts 200; tampered body and stale timestamp assert 400; missing connector asserts 503.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\db\\schema.ts",
+          "C:\\dev\\AgentX\\lib\\connectors.ts",
+          "C:\\dev\\AgentX\\lib\\stripe.ts",
+          "C:\\dev\\AgentX\\app\\api\\stripe\\webhook\\[projectId]\\route.ts",
+          "C:\\dev\\AgentX\\middleware.ts",
+          "C:\\dev\\AgentX\\app\\admin\\[projectId]\\settings\\actions.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\stripe-webhook.test.mjs"
+        ],
+        "surface": "New inbound endpoint POST /api/stripe/webhook/{projectId} (signature-authenticated, Clerk-exempt); admin Stripe card gains the whsec field; get_project_info exposes the webhook URL",
+        "size": "M",
+        "dependsOn": [
+          "K1"
+        ],
+        "migration": "project_connectors.secrets_enc jsonb nullable via db/schema.ts + npm run db:push"
+      },
+      {
+        "id": "K4",
+        "name": "Order lifecycle: paid/expired entry flips + declarative fulfillment",
+        "what": "checkout config gains orders?: {collection: string, fields: {status: string, sessionId: string, total?: string, customerEmail?: string, items?: string}} — each value names a field in the target orders collection. Define-time validation (same block as K2a's): target collection exists IN THIS PROJECT, status is an enum whose options include 'pending','paid','expired', sessionId is text, total is number, items is text/richtext; fix-hint messages state exactly which field to add. /v1/checkout route, when orders is declared: createEntry into the orders collection first ({status:'pending', items: JSON-string snapshot of [{id,quantity}]}) with actor {type:'delivery'} — full validation, audit, and 'created' events apply; put the entry id in session metadata.orderEntryId and client_reference_id; if session creation then fails, the pending entry simply never pays (visible in admin, harmless). Webhook route translation with an EXPLICIT trust invariant: the project comes ONLY from the verified path segment; metadata.collection and metadata.orderEntryId are untrusted — resolve metadata.collection strictly within the path project, require it to declare checkout.orders, else acknowledge 200 and log the event as ignored; updateEntryIf's WHERE collection_id scoping is the second fence. Event mapping, all through the same CAS helper (if:[{field: statusField, op:'eq', value:'pending'}]): checkout.session.completed AND event.data.object.payment_status==='paid' → set {status:'paid', sessionId: session.id, total: amount_total/100, customerEmail}; completed with payment_status 'unpaid' (async methods: OXXO, SEPA, konbini) → NO flip, log the delivery row with lastError null and a note — the order stays pending until checkout.session.async_payment_succeeded → same pending→paid flip; checkout.session.expired and checkout.session.async_payment_failed → pending→'expired' (tool description states 'expired' covers both expiry and async failure in v1). A CAS conflict (already flipped by a retry) returns 200 without re-emitting. All mapped outcomes logged to webhook_deliveries with the ORDERS collection's id (satisfies NOT NULL collectionId), url 'stripe:<eventType>', event 'stripe.<eventType>', payload = the Stripe event, status success/failed; unmapped event types return 200 unlogged; transient DB failure returns 500 so Stripe retries. Update define_collection description with the fulfillment recipe ('declare events.updated with when status=paid to fire your fulfillment webhook/email — it fires only when payment actually clears'). Verify: full round-trip against the K2b mock — define products + orders over MCP, POST /v1/checkout, replay a self-signed completed event (payment_status paid) → order paid + smoke webhook receiver got entry.updated + get_deliveries shows the stripe: row; replay completed with payment_status 'unpaid' → still pending; replay async_payment_succeeded → paid; replay the same event again → still exactly one paid flip (CAS idempotency); AND the cross-tenant test: a correctly-signed event whose metadata.collection/orderEntryId reference another project's collection/entry is a 200 no-op.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\collections.ts",
+          "C:\\dev\\AgentX\\app\\api\\v1\\checkout\\route.ts",
+          "C:\\dev\\AgentX\\app\\api\\stripe\\webhook\\[projectId]\\route.ts",
+          "C:\\dev\\AgentX\\lib\\stripe.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\stripe-orders.test.mjs"
+        ],
+        "surface": "define_collection checkout.orders mapping (MCP); order entries appear in the auto-generated admin like any collection; get_deliveries shows inbound stripe: rows for all four mapped event types",
+        "size": "M",
+        "dependsOn": [
+          "K2b",
+          "K3"
+        ],
+        "migration": "none (rides the K2a checkout jsonb column)"
+      },
+      {
+        "id": "K5",
+        "name": "One-click webhook provisioning",
+        "what": "Admin settings action 'Provision Stripe webhook': using the stored sk, POST {STRIPE_API_BASE}/v1/webhook_endpoints {url: <baseUrl>/api/stripe/webhook/<projectId>, enabled_events: ['checkout.session.completed','checkout.session.expired','checkout.session.async_payment_succeeded','checkout.session.async_payment_failed']}; store the returned endpoint id in connector config.webhookEndpointId (non-secret) and the returned secret into secretsEnc.webhookSigning — eliminating the whsec copy-paste (one-paste connect, the deriveClerkIssuer philosophy). checkConnectorHealth stripe branch extends to GET /v1/webhook_endpoints/<id> and reports enabled vs 'disabled/missing — re-provision'. disconnectConnector best-effort deletes the endpoint. get_project_info stripe section reports webhookProvisioned true/false with the fix hint. Verify: provision against test mode (or the K2b mock's webhook_endpoints fake), assert the endpoint id + whsec stored, health check green, then a completed event round-trips with no manual whsec entry.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\connectors.ts",
+          "C:\\dev\\AgentX\\lib\\stripe.ts",
+          "C:\\dev\\AgentX\\app\\admin\\[projectId]\\settings\\actions.ts",
+          "C:\\dev\\AgentX\\app\\admin\\[projectId]\\connectors\\page.tsx",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts"
+        ],
+        "surface": "Admin Connectors: Provision/Re-provision button on the Stripe card; get_project_info reports provisioning status",
+        "size": "S",
+        "dependsOn": [
+          "K3"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "K6",
+        "name": "Client-code snippet + publishable-key exposure",
+        "what": "get_client_code gains a checkout snippet when any collection declares checkout: a typed fetch helper for POST /v1/checkout (entry ids + quantities in, redirect to session.url out) plus the fulfillment note (poll the orders collection or receive the events.updated webhook — paid means payment_status confirmed, so async methods may take days). get_project_info gains stripe: {configured, publishableKey} so site builders grab the pk over MCP (already non-secret connector config). Description reminds the agent the snippet is a snapshot to regenerate after schema changes, matching the existing get_client_code contract. Verify: MCP round-trip — snippet compiles in the smoke harness's tsc check and the returned pk matches the connector config.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\client-code.test.mjs"
+        ],
+        "surface": "get_client_code + get_project_info (MCP only)",
+        "size": "S",
+        "dependsOn": [
+          "K2b"
+        ],
+        "migration": "none"
+      }
+    ],
+    "invariantCompliance": "Rule 1 (declarative + self-describing): checkout is a collection-level JSONB behavior declared through define_collection like access/events; the tool description states every boundary out loud — payment-mode Checkout only; publicly-readable collections only (access.read 'public', enforced at define time with a fix hint, not silently at request time); 'expired' covers both session expiry and async-payment failure; async payment methods stay pending until async_payment_succeeded; no subscriptions, invoicing, refunds — tenant app layer via events. get_project_info documents POST /v1/checkout, the inbound webhook URL with its four enabled_events, and stripe connector/provisioning status; list_connectors shows stripe. Rule 2 (machine-readable errors): every failure carries a stable code + fix hint — existing E_CONNECTOR_REQUIRED and E_VALIDATION at define time (including the access.read rule), per-item indexed messages from /v1/checkout that are deliberately indistinguishable between absent and row-gated entries, new append-only E_UPSTREAM for Stripe API rejections carrying Stripe's own reason, 400/503 on the inbound route with explicit causes. Rule 3 (secrets are references): sk_ lives AES-256-GCM in secretEnc, whsec_ in the new secretsEnc slot map, both decrypted only inside connectorSecret at moment of use; MCP and the browser see only {type, status, publishableKey} (pk is public by Stripe's definition); no secret ever appears in a URL — the webhook path carries only the non-secret projectId and is authenticated by HMAC. Rule 4 (destructive = plan + confirm): nothing here adds a destructive path — checkout config changes are additive JSONB, order collections obey the existing define_collection diff/confirm gates, connector disconnection remains operator-side. Rule 5 (strict validation never weakens): the checkout read path now applies the SAME gates as public delivery reads by construction — access.read pinned to 'public' at define time makes ownerClause unreachable, the zero-publicRead 404 gate is mirrored from route.ts:50, and publicFilter is evaluated per item via matchesClauses, so existence is never confirmable through checkout for anything delivery would hide; order entries are created via createEntry and flipped via updateEntryIf — the same buildEntrySchema strict parse, verifyRefs, audit, and single emit point as every other write; the webhook handler's project authority is the verified path alone, metadata is untrusted and pinned to that project, and updateEntryIf's collection_id WHERE is the structural second fence; clients supply only entry uuids and quantities (amounts and Price ids are server-side data); the paid flip requires payment_status==='paid' so declarative fulfillment can never fire before money exists; no new SQL — the CAS flip is the existing single-statement updateEntryIf; inbound events that match no declared mapping do nothing.",
+    "crossGapDependencies": [
+      "GAP G (state machine / jobs): NOT required — Stripe's own retry-for-days loop is the durable queue for inbound events, and translation is one single-statement CAS per event. If GAP G later lands transition semantics for events (when: status changed from X to Y), paid-order fulfillment rules get cleaner than the current post-snapshot when clause; if a pg jobs runner lands, an optional reconciliation sweep (expire stale pending orders whose webhooks never arrived, e.g. session-create failures stranding pending entries) becomes a one-job add.",
+      "Infra C2 (durable rate-limit store): POST /v1/checkout reuses rateLimit() and automatically benefits when the MemoryStore is swapped for the pg-backed implementation.",
+      "Render migration: getConnector/resolveToken rely on unstable_cache — the K3 webhook route inherits whatever cache replacement that move introduces; nothing Stripe-specific to design. Raw-body signature verification must be re-verified on both hosts (Netlify already mutates ETags; any proxy that re-encodes POST bodies breaks HMAC).",
+      "Change-feed/updatedAt delivery exposure (query-delivery extension point): sites polling order status instead of receiving tenant webhooks would benefit from delivery-side updatedAt filtering; not required — the declarative events.updated path covers fulfillment today.",
+      "Member-only commerce (future): deliberately excluded by the define-time access.read:'public' rule; unlocking it is a scoped follow-up (relax the rule + gateRead/ownerClause + X-User-Token plumbing in /v1/checkout), not a v1 hidden capability."
+    ],
+    "risks": [
+      "updateEntryIf's 'updated' event omits the previous snapshot and changedFields (known CAS gotcha, lib/entries.ts:316) — tenant when-clauses on status='paid' work (post-change snapshot), but paid-flip payloads won't carry changedFields; document it, or later extend updateEntryIf with a RETURNING pre-image.",
+      "Two-step create (order entry, then Stripe session) has no transaction under the neon-http driver — a session-create failure strands a 'pending' order entry; harmless and visible in admin, but a reconciliation sweep is the long-term answer (GAP G note).",
+      "Inbound signature verification depends on the raw request body being byte-identical — a proxy/CDN that re-encodes POST bodies would break it; verify on Netlify before relying on it in prod, and again after the Render move.",
+      "No dedup table for Stripe event ids — idempotency rests entirely on the pending-status CAS guard, which covers all four mapped events (every flip requires status='pending'); if a future mapping does something non-idempotent (e.g. increment a counter per event), it will need explicit event-id dedup, and the 'completed but unpaid' log row is already re-loggable on retries (log rows, not entry state, may duplicate — acceptable, history rows are append-only by design).",
+      "webhook_deliveries.collectionId NOT NULL forces unmapped/ignored inbound events (including cross-project-metadata no-ops that have no in-project collection to attribute) to go unlogged or be logged against the orders collection with an 'ignored' marker — decide during K4 implementation; K5's provisioning pins enabled_events to exactly the four handled types, keeping the unmapped stream near zero.",
+      "TOOL_DEFS JSON schema and the defineArgs zod twin are maintained separately (documented drift gotcha) — checkout must be added to both in K2a and extended in both in K4, or agents get E_VALIDATION on documented inputs.",
+      "Multi-item sessions require a single currency across Prices — Stripe rejects mixed carts; surfaced as E_UPSTREAM with Stripe's message rather than caught at validation time (AgentX doesn't store currency).",
+      "The define-time access.read:'public' rule interacts with later define_collection calls: an agent could define checkout first, then attempt to flip access.read to 'owner' in a subsequent call — the K2a validation must run on EVERY definition write (it does, living in the validateAccessAndEvents block), rejecting the flip with the same fix hint; the smoke test should cover this re-definition path explicitly.",
+      "The stripe-mock harness must stay faithful to the four event shapes (payment_status field included) — a mock drift from real Stripe payloads would green-light a broken handler; mitigate with one optional STRIPE_TEST_SK live-mode smoke that runs when the env var is present."
+    ]
+  },
+  "openMinor": [
+    {
+      "severity": "minor",
+      "issue": "K6's fulfillment guidance 'poll the orders collection' pushes tenants toward making order fields world-readable: an anonymous buyer has no credential linking them to their order (checkout never verifies X-User-Token and stamps no owner), so polling only works with read:'public' + publicRead on status — and naive agents will also flip customerEmail/sessionId to publicRead, exposing all customers' PII to anyone holding the site's delivery token. The publicRead invariant itself holds, but the design's own recipe nudges tenants into the leak.",
+      "suggestedFix": "In K6, recommend the events.updated webhook/email path as the primary fulfillment mechanism and explicitly warn against public orders. Optionally: have /v1/checkout verify X-User-Token when present and stampOwner the order entry, so authenticated buyers can poll under read:'owner'; and add a define-time warning (fix-hint, non-blocking) when checkout.orders maps customerEmail to a publicRead field or the orders collection is read:'public'."
+    },
+    {
+      "severity": "minor",
+      "issue": "delete_collection's plan+confirm is incomplete for the new dependency: deleting the orders collection (or the checkout-enabled products collection) leaves a dangling checkout/checkout.orders config. In-flight sessions' checkout.session.completed webhooks then fail permanently — and since K4 returns 500 on failure, Stripe retries for days against a collection that no longer exists. The operator confirmed a plan (entryCount + inboundRelations, lib/collections.ts:391-416) that never mentioned the payments impact, weakening rule 4's spirit (the plan must show what breaks).",
+      "suggestedFix": "Extend planDeleteCollection to detect collections referenced by any checkout config (as the checkout target or as checkout.orders.collection) and either E_BLOCK like inbound relations or list the reference in the returned plan. Also make the webhook handler acknowledge (200 + failed log row) events whose orders collection no longer exists, instead of 500-ing for days."
+    },
+    {
+      "severity": "minor",
+      "issue": "Signature-verification robustness gaps in K3's ~20-line verifier: (1) Stripe-Signature carries MULTIPLE v1= entries during whsec rotation — verification must pass if any matches, or every tenant whsec roll causes a full outage of paid-order flips; (2) crypto.timingSafeEqual throws on unequal-length buffers — a malformed header becomes an unhandled 500 instead of a clean 400; (3) the connectorSecret slot fallback ('secretsEnc[slot] ?? secretEnc') must NOT apply to the webhookSigning slot — falling back to the sk_ turns a missing whsec (should be 503 unconfigured) into silent perpetual 400s, hiding the misconfiguration from the operator.",
+      "suggestedFix": "Parse all v1 entries and accept if any timingSafeEqual match; length-check before timingSafeEqual and return 400 on mismatch; make the fallback-to-secretEnc behavior apply only to the default/primary slot (design says this but the '??' phrasing invites the bug — state it as a MUST). Also cap items array length in the checkout body zod schema (Stripe's line-item limit is 100) to bound the entry-load query."
+    },
+    {
+      "severity": "minor",
+      "issue": "Adding 'checkout' to RESERVED_NAMES (lib/validation.ts:126-135, which does not currently contain it) only blocks NEW definitions. Any pre-existing collection named 'checkout' is silently shadowed by the static /api/v1/checkout route — its delivery GET/POST become unreachable with no error, a silent behavior change for a live tenant site.",
+      "suggestedFix": "Before shipping K2, run a one-time check for existing collections named 'checkout' (a SELECT in the deploy checklist or a smoke assertion); if any exist, coordinate a rename via the existing renames[] path. Document in the K2 increment that the static segment shadows the dynamic one."
+    },
+    {
+      "severity": "minor",
+      "issue": "The K4 webhook handler only specifies no-op behavior for unmapped event TYPES ('unmapped event types return 200 unlogged'), not for mapped types with missing/foreign metadata. A tenant's Stripe account fires checkout.session.completed for every checkout on that account — including non-AgentX ones and K2-only sessions created before orders was declared — whose metadata has no orderEntryId. An unguarded updateEntryIf call with an undefined/foreign id either throws (500 => Stripe retries for days on every foreign checkout) or returns not_found, which the spec doesn't say how to answer.",
+      "suggestedFix": "Specify explicitly in K4: completed/expired events with no metadata.orderEntryId (or whose metadata.projectId mismatches the path) return 200 unlogged, exactly like unmapped types; updateEntryIf reason 'not_found' also returns 200 (entry deleted by operator) with a failed delivery row for visibility."
+    },
+    {
+      "severity": "minor",
+      "issue": "The /v1/checkout route spec says '201 with CORS headers' but never mentions an OPTIONS export. Every existing delivery route exports OPTIONS() => preflight() (app/api/v1/[collection]/route.ts:188-190), and a browser POST with an Authorization header always triggers a preflight — without the export, the primary use case (a storefront calling checkout from the browser) fails with a CORS error on first try.",
+      "suggestedFix": "Add 'export OPTIONS via preflight() from lib/cors, matching the entries route' to K2's route description so the implementer doesn't discover it via a failing browser test."
+    },
+    {
+      "severity": "minor",
+      "issue": "Logging inbound Stripe events to webhook_deliveries with url 'stripe:<eventType>' collides with the existing refire machinery: refireDelivery (lib/events.ts:155) branches on the 'email:' url prefix and treats everything else as an outbound webhook to re-POST — the MCP refire_delivery tool would happily 'refire' a stripe: row by attempting 3 fetch attempts against the string 'stripe:checkout.session.completed' as a URL, logging garbage failure rows. The design cites the 'email:<to>' precedent for the discriminator but never addresses the refire consumer of that same discriminator.",
+      "suggestedFix": "In K4, extend refireDelivery with an explicit stripe: branch that returns a machine-readable error (E_VALIDATION: 'inbound provider events cannot be refired — Stripe retries them upstream; use the Stripe dashboard to resend') and note it in the refire_delivery tool description."
+    },
+    {
+      "severity": "minor",
+      "issue": "K4 writes total as amount_total/100 — wrong for zero-decimal currencies (JPY, KRW, VND: amount_total is already in whole units, so /100 understates by 100x) and the design elsewhere admits AgentX doesn't store currency, so the number is ambiguous anyway.",
+      "suggestedFix": "Either store amount_total as-is (minor units) and name the mapped field accordingly in the tool description ('total in the currency's smallest unit'), or divide only for non-zero-decimal currencies using Stripe's documented zero-decimal list and add an optional currency field mapping. The as-is option is the simpler v1."
+    },
+    {
+      "severity": "minor",
+      "issue": "Smoke test filenames in filesTouched don't match the harness idiom: the suite is strictly numbered NN-name.test.mjs (01-schema … 16-delivery-web), and K6 references scripts/smoke/client-code.test.mjs which does not exist (actual: 11-client-code.test.mjs). Trivial, but an implementer creating unnumbered files breaks the visible ordering convention, and K6's 'edit existing file' instruction points at a nonexistent path.",
+      "suggestedFix": "Rename planned tests to the numbered idiom (e.g. 17-stripe-connector, 18-checkout, 19-stripe-webhook, 20-stripe-orders) and fix K6 to reference 11-client-code.test.mjs."
+    }
+  ]
+}

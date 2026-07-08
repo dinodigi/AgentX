@@ -1,0 +1,170 @@
+{
+  "design": {
+    "gap": "GAP I — The hosted-compute boundary: close the practical gap for custom validation/transformation/orchestration without ever hosting tenant code, via (1) signed synchronous before-write HTTP hooks to BYO compute, (2) a closed declarative computed-field vocabulary, and (3) a documented composition story with hooks + events + transact + jobs.",
+    "approach": "Mechanism 1 — before-write hooks as declarative collection config. A new `hooks` JSONB column on `collections` (beside `events`, db/schema.ts:98-102) holds at most ONE hook per stage: `{ beforeCreate?: WriteHook, beforeUpdate?: WriteHook }` where `WriteHook = { url, mode: 'validate'|'transform', onError: 'reject'|'allow' (default 'reject'), timeoutMs?: 500-5000 (default 3000), when?: WhereItem[], disabled?: boolean }`. The hook runs inside lib/entries.ts `createEntry`/`updateEntry` — the existing single write choke point — so MCP, admin, and delivery writes all inherit it identically. Flow: validate incoming payload with `buildEntrySchema` (cheap local errors first) → if the hook's `when` clauses match (via `matchesClauses`, same semantics as events) POST to the tenant endpoint the envelope `{ event: 'entry.before_create'|'entry.before_update', collection, candidate: {data}, current?: {id, data} (pre-image on updates), actor }`, signed with the exact Stripe-style HMAC already used for outbound webhooks (`x-agentx-signature: t=...,v1=HMAC(webhookSigningSecret, t.body)`, lib/webhook.ts:38-43) plus an `x-agentx-hook: 1` header so tenant code can detect and avoid write-back loops → parse the response: `{ok:true}` proceed, `{ok:true, data:{...}}` replace candidate (transform mode only), `{ok:false, error, code?}` reject as `ValidationError('hook rejected: ' + error, 'E_HOOK_REJECTED')`; timeout/network/non-200/malformed → `onError` policy ('reject' → E_HOOK_FAILED fail-closed; 'allow' → proceed with the original candidate and log the failure). THEN the final data — whether original or hook-transformed — goes through the full existing pipeline: `validate()` + `verifyRefs` + DB unique indexes. The hook can never smuggle an unknown key, wrong type, or dangling ref past `buildEntrySchema`; the strict-validation invariant is structurally intact because the hook runs before, never instead of, validation. Every hook call ends in a `webhook_deliveries` row (event `hook.before_create` / `hook.before_update`, attempts '1', no retries — it is synchronous), preserving the \"every external call is logged\" invariant; `refireDelivery` gets a guard rejecting `hook.*` rows since replaying a before-write consult is meaningless. The signing secret is a project-level reference resolved at call time — hook config carries only a URL. Defining a hook requires `projects.webhookSigningSecret` to exist (E_VALIDATION with hint pointing at project settings), so transform responses are only ever accepted over a channel the tenant can verify came from AgentX.\n\nMechanism 2 — computed fields, recommendation: ship the tiny declarative vocabulary rather than pushing all derivation to hooks. Requiring a deployed HTTPS endpoint to slugify a title adds a network round-trip, a failure mode, and setup friction to the single most common derivation need; conversely an expression language is hosted code by another name. So `FieldBase` (lib/field-types.ts:21-44) gains `computed?: { fn: 'slugify', from: field } | { fn: 'template', template: '{{a}}-{{b}}' } | { fn: 'now', on?: 'create'|'always' } | { fn: 'uuid' }` — four closed functions, meta-validated in `fieldDefSchema` (slugify/template/uuid on text only, now on date only; source fields must exist and be non-computed — no chains, no cycles), evaluated platform-side in lib/entries.ts AFTER the hook and stripped/rejected from all client AND hook input (buildEntrySchema rejects a supplied computed key with 'field \"slug\" is computed — its value is derived server-side, omit it'). Computed output still passes `valueSchemaFor` + unique partial indexes, so a colliding slug surfaces through the existing `rethrowUnique` path. Ordering (client/hook input → hook transform → computed stamp → final validation) means neither clients nor a compromised tenant endpoint can forge platform-derived values. Everything beyond these four functions (pricing math, external lookups, cross-entry aggregation) is exactly what hooks are for.\n\nMechanism 3 — composition, and what stays impossible. Validation chains: field constraints (declarative) → computed fields (derivation) → before-write hook (custom sync logic on tenant compute) → schema validation (final word). Orchestration: `events` (created/updated/deleted, with `when` clauses) invoke tenant compute asynchronously; the tenant calls back through the delivery API or MCP using `idempotencyKey` (safe retries) and `update_entry_if` (safe convergence); `transact([ops])` (planned ladder rung, other gap) adds multi-op atomicity; the jobs runner (time-flow gap) adds delayed/retried invocation. Calling other APIs always happens on tenant compute, triggered by a webhook, with results written back through the validated write surface. STAYS IMPOSSIBLE, deliberately: (a) executing tenant-supplied expressions or code in-process — any sandbox or formula language recreates the hosted-code liability (untrusted CPU on our lambdas, arbitrary egress, un-auditable behavior) that \"we never host tenant code\" exists to prevent; (b) hooks on the READ path — a per-request read transform would make the publicRead projection non-auditable, break ETag/304 semantics, and put tenant latency in front of every page view; reads stay pure projections of validated stored data; (c) sync hooks over 5s or hook chains — the platform's write latency and availability must be boundedly, inspectably dependent on tenant infrastructure (one call, one timeout, one logged outcome), never a pipeline whose worst case is unknowable; (d) `update_entry_if` running hooks — its entire value is single-statement CAS atomicity with no read-modify-write, which a synchronous external consult would destroy; the boundary is stated in both tool descriptions.",
+    "keyDecisions": [
+      {
+        "decision": "Hooks execute inside lib/entries.ts createEntry/updateEntry (the single write choke point), so MCP, admin, and delivery writes all get identical enforcement.",
+        "rationale": "All entry mutations already flow through the entries layer (it is the only caller of emitEntryEvent and recordAudit); putting hooks there keeps one definition of a valid write and gives every surface the behavior for free.",
+        "alternativeRejected": "Delivery-route-only hooks — agents and admins would silently bypass tenant business rules, splitting the platform's single definition of a valid write."
+      },
+      {
+        "decision": "Hook transform output is re-parsed by buildEntrySchema + verifyRefs exactly like client input, and computed keys in hook output are rejected.",
+        "rationale": "The strict-validation invariant must hold structurally, not by trust: whoever controls (or MITMs toward) the hook URL still cannot inject unknown keys, wrong types, or dangling refs.",
+        "alternativeRejected": "Trusting transform responses as pre-validated — that would be the raw escape hatch design rule 5 forbids."
+      },
+      {
+        "decision": "Sign hook requests with the existing projects.webhookSigningSecret (same Stripe-style HMAC as outbound event webhooks) and REQUIRE it to be set before a hook can be defined.",
+        "rationale": "The threat model is identical to event webhooks (tenant endpoint must authenticate AgentX); one secret, one verification snippet on the tenant side, zero new secret-handling code, and rule 3 satisfied since hook config stores only a URL.",
+        "alternativeRejected": "A per-hook secret via a new connector type — two secrets to provision, asymmetric verification code for tenants, no security gain."
+      },
+      {
+        "decision": "Computed fields are a closed 4-function vocabulary (slugify, template, now, uuid) evaluated platform-side; everything else goes to hooks.",
+        "rationale": "Slug/timestamp/uuid/concat cover the overwhelming majority of derivation needs; doing them locally avoids adding a network round-trip and a failure mode to every write, while the closed set keeps evaluation bounded, deterministic, and auditable.",
+        "alternativeRejected": "(a) An expression language — unbounded evaluation of tenant-authored logic is hosted code by another name; (b) hooks-for-all-derivation — a deployed HTTPS service to slugify a title makes the common case slow, fragile, and high-friction."
+      },
+      {
+        "decision": "One hook per lifecycle stage, no arrays/chains; default onError:'reject' (fail-closed).",
+        "rationale": "Bounded worst-case write latency (one call, one timeout) and unambiguous semantics; a tenant wanting a chain composes it inside their one endpoint. Fail-closed default because silently admitting data the tenant would reject is worse than a visible, machine-readable E_HOOK_FAILED.",
+        "alternativeRejected": "Hook arrays with ordered transform piping — unbounded synchronous latency and murky merge/abort semantics."
+      },
+      {
+        "decision": "update_entry_if and (initially) bulk_create_entries do not run hooks, and both tool descriptions state this out loud; bulk on a hooked collection returns E_VALIDATION with a fix hint until the per-item fan-out increment ships.",
+        "rationale": "Rule 1 says boundaries are stated, not hidden; CAS's value is single-statement atomicity with no pre-read, which a synchronous external consult would destroy — and schema validation still applies on those paths, so the strict-validation invariant is untouched.",
+        "alternativeRejected": "Adding a pre-read to update_entry_if to feed a hook — it would reintroduce the read-modify-write race the tool exists to eliminate."
+      }
+    ],
+    "increments": [
+      {
+        "id": "I1",
+        "name": "Before-write hook engine (create/update)",
+        "what": "Add `hooks` JSONB column to collections (db/schema.ts, beside events at L98) typed `{beforeCreate?: WriteHook, beforeUpdate?: WriteHook}`; export WriteHook type. New lib/hooks.ts: `callWriteHook(project, collection, hook, envelope)` — HMAC-sign body with projects.webhookSigningSecret (reuse the exact header format from lib/webhook.ts:38-43) plus `x-agentx-hook: 1`, `AbortSignal.timeout(hook.timeoutMs ?? 3000)`, 256KB response cap, parse `{ok, data?, error?, code?}`, return a discriminated result {proceed|replace|reject|unavailable}; always insert a webhook_deliveries row (event `hook.before_create|hook.before_update`, attempts '1', payload = request envelope + response summary). Wire into lib/entries.ts: createEntry after validate() (L134) and updateEntry after patch validation (L189; envelope includes the `current` pre-image already fetched at L193-201); `when` clauses evaluated via matchesClauses against candidate (create) / merged (update) data; on `replace`, re-run validate() on returned data before verifyRefs. bulkCreateEntries: enabled beforeCreate hook → throw E_VALIDATION with hint 'this collection has a beforeCreate hook — use create_entry per item, or set hooks.beforeCreate.disabled'. lib/collections.ts: extend DefineCollectionInput + new validateHooks() beside validateAccessAndEvents (L94) — http(s) url, mode/onError enums, timeoutMs bounds, `when` via buildWhere, require projects.webhookSigningSecret set (E_VALIDATION, hint 'generate the signing secret in project settings first'); persist in values + onConflictDoUpdate set (L337-365). lib/error-codes.ts: append E_HOOK_REJECTED ('the collection's before-write hook rejected this write — the message carries the hook's reason; fix the data or ask the operator about the hook') and E_HOOK_FAILED ('the before-write hook endpoint could not be reached or answered malformed — check get_deliveries for the attempt; the operator can set onError:\"allow\" or disable the hook'). lib/events.ts refireDelivery (L155): reject rows whose event starts with 'hook.' (E_VALIDATION, 'before-write hook consults cannot be replayed — re-attempt the write instead'). lib/mcp/tools.ts: hooks block in defineArgs (zod) + define_collection inputSchema (JSON), describe_collection output includes hooks, update BOUNDARIES (L46) to name the capability ('custom validation/transformation runs on YOUR endpoint via hooks — AgentX never hosts code'), bulk_create_entries and update_entry_if descriptions state their hook exclusions. New scripts/smoke/hooks.test.mjs using the startWebhookReceiver idiom (scripts/smoke/helpers.mjs:153): assert transform-then-revalidate, E_HOOK_REJECTED, fail-closed E_HOOK_FAILED on dead endpoint, fail-open proceeds + logs failed row, invalid transform output (unknown key) still 422s via MCP and delivery POST.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\db\\schema.ts",
+          "C:\\dev\\AgentX\\lib\\hooks.ts (new)",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\collections.ts",
+          "C:\\dev\\AgentX\\lib\\error-codes.ts",
+          "C:\\dev\\AgentX\\lib\\events.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\hooks.test.mjs (new)"
+        ],
+        "surface": "define_collection gains `hooks` param; describe_collection returns hooks; create_entry/update_entry (MCP), admin saveEntry, and delivery POST/PATCH all enforce hooks; two new codes in ERROR_CODES (auto-served by GET /api/mcp); hook outcomes appear in get_deliveries and the existing admin delivery log for free",
+        "size": "M",
+        "dependsOn": [],
+        "migration": "add collections.hooks JSONB (nullable) via `npm run db:push` — repo has no migration files by design"
+      },
+      {
+        "id": "I2",
+        "name": "test_hook dry-run MCP tool",
+        "what": "New MCP tool `test_hook({collection, stage: 'beforeCreate'|'beforeUpdate', data, entryId?})`: validates `data` against the collection schema (partial for beforeUpdate, entryId loading the pre-image), calls the configured hook via lib/hooks.ts, returns {verdict: proceed|replaced|rejected|unavailable, hookResponse (raw, truncated), finalData?, validationOfFinalData} WITHOUT writing; logs with event 'hook.test'. Description states it is side-effect-free on AgentX but DOES call the tenant endpoint. Follows the 3-step new-tool recipe: ToolDef in TOOL_DEFS (lib/mcp/tools.ts:83), case in callTool switch (L653), no new error codes. Gives agents the self-repair loop rule 2 wants before pointing production writes at an endpoint.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\lib\\hooks.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\hooks.test.mjs"
+        ],
+        "surface": "new MCP tool test_hook (27th tool)",
+        "size": "S",
+        "dependsOn": [
+          "I1"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "I3",
+        "name": "Computed fields — create-time vocabulary",
+        "what": "FieldBase gains `computed?: ComputedSpec` (lib/field-types.ts:21-44): {fn:'slugify', from} | {fn:'template', template} | {fn:'now', on?: 'create'|'always'} | {fn:'uuid'}. Meta-validation in fieldDefSchema superRefine (lib/validation.ts:59-93): slugify/template/uuid only on type text, now only on date, from/template {{fields}} must name existing non-computed siblings (no chains/cycles), computed excludes required/requiredIf. New lib/computed.ts: evaluateComputed(fields, data, 'create') — slugify (lowercase, NFD-strip diacritics, non-alnum→'-', collapse/trim), template reusing the {{field}} interpolation idiom from lib/events.ts:69, now→ISO string, uuid→crypto.randomUUID. buildEntrySchema (lib/validation.ts:198-236): reject a client-supplied computed key with 'field \"X\" is computed (fn) — the value is derived server-side, omit it'. createEntry (lib/entries.ts:134): stamp computed AFTER the hook result is validated, then final validate() + verifyRefs + insert — computed output obeys min/max and unique partial indexes (slug collisions surface via existing rethrowUnique L120-126). Updates: computed fields frozen this increment (patch containing one is rejected by the same schema rule). Document in FIELD_TYPE_SPECS + COMMON_FIELD_CONFIG (served verbatim by list_field_types) and define_collection description. Admin: components/EntryForm.tsx renders computed fields as a read-only value row (no input, so coerceFormData never submits them). Smoke: computed stamp via MCP create + delivery POST, client-supplied computed key 422s, unique slug collision yields the existing 'value already exists' error.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\field-types.ts",
+          "C:\\dev\\AgentX\\lib\\validation.ts",
+          "C:\\dev\\AgentX\\lib\\computed.ts (new)",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\components\\EntryForm.tsx",
+          "C:\\dev\\AgentX\\scripts\\smoke\\computed.test.mjs (new)"
+        ],
+        "surface": "list_field_types documents `computed`; define_collection accepts it inside field defs; create_entry / delivery POST / admin create all stamp values; admin form shows computed fields read-only",
+        "size": "M",
+        "dependsOn": [],
+        "migration": "none (computed lives inside the existing fields JSONB)"
+      },
+      {
+        "id": "I4",
+        "name": "Computed recompute on update",
+        "what": "Extend lib/computed.ts with phase 'update': recompute slugify/template when any source field is present in the validated patch (recomputed value merged into the patch before the DB update in updateEntry, lib/entries.ts:204); {fn:'now', on:'always'} restamps on every update; uuid and now(on:'create') stay frozen. updateEntryIf explicitly does NOT recompute (single-statement CAS — stated in its tool description, same boundary as hooks). Update FIELD_TYPE_SPECS wording ('recomputed when a source field changes'). Smoke: update title → slug changes; update unrelated field → slug stable; CAS update → slug untouched.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\computed.ts",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\field-types.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\computed.test.mjs"
+        ],
+        "surface": "update_entry (MCP), admin edit, delivery PATCH recompute; update_entry_if description states it skips recompute",
+        "size": "S",
+        "dependsOn": [
+          "I3"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "I5",
+        "name": "Hooks on bulk_create_entries",
+        "what": "Replace I1's bulk guard: bulkCreateEntries (lib/entries.ts:386-438) runs the beforeCreate hook per item with bounded concurrency (5 in-flight, plain promise pool in lib/hooks.ts) BEFORE the single multi-row insert; per-item results gain E_HOOK_REJECTED/E_HOOK_FAILED outcomes alongside existing per-item validation errors, and only hook-passing items enter the insert (the insert itself keeps its existing all-or-nothing semantics for unique violations). Each item's hook call logs its own webhook_deliveries row. bulk_create_entries description updated: hooks run per item, worst-case latency = ceil(n/5) * timeoutMs, 100-item cap unchanged. Smoke: mixed batch where the hook rejects some items — rejected items report E_HOOK_REJECTED, others insert.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\hooks.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\hooks.test.mjs"
+        ],
+        "surface": "bulk_create_entries works on hooked collections with per-item hook outcomes (replaces the I1 E_VALIDATION guard)",
+        "size": "S",
+        "dependsOn": [
+          "I1"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "I6",
+        "name": "Composition guide in the tool surface",
+        "what": "Make the composition story self-describing where agents actually look: get_project_info gains a `compute` section ('custom logic runs on YOUR infrastructure: before-write hooks = sync validate/transform; events = async webhooks to orchestrate; write back via delivery API or MCP with idempotencyKey / update_entry_if; AgentX never hosts or evaluates tenant code — no expressions, no read-path hooks, no sync calls >5s'); docs/hooks.md with the exact request envelope, signature-verification snippet (Node; note it matches event webhooks), response contract, and loop-avoidance guidance (x-agentx-hook header); get_client_code includes a hook-endpoint verification stub when the project has hooks configured. Pure description/doc changes — no behavior.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\docs\\hooks.md (new)"
+        ],
+        "surface": "get_project_info payload, get_client_code output, repo docs",
+        "size": "S",
+        "dependsOn": [
+          "I1"
+        ],
+        "migration": "none"
+      }
+    ],
+    "invariantCompliance": "Rule 1 (declarative + self-describing): hooks are collection JSONB config and computed is field config — both fully visible via describe_collection and list_field_types; define_collection's description and the shared BOUNDARIES constant (lib/mcp/tools.ts:46) are updated to state the new capability AND its edges out loud (one hook per stage, 5s cap, no read hooks, CAS/bulk exclusions); test_hook makes hook behavior probeable without side effects. Rule 2 (machine-readable errors): E_HOOK_REJECTED carries the tenant endpoint's own error text so the agent repairs the data; E_HOOK_FAILED's hint names the exact knobs (get_deliveries for the attempt, onError:'allow', disabled:true); a client-supplied computed key fails with the field name and 'derived server-side, omit it'; all new codes are appended to ERROR_CODES and thus auto-served by GET /api/mcp. Rule 3 (secrets are references): hook config stores only a URL; signing uses projects.webhookSigningSecret resolved server-side at call time via the same code path as event webhooks; nothing secret ever appears in tool input, tool output, or the hooks JSONB — and requiring the secret before hooks can be defined means the tenant can always authenticate AgentX. Rule 4 (destructive = plan + confirm): adding/disabling hooks and computed specs is reversible config, not data destruction, so no new confirm gate is invented; removing a computed field goes through the existing diffFields plan+confirm path unchanged; refire of hook log rows is refused rather than silently replayed. Rule 5 (strict validation never weakens): the hook runs BEFORE validation, never instead of it — transform output is re-parsed by buildEntrySchema (strict, unknown keys rejected) + verifyRefs + DB unique indexes, and computed values are stamped after the hook and validated by the same valueSchemaFor path, so no input — client, agent, or tenant endpoint — reaches the entries table without the one definition of 'valid'; reads, per-field publicRead projection, and publicFilter are untouched; no raw SQL is introduced anywhere.",
+    "crossGapDependencies": [
+      "Durable pg-backed job queue (time-flow / events gap): fail-open hook failures are only logged in v1; an automated 'quarantine and re-consult' sweep, or async after-write hooks with retries, would ride that queue rather than new machinery here.",
+      "transact([ops]) (business-logic ladder gap): per-op hook invocation order and abort semantics inside a transaction must be defined by that design — note the neon-http driver has no interactive transactions, so transact owns its own atomicity strategy and hooks must run in its pre-flight phase, before any statement executes.",
+      "Render migration (infra gap): hooks read collection config through the existing unstable_cache'd getCollection — whatever cache replacement the Render move chooses covers hooks automatically; nothing here adds a new Next-specific cache."
+    ],
+    "risks": [
+      "Synchronous hook latency rides inside the serverless request budget (Netlify ~10s): one 5s-max hook plus the normal write leaves headroom, but bulk (I5) can approach the ceiling — the tool description states the worst-case math, and the 100-item cap plus concurrency-5 pool bounds it; verify against Render's timeout when migrating.",
+      "Fail-open ('allow') admits writes the tenant endpoint would have rejected during an outage; mitigated by the fail-closed default and a webhook_deliveries row per skipped consult, but there is no automated reconciliation until a jobs runner exists.",
+      "Write-back recursion: a hook endpoint that synchronously writes to the same collection re-triggers the hook; mitigated by the x-agentx-hook header and docs (I6), not by an automatic loop-breaker — same posture as today's event-webhook loops.",
+      "webhook_deliveries becomes a three-shape log (webhooks, email:*, hook.*) — existing consumers discriminate on url prefix only; I1 must audit listDeliveries consumers (admin settings log, get_deliveries) to render hook rows sanely, and refireDelivery must reject them.",
+      "Deterministic computed slugs on unique fields collide (two entries titled 'Hello'): surfaces as the existing 'value already exists' error, which is honest but means agents/forms need a retry-with-different-input strategy; consider a slugify uniqueSuffix option later if it bites.",
+      "Hook sees pre-computed candidate data (computed stamps after transform): a tenant endpoint expecting the final slug in the envelope will be surprised — the envelope docs (I6) must state field-stamping order explicitly.",
+      "TOOL_DEFS hand-written JSON schema and the zod twins are maintained separately (known drift gotcha) — I1/I2 each add both sides, but smoke tests exercise only the zod path; a mismatch would surface only to MCP clients reading inputSchema."
+    ]
+  },
+  "openMinor": [
+    {
+      "severity": "minor",
+      "issue": "The admin delivery log renders a refire form for every row unconditionally (app/admin/[projectId]/settings/page.tsx:140) and refireDeliveryAction swallows all errors by design (actions.ts:41-45, 'fire-and-forget no-op on failure' per the admin-ui idiom). Once hook.* and hook.test rows land in webhook_deliveries, operators get a refire button that silently does nothing — the E_VALIDATION from the new refireDelivery guard is invisible.",
+      "suggestedFix": "In I1, hide or disable the refire button for rows whose event starts with 'hook.' in settings/page.tsx (a one-line conditional on d.event), and render hook rows with a distinct label so the three-shape log (webhook / email:* / hook.*) reads sanely. Add the settings page to I1's filesTouched."
+    },
+    {
+      "severity": "minor",
+      "issue": "beforeUpdate transform semantics are under-specified in a way every implementer and every tenant endpoint immediately needs answered: is envelope.candidate.data the raw patch or the merged {...current.data, ...patch}? Does a transform response's data replace the patch (inheriting the shallow-merge gotcha — the hook can never unset a key) or the full entry data (able to clobber fields the client never touched)? And is the re-validation partial=true or full? The design only says 're-run validate() on returned data'. Whichever choice is made changes what tenant hook code must return, so it cannot be left to the implementer's taste.",
+      "suggestedFix": "Specify in I1: candidate.data = the validated patch (current supplied separately for context, matching the existing update pre-image idiom); transform data replaces the patch and is re-validated with partial=true; unsetting keys is out of scope (same as update_entry today, lib/entries.ts:204 shallow merge). State this explicitly in the I6 envelope docs and in the define_collection hooks description."
+    }
+  ]
+}

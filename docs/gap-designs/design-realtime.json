@@ -1,0 +1,199 @@
+{
+  "design": {
+    "gap": "GAP H — Realtime: change-feed endpoint (GET /v1/changes?since=cursor), SSE streaming with graceful poll degrade, and positioning relative to existing webhooks. No websockets; HTTP only; host-agnostic (Netlify today, Render likely).",
+    "approach": "Mechanism: a dedicated append-only `entry_changes` table, written inline (not deferred) by the five existing mutation paths in lib/entries.ts (createEntry L156, updateEntry L216, updateEntryIf L316, deleteEntry L339, bulkCreateEntries) immediately after the entry write. Each row: bigserial `seq` (the cursor key), projectId (FK cascade), collectionId (plain uuid, deliberately NOT an FK — see collection-delete handling below), collectionName (captured at write time, audit_log precedent), entryId, kind created|updated|deleted, `data` = full entry snapshot at event time (post-change for create/update, pre-delete for delete), `prevData` (plain updates only — updateEntry already holds `current.data` at lib/entries.ts:193-204; CAS stores null), `changedFields`, and — the fix for retroactive exposure — a `vis` jsonb capturing WRITE-TIME visibility: {fields: publicRead field names then, pf: snapshot matched publicFilter then, prevPf: prevData matched then (updates), read: access.read then, ownerField: then}. The writer already holds the collection row in every mutation path, so this costs one matchesClauses call, no extra query. We do NOT extend audit_log: it keys on collectionName only, its rows are droppable by contract (lib/audit.ts:12-33), and it carries no snapshot to gate against.\n\nRead side: GET /api/v1/changes?since=<cursor> (\"changes\" joins RESERVED_NAMES; static route beats [collection]). Privacy is enforced at read time as the INTERSECTION of write-time and current visibility — broadening is never retroactive, narrowing always applies. Concretely per row: (1) fields projected = vis.fields ∩ current publicRead names — a field flipped private→public exposes only values written after the flip; a field flipped public→private stops leaking through old rows (both directions now closed); changedFields filtered the same way; empty intersection ⇒ row dropped. (2) Row gates must pass BOTH then and now: vis.pf must be true AND the snapshot must match the CURRENT publicFilter via matchesClauses (lib/query.ts:133); loosening or removing publicFilter cannot resurrect history. (3) Identity gate is the stricter of then/now: the request's verified user must satisfy the write-time access config (vis.read + vis.ownerField against the snapshot) AND the current one — access.read broadened owner→public still serves pre-flip rows only to their then-owner. Tombstone semantics survive: an update whose new snapshot fails gates but whose prevData passed (vis.prevPf + prev intersection non-empty) emits kind:\"deleted\"; deletes of never-visible rows are dropped, mirroring the 404-not-403 discipline. Because broadening no longer exposes history, no new plan+confirm gate on define_collection is needed. Omitted `since` bootstraps {changes:[], cursor:<latest>}; responses ride cachedJson for ETag/304; a 2-second seq hold-back (created_at <= now() - interval '2 seconds') keeps the cursor monotone under bigserial assignment/visibility inversion; retention is a documented 30 days via probabilistic on-write prune until the jobs runner exists.\n\nCollection deletion now converges instead of silently wiping the feed: deleteCollection (lib/collections.ts:419) first appends kind:\"deleted\" tombstone rows for every entry that was delivery-visible at that moment (chunked multi-row inserts of ~500, computed with the same vis capture; insert failures ABORT the delete so tombstones are never lost), then performs the delete. Because collectionId carries no FK, prior feed rows and the new tombstones survive; the H2 reader drops created/updated rows whose collection no longer resolves (their tombstones follow later in the seq) and serves orphaned tombstones using write-time vis alone (no data payload, existence only for rows that were visible). planDeleteCollection's counted plan gains one line — \"N tombstone rows will be appended to the change feed\" — so the confirm gate discloses it (Rule 4). Retention prunes the orphans like any other row.\n\nSSE rides the same read path: GET /api/v1/changes/stream holds a ReadableStream, server-side polls entry_changes every ~2s, emits `event: change` frames with `id:` = cursor, heartbeats every 15s, closes at a bounded lifetime (CHANGES_STREAM_MAX_MS: ~55s Render, ~8s on Netlify where it degrades to long-poll; the polling endpoint is the always-works floor and both say so in their self-description). Auth stays in headers — generated client code uses fetch-streaming with ?since resume, never token-in-URL. This fits AgentX: pure declarative data-plane, no tenant code, one new pg table, the existing where/gate/projection vocabulary reused verbatim, every capability surfaced through tool descriptions (get_changes; get_project_info advertises URLs). Webhooks remain push-to-your-server; the feed is pull-to-any-client — same mutations, same emit region, complementary transports.",
+    "keyDecisions": [
+      {
+        "decision": "Privacy is the read-time INTERSECTION of write-time visibility (per-row `vis` metadata: publicRead names, publicFilter match, access mode + ownerField) and current visibility — broadening is never retroactive",
+        "rationale": "Projecting with current defs alone closes only the privatize-later direction; the converse (publicRead false→true, publicFilter loosened, access.read owner→public, ownerField retarget) would instantly expose 30 days of history including pre-delete snapshots, without ever tripping the confirm gate (diffFields only flags removed/retyped, lib/collections.ts:151-170). Storing then-visibility per row and requiring pass-then AND pass-now makes retroactive exposure structurally impossible while narrowing still applies immediately — Rule 5 holds in both directions.",
+        "alternativeRejected": "Per-collection feed floor seq advanced on any visibility-broadening redefine — rejected because it throws away legitimately-visible pre-flip history for compliant clients and needs a separate reset-signaling mechanism; also rejected making broadening redefines plan+confirm as the PRIMARY defense — that turns a structural guarantee into operator vigilance and changes define_collection semantics beyond this gap (intersection needs neither)."
+      },
+      {
+        "decision": "entry_changes.collectionId is a plain uuid (no FK cascade; projectId keeps its cascade), collectionName is captured at write time, and deleteCollection appends per-entry tombstones for delivery-visible entries BEFORE deleting — tombstone insert failure aborts the delete",
+        "rationale": "An FK cascade would wipe every feed row for a deleted collection with zero signal — the exact divergence the tombstone machinery exists to prevent; synced clients would keep the collection's data forever. Tombstones-first ordering is safe without transactions on neon-http: spurious tombstones after an aborted delete are harmless (clients re-fetch, entry still exists), lost tombstones are not. Cost is bounded by the entryCount planDeleteCollection already computes, and the plan discloses it (Rule 4).",
+        "alternativeRejected": "(c) document non-convergence and require full reconcile — rejected: it silently breaks the sync-primitive positioning the whole gap exists for; (b) reader-synthesized tombstones from surviving rows alone — insufficient, because entries created and deleted between polls would need the reader to reconstruct visibility with no collection defs; explicit tombstone rows carry their own write-time vis."
+      },
+      {
+        "decision": "Dedicated entry_changes table with per-row data snapshot, not an extension of audit_log",
+        "rationale": "audit_log keys on collectionName (orphans on rename), its rows are droppable by contract (defer + swallow), and it has no snapshot to evaluate publicFilter/owner gates against — especially for deletes, where the entries row is gone. A feed that silently loses or leaks rows is worse than no feed.",
+        "alternativeRejected": "Add data/collectionId columns to audit_log and serve the feed from it — rejected because it couples two different durability contracts and bloats every audit row with snapshots the audit UI never needs."
+      },
+      {
+        "decision": "Inline (same-request, post-write, error-swallowed) change insert rather than defer(), plus a 2s read-side hold-back on bigserial seq",
+        "rationale": "defer() rows can be lost on crash — acceptable for audit, not for a sync cursor. Inline single-statement insert on neon-http shrinks the seq-assigned-to-visible window to milliseconds; the 2s hold-back then guarantees a monotone cursor never skips a late-committing row. Boring pg-native ordering, no LISTEN/NOTIFY (impossible on the HTTP driver anyway).",
+        "alternativeRejected": "Transactional outbox (entry write + change row in one transaction) — impossible on drizzle neon-http (no interactive transactions, db/index.ts); switching drivers is out of scope for this gap."
+      },
+      {
+        "decision": "Updates that remove a row from visibility emit kind:'deleted' tombstones (gated on prevData having passed write-time AND current gates); deletes of never-visible rows are suppressed",
+        "rationale": "Without tombstones a client's cache diverges permanently when publicFilter stops matching; without suppression the feed confirms existence of rows the single-entry route deliberately 404s ('never confirm existence').",
+        "alternativeRejected": "Emit raw kinds and let clients re-fetch and interpret 404s — rejected: it turns every update into a client round-trip and still leaks existence of hidden rows through the notification itself."
+      },
+      {
+        "decision": "SSE auth stays in headers; generated client code uses fetch-streaming (ReadableStream reader) with ?since resume, not native EventSource",
+        "rationale": "EventSource cannot set Authorization/X-User-Token headers; the only alternative is tokens in query strings, which lands secrets in server/proxy logs. fetch-based SSE consumption is standard and honors rule 3's spirit.",
+        "alternativeRejected": "?token= query parameter for EventSource compatibility — rejected as a secret-in-URL anti-pattern."
+      },
+      {
+        "decision": "Project-level /v1/changes (with optional ?collections=a,b) instead of per-collection /v1/{collection}/changes",
+        "rationale": "One poll/stream covers a whole site; per-collection gates still apply per group of rows. Explicitly requesting a gated collection returns the gate's 401/503 with the existing envelope; unrequested gated collections are silently excluded.",
+        "alternativeRejected": "Per-collection endpoint — forces N concurrent polls/streams per site and gives no cross-collection cursor, undermining the sync-primitive use."
+      }
+    ],
+    "increments": [
+      {
+        "id": "H1",
+        "name": "entry_changes log + writer with write-time visibility capture + MCP get_changes tool",
+        "what": "Add entryChanges table to db/schema.ts: id uuid pk, seq bigserial (indexes (project_id, seq) and (collection_id, seq)), projectId FK cascade, collectionId uuid PLAIN (no FK — rows must outlive collection deletes), collectionName text (captured at write time), entryId uuid, kind text 'created'|'updated'|'deleted', data jsonb (snapshot at event time), prevData jsonb null (plain updates only), changedFields jsonb string[] null, vis jsonb ({fields: string[] publicRead names at write time, pf: boolean snapshot-matched-publicFilter-then, prevPf?: boolean, read: 'public'|'authenticated'|'owner', ownerField?: string} — computed via existing matchesClauses from the collection row every mutation path already holds), createdAt timestamptz. New lib/changes.ts: computeVis(collection, data, prevData?); recordChange(row) — single INSERT, try/catch-swallowed with console.error; recordChanges(rows[]) multi-row for bulk; listChanges(projectId, {since?, collectionId?, limit<=500}) — WHERE seq > since AND created_at <= now() - interval '2 seconds', ORDER BY seq, limit+1 hasMore idiom; encodeChangeCursor/decodeChangeCursor (base64url {s: seq}, decode throws ValidationError with fix hint mirroring lib/entries.ts:456-472); maybePrune(projectId) — ~1% probability per write, defer()'d bounded DELETE of rows older than 30 days. Call recordChange inline in lib/entries.ts right after each entry write, before the defer() side-work: createEntry (~L156), updateEntry (~L216, prevData=current.data), updateEntryIf (~L316, prevData null), deleteEntry (~L339, data=deleted.data), bulkCreateEntries (one multi-row insert). Add MCP tool get_changes to TOOL_DEFS + callTool switch: args {collection?, since?, limit?}, zod twin, returns full unprojected rows + nextCursor + hasMore (MCP is full-trust like query_entries; description states: 'append-only change feed; this tool shows all fields — the delivery endpoint applies write-time-AND-current publicRead/publicFilter; retention 30 days; cursor from a previous page'). Bad cursor ⇒ E_VALIDATION with the exact hint. Smoke: create/update/delete over MCP, page get_changes, assert kinds/order/cursor/prevData/vis capture.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\db\\schema.ts",
+          "C:\\dev\\AgentX\\lib\\changes.ts",
+          "C:\\dev\\AgentX\\lib\\entries.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\changes.test.mjs"
+        ],
+        "surface": "New MCP tool get_changes (visible in tools/list and GET /api/mcp); new entry_changes table; no delivery endpoint yet",
+        "size": "M",
+        "dependsOn": [],
+        "migration": "npm run db:push adds entry_changes (bigserial seq + two indexes, no new FKs beyond projectId); no existing tables change, smoke helpers.mjs unaffected"
+      },
+      {
+        "id": "H2",
+        "name": "GET /api/v1/changes polling endpoint with then-AND-now gating",
+        "what": "New app/api/v1/changes/route.ts (static segment beats [collection]; add 'changes' to RESERVED_NAMES in lib/validation.ts:126-135). Auth: bearer project token via resolveProjectId (either scope). Params: since (opaque cursor; omitted ⇒ bootstrap {changes:[], cursor:<latest seq>}), collections=a,b (unknown/non-exposed name ⇒ 422 naming publicly exposed collections), limit (clamped 1..500, clamp echoed). Per collection group: skip if current publicFields()==0; gateRead with X-User-Token — explicitly-requested collection failing its CURRENT gate ⇒ its 401/503 deliveryError, unrequested ⇒ silently excluded. Per row, INTERSECTION gating in projectChangeForDelivery (lives in lib/changes.ts so H4 reuses it): fieldsOut = row.vis.fields ∩ current publicRead names (empty ⇒ drop); row must satisfy vis.pf===true AND matchesClauses(current publicFilter, snapshot) AND the stricter identity gate — verified user passes BOTH the write-time access config (vis.read/vis.ownerField vs snapshot) and the current one; created/updated passing ⇒ {cursor, collection, id, kind, at, changedFields ∩ fieldsOut, data: fieldsOut projection (refs NOT resolved — raw uuids, documented)}; updated failing but prevData passing (vis.prevPf + prev intersection) ⇒ kind:'deleted' tombstone; deleted ⇒ tombstone if snapshot passed both gates, else dropped. Rows whose collectionId no longer resolves: created/updated dropped (their tombstones follow later in the seq via H3); kind:'deleted' rows served on write-time vis alone (no data, existence only, collectionName from the row). Cursor always advances past dropped rows. Response {changes, cursor, hasMore} via cachedJson ⇒ ETag/304; errors use the {error, code} envelope. Smoke: seed private field + publicFilter, mutate via MCP, assert projection/tombstones/304/cursor resume; then flip a private field public and loosen publicFilter via define_collection, assert pre-flip rows still hide the field and stay hidden (intersection), post-flip rows show it.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\app\\api\\v1\\changes\\route.ts",
+          "C:\\dev\\AgentX\\lib\\changes.ts",
+          "C:\\dev\\AgentX\\lib\\validation.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\changes-delivery.test.mjs"
+        ],
+        "surface": "New delivery endpoint GET /api/v1/changes (+OPTIONS preflight, CORS_HEADERS, ETag 304); 'changes' becomes a reserved collection name",
+        "size": "M",
+        "dependsOn": [
+          "H1"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "H3",
+        "name": "Collection-delete convergence: tombstones-first delete + disclosed in the plan",
+        "what": "Extend deleteCollection (lib/collections.ts:419): BEFORE any deletion, load the collection's entries in pages and recordChanges kind:'deleted' tombstone rows (chunks of ~500 per multi-row insert) for every entry, each with data=snapshot and vis computed from the collection's final defs — the H2 reader then serves tombstones only for entries that were delivery-visible, suppressing never-visible ones. If any tombstone chunk insert fails, ABORT the delete (throw ValidationError E_INTERNAL-style with retry hint) — spurious tombstones from an aborted delete are harmless (entry still exists; clients re-fetch), lost tombstones are not. Then proceed with existing index-drop + row delete. planDeleteCollection (lib/collections.ts:391) and the delete_collection plan payload (lib/mcp/tools.ts:781-788) gain a changeFeedTombstones count (= entryCount) and one plan sentence: 'N tombstone rows will be appended to the change feed so synced clients converge'. Verify the H2 reader path for orphaned rows (collection unresolvable) against a live delete. Smoke: create collection + visible/hidden entries, sync a client cursor, delete_collection with confirm, assert plan discloses tombstone count, feed emits exactly the visible entries' tombstones after the delete, created/updated rows for the dead collection no longer surface, and retention metadata untouched.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\collections.ts",
+          "C:\\dev\\AgentX\\lib\\changes.ts",
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\changes-collection-delete.test.mjs"
+        ],
+        "surface": "delete_collection plan payload gains changeFeedTombstones count; feed emits per-entry tombstones on collection delete; no new endpoints",
+        "size": "S",
+        "dependsOn": [
+          "H1",
+          "H2"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "H4",
+        "name": "SSE stream with bounded lifetime + Netlify long-poll degrade",
+        "what": "New app/api/v1/changes/stream/route.ts: same auth/params as H2 plus Last-Event-ID header accepted as since. Returns text/event-stream via ReadableStream: loop { listChanges + projectChangeForDelivery every CHANGES_POLL_MS (default 2000); each change ⇒ 'id: <cursor>\\nevent: change\\ndata: <json>\\n\\n' }; ': ping' comment every 15s; at CHANGES_STREAM_MAX_MS (default 55_000; 8_000 when process.env.NETLIFY is set) emit 'event: cursor' with the latest cursor then close cleanly — clients reconnect with ?since or Last-Event-ID. Headers: cache-control no-cache, x-accel-buffering: no, CORS_HEADERS. force-dynamic route. Self-description (H5 text + {transports:['sse','poll']} on the bootstrap response) states: 'stream closes periodically by design; reconnect with the last cursor; GET /v1/changes is the equivalent guaranteed-everywhere poll'. No new tables, no vendor infra. Smoke: fetch-reader consumes the stream while a concurrent MCP update fires, asserts a change frame + clean close + resume-from-id (CHANGES_STREAM_MAX_MS=3000).",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\app\\api\\v1\\changes\\stream\\route.ts",
+          "C:\\dev\\AgentX\\lib\\changes.ts",
+          "C:\\dev\\AgentX\\scripts\\smoke\\changes-sse.test.mjs"
+        ],
+        "surface": "New delivery endpoint GET /api/v1/changes/stream (text/event-stream); env knobs CHANGES_POLL_MS / CHANGES_STREAM_MAX_MS",
+        "size": "M",
+        "dependsOn": [
+          "H2"
+        ],
+        "migration": "none"
+      },
+      {
+        "id": "H5",
+        "name": "Self-description: advertise feed, generate client code, position vs webhooks",
+        "what": "Make the capability visible everywhere an agent or client looks. get_project_info: add urls.changes and urls.changesStream (built from ctx.baseUrl) plus one sentence: 'realtime = pull: poll /v1/changes with the returned cursor (ETag 304 when idle) or consume the SSE stream; push to YOUR server stays events:{webhook} on define_collection'. get_client_code: emit a copy-pasteable poll loop with If-None-Match + cursor persistence, a fetch-streaming SSE consumer with automatic ?since resume and poll fallback, and a documented reconcile rule: 'on gaps, resets, or kind:deleted for a whole collection, do a full list GET'. get_changes/define_collection/delete_collection descriptions cross-reference each other (webhook `when` vs feed completeness; visibility changes never expose pre-change history; collection delete emits tombstones). Admin API page (app/admin/[projectId]/api/page.tsx) lists both endpoints following the existing endpoint-card idiom. Note (docs only, per gap brief): cursor+snapshot+tombstone is the future offline-sync primitive — not designed here. Verify: MCP round-trip asserting get_project_info/get_client_code contain the new URLs, snippet, and reconcile guidance.",
+        "filesTouched": [
+          "C:\\dev\\AgentX\\lib\\mcp\\tools.ts",
+          "C:\\dev\\AgentX\\app\\admin\\[projectId]\\api\\page.tsx",
+          "C:\\dev\\AgentX\\scripts\\smoke\\changes-docs.test.mjs"
+        ],
+        "surface": "Changed MCP tools get_project_info + get_client_code (descriptions + payloads); admin API page section",
+        "size": "S",
+        "dependsOn": [
+          "H2"
+        ],
+        "migration": "none"
+      }
+    ],
+    "invariantCompliance": "Rule 1 (declarative + self-describing): the feed is a platform primitive with zero tenant code; get_changes states its boundaries (full-trust vs delivery projection, 30-day retention, cursor semantics, intersection visibility) in its description; delete_collection's description and plan disclose tombstone emission; H5 makes get_project_info/get_client_code advertise the endpoints, the SSE bounded lifetime, and the reconcile rule in-band. Rule 2 (machine-readable errors): every failure uses the existing envelopes — invalid cursor ⇒ 422/E_VALIDATION with 'pass the cursor from a previous /v1/changes response, or omit since to bootstrap'; unknown ?collections value ⇒ 422 naming exposed collections; gated collection explicitly requested ⇒ the gate's own 401/503; aborted collection delete on tombstone failure returns a retry hint; no new error codes (append-only registry untouched). Rule 3 (secrets are references): no secrets in feed rows; SSE keeps project token and X-User-Token in headers; generated client uses fetch-streaming precisely to avoid token-in-URL. Rule 4 (destructive = plan + confirm): the read surface is read-only; the only deletions are the documented 30-day retention prune (feed rows, never entries) and delete_collection — whose existing counted plan now additionally discloses the N feed tombstones it will append, so the one place the feed intersects a destructive op is inside the existing confirm gate; visibility-broadening redefines need no new confirm gate because the intersection design makes them non-exposing by construction. Rule 5 (strict validation never weakens): write paths unchanged — recordChange runs after buildEntrySchema/verifyRefs; the delivery read enforces per-field publicRead as the intersection of write-time and current visibility (a field is served only if public both then and now — neither privatize-later nor publicize-later leaks history), re-applies publicFilter both then (stored vis.pf) and now (matchesClauses against the snapshot), applies the stricter of then/now identity gates, and never confirms existence of hidden rows (suppression + tombstones mirror 404-not-403); collection deletion converges via explicit tombstones instead of silent FK-cascade data loss; all SQL is parameterized Drizzle over an indexed bigserial — no raw-SQL escape hatch; MCP get_changes bypasses publicFilter exactly as existing MCP reads do, never validation.",
+    "crossGapDependencies": [
+      "Retention sweeping properly belongs on the pg-backed jobs runner from the time-flow gap; H1's probabilistic on-write prune is an explicit stopgap to be replaced by a scheduled job.",
+      "The events-webhooks durable-queue work could later consume entry_changes as its outbox (single write feeding both webhook fan-out and the feed) — schemas are compatible (seq, kind, snapshot, vis) but that unification is that gap's design, not this one's.",
+      "If a durable rate-limit store lands (infra-ops gap), GET /v1/changes and the SSE endpoint are the first read paths that should adopt it; today GETs are unlimited, consistent with the existing delivery API.",
+      "If transact([ops])/versioning work gives updateEntryIf a pre-image (RETURNING old data), the feed's CAS gap closes for free: pass it as prevData (+prevPf) and CAS updates gain tombstone semantics."
+    ],
+    "risks": [
+      "No transactions on the neon-http driver: an entry write can succeed while the inline change insert fails (swallowed) — the feed is near-exact but not guaranteed-complete; sync-minded clients must periodically reconcile with a full list GET (documented in get_client_code).",
+      "Intersection gating depends on vis being captured correctly at every write path — a future mutation path that forgets computeVis silently over-hides (fails closed, but degrades the feed); the 'all mutations flow through lib/entries.ts' invariant is the guard, and the smoke suite asserts vis on every kind.",
+      "Collection delete on very large collections pays O(entryCount) tombstone inserts before the delete (chunked ~500/statement); the plan discloses the count so the operator sees the cost, but a 100k-entry delete becomes a multi-second operation — acceptable at dogfood scale, revisit with the jobs runner.",
+      "Global bigserial seq means cursor values, if decoded, reveal platform-wide write volume through gaps; cursors are opaque base64url which discourages but does not prevent inspection.",
+      "The 2-second hold-back is a latency floor on 'realtime' (worst case ~2s + poll interval); shrinking it reopens the late-commit skip window.",
+      "updateEntryIf has no pre-image, so a CAS update that hides a row from publicFilter produces no tombstone — the row silently stops appearing (documented gotcha until a pre-image exists).",
+      "SSE on Netlify may be buffered or cut by the platform; the 8s bounded lifetime turns it into long-poll, but this must be verified against the deployed @netlify/plugin-nextjs behavior before advertising the stream URL in get_project_info on that host.",
+      "Adding 'changes' to RESERVED_NAMES cannot retroactively rename an existing collection literally named 'changes' — it would be shadowed by the static route; check production data before shipping H2 (dogfood scale makes this cheap).",
+      "Feed payloads do not resolve relation/asset refs (raw uuids); clients wanting labels must re-fetch the entry — a deliberate cost/simplicity trade documented in the endpoint description.",
+      "Snapshot-per-change plus vis metadata increases write amplification on large entries; retention bounds total size, but very hot collections may warrant a per-collection feed opt-out knob later."
+    ]
+  },
+  "openMinor": [
+    {
+      "severity": "minor",
+      "issue": "The rationale for the CAS tombstone gap is factually wrong. The design says updateEntryIf 'has no pre-image (single-statement CAS)... impossible on drizzle neon-http' and ships a documented divergence hole (a CAS update that hides a row from publicFilter/owner never produces a tombstone, so client caches silently rot). But Postgres returns the pre-image in ONE statement via a self-join: UPDATE entries SET ... FROM entries old WHERE entries.id = old.id AND <existing CAS conditions> RETURNING entries.data, old.data AS prev_data — fully compatible with the neon-http driver and the existing single-statement atomicity at C:\\dev\\AgentX\\lib\\entries.ts:250-326.",
+      "suggestedFix": "In H1, extend updateEntryIf's UPDATE with a self-join FROM clause and RETURNING old.data, pass it as prevData to recordChange (and incidentally to emitEntryEvent at entries.ts:316, closing the same gap in webhook payloads). Remove the 'CAS updates have no tombstone' caveat from the design and docs."
+    },
+    {
+      "severity": "minor",
+      "issue": "Cross-tenant metadata leak through the global bigserial cursor. The cursor is base64url({s: seq}) — trivially decodable, not meaningfully opaque — and the bootstrap response hands the CURRENT global sequence value to any delivery-token holder. Delivery tokens are browser-exposed by design (wildcard CORS, lib/cors.ts). Any site visitor of any tenant can therefore sample platform-wide write volume over time and compute their own project's share of it. The risk register acknowledges this but ships it as-is.",
+      "suggestedFix": "Seal the cursor: HMAC or AES-GCM the seq with a server-side key (CONNECTOR_MASTER_KEY-derived or per-project webhookSigningSecret) so cursors are verifiable-opaque, and reject tampered cursors with the existing E_VALIDATION hint. Alternatively maintain a per-project sequence via a single-statement counter UPSERT ... RETURNING (neon-http compatible), which also removes cross-tenant gaps from cursor arithmetic."
+    },
+    {
+      "severity": "minor",
+      "issue": "H3's 'Last-Event-ID header accepted as since' will fail cross-origin: CORS_HEADERS access-control-allow-headers (C:\\dev\\AgentX\\lib\\cors.ts:10) is 'authorization, content-type, x-user-token, if-none-match' — a browser fetch sending Last-Event-ID triggers a preflight that the current OPTIONS response rejects.",
+      "suggestedFix": "Add last-event-id to CORS_HEADERS allow-headers in the H3 increment (it is shared by all delivery routes, so note it in filesTouched: C:\\dev\\AgentX\\lib\\cors.ts), or drop the Last-Event-ID support claim and standardize on ?since= (which the generated client already uses)."
+    },
+    {
+      "severity": "minor",
+      "issue": "Collection deletion permanently corrupts feed clients: entry_changes rows FK-cascade with the collection, so all its history (including any pending tombstones) vanishes, no tombstones are ever emitted for its entries, and planDeleteCollection (C:\\dev\\AgentX\\lib\\collections.ts:391) doesn't mention feed rows in the confirm plan. A client that synced a collection keeps ghost entries forever; if a same-named collection is later recreated, new rows appear under the same collection name in the feed with no signal that the old dataset is invalid.",
+      "suggestedFix": "Emit a single 'collection_deleted' change row on deleteCollection (projectId FK, collectionId nullable or set null instead of cascade for change rows, kind:'collection_deleted', collection name in payload) so clients drop their local dataset; include the entry_changes row count in the delete plan. Document that clients must treat it as 'purge everything under this collection name'."
+    },
+    {
+      "severity": "minor",
+      "issue": "New timing metadata leak: an update that touches ONLY private fields still emits a feed row (snapshot passes gates; changedFields filters to empty; projected data unchanged). Today the delivery API exposes no updatedAt and no signal at all that a hidden field changed; the feed broadcasts the existence and timing of private-field mutations on every visible row to anyone with the delivery token.",
+      "suggestedFix": "In projectChangeForDelivery, drop 'updated' rows whose filtered changedFields is empty AND whose publicRead projection of data equals the projection of prevData AND whose gate outcome is unchanged (both pass). When prevData is null (CAS) fall back to the empty-filtered-changedFields check alone. Document that MCP get_changes still shows these rows (full trust)."
+    },
+    {
+      "severity": "minor",
+      "issue": "H3's stated verification is not executable as written: the smoke suite runs against a pre-started server (ensureServer at scripts/smoke/helpers.mjs:13 refuses to start one; SMOKE_BASE may be prod), so 'run with CHANGES_STREAM_MAX_MS=3000' cannot inject env into the server process. The clean-close + cursor-frame assertion needs the short lifetime, so H3 fails the 'verifiable via live round-trip' bar as specced.",
+      "suggestedFix": "Make the lifetime per-request overridable within a server-side cap (e.g. ?maxMs= clamped to min(requested, CHANGES_STREAM_MAX_MS)) — this is also useful to real clients and self-describing; or have the smoke test assert only the change frame and heartbeat, closing client-side, and accept weaker coverage of the close/resume path."
+    },
+    {
+      "severity": "minor",
+      "issue": "Field renames corrupt historical feed rows. defineCollection's rename backfill atomically rewrites entries.data keys (lib/collections.ts:372-378) but not entry_changes snapshots. After a rename, H2's read-time projection 'using CURRENT field defs' finds no publicRead key matching old snapshots, and matchesClauses returns false for unknown fields (lib/query.ts gotcha) — so pre-rename rows silently project to empty data or degrade into spurious tombstones/drops for up to 30 days. The design invokes rename-safety as a reason to reject audit_log but doesn't apply the same scrutiny to its own snapshots.",
+      "suggestedFix": "Either extend the rename backfill to also jsonb-key-move entry_changes.data/prevData for the collection (same single-statement UPDATE pattern), or document that a rename invalidates feed history and have the reader treat unmatchable snapshot keys as 'client should reconcile' rather than tombstone. Cheapest honest option: state it as a documented gotcha in get_changes' description."
+    },
+    {
+      "severity": "minor",
+      "issue": "SSE amplification with a public credential and no limits: delivery tokens ship in browser code by design, and each /v1/changes/stream connection pins a function invocation polling Postgres every 2s for up to CHANGES_STREAM_MAX_MS, with no rate limit and no concurrent-stream cap (existing rate limiting covers POSTs only, lib/ratelimit.ts call sites). On Netlify this is function-seconds billing driven by anyone holding the public token; the cross-gap note defers this but H3 ships the exposure before any mitigation exists.",
+      "suggestedFix": "Add a cheap in-process guard in H3 itself (per-project concurrent-stream counter or reuse rateLimit() on stream open with its own key prefix) rather than deferring entirely to the infra-ops gap; the MemoryStore caveat applies but matches the platform's current posture on POSTs."
+    },
+    {
+      "severity": "minor",
+      "issue": "Prune has no supporting index: maybePrune deletes 'rows older than 30 days' but H1's schema specifies only (project_id, seq) and (collection_id, seq) indexes — a createdAt-predicate DELETE is a seq-scan on the busiest table in the system, run from inside write requests via defer().",
+      "suggestedFix": "Prune by seq instead of createdAt (seq is monotone with time: resolve the cutoff seq once via a single indexed lookup on created_at limit 1, or track it) or add a plain created_at index to the H1 schema. Also state the DELETE's bound (LIMIT via id-subquery) since Postgres DELETE has no LIMIT."
+    },
+    {
+      "severity": "minor",
+      "issue": "Every entry mutation gains one awaited sequential HTTP round-trip to Neon (inline recordChange on the neon-http driver) before the response returns — roughly doubling write latency on the hot path for a feature most projects won't consume. The durability rationale is sound, but the cost is unstated in the design and there is no opt-out.",
+      "suggestedFix": "Acknowledge the latency cost explicitly in H1 and note the already-identified future knob (per-collection feed opt-out, listed only under risks) as the mitigation; alternatively measure in the H1 smoke run and record the number, since 'inline vs defer' was the design's most consequential trade."
+    }
+  ]
+}
