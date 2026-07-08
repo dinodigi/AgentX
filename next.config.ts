@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["@modelcontextprotocol/sdk", "ws"],
+  serverExternalPackages: ["@modelcontextprotocol/sdk", "ws", "sharp"],
   async headers() {
     return [
       {

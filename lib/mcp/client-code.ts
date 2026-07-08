@@ -42,7 +42,7 @@ function readType(f: FieldDef): string {
     case "enum":
       return (f.options ?? []).map((o) => JSON.stringify(o)).join(" | ") || "string";
     case "asset":
-      return "{ id: string; url: string }";
+      return "{ id: string; url: string; contentType: string }";
     case "relation":
       return "{ id: string; label: string }";
   }

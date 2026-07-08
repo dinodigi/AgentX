@@ -717,7 +717,9 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "list_assets",
     description:
       "List uploaded assets (id, filename, contentType, size, url). Supports limit/offset " +
-      "(default 100, max 500); returns {assets, limit, offset, hasMore, nextOffset}.",
+      "(default 100, max 500); returns {assets, limit, offset, hasMore, nextOffset}. Raster " +
+      "images support on-demand resizing at GET /v1/assets/{id}/image?w=&h=&format= (see " +
+      "get_project_info deliveryApi.images).",
     inputSchema: {
       type: "object",
       properties: {
@@ -1147,6 +1149,15 @@ export async function callTool(
               "POST {deliveryBase}/{collection}/uploads — multipart/form-data 'file' part; " +
               "same gates as write plus the collection needs an asset field; returns {id,url} " +
               "to reference in the submission. 10 MB / image, pdf, text, csv, json only.",
+            images:
+              "GET {deliveryBase}/assets/{id}/image?w=&h=&fit=&format= — on-demand resize of a " +
+              "raster image asset, 302 to a 1-year-immutable R2 URL (NO auth header — directly " +
+              "embeddable in <img>/srcset). w/h are ints 16..2000, snapped up to " +
+              "[64,96,128,256,320,480,640,768,960,1200,1600,2000]; at least one required. " +
+              "format webp (default) | jpeg. fit cover|inside ONLY when both w and h are given " +
+              "(otherwise 422). Up to 40 distinct derivatives per asset, then 429 " +
+              "{code:E_RATE_LIMITED} (reuse a variant). Non-image or svg asset → 422. " +
+              "resolved asset fields include contentType so you know when this applies.",
             realtime:
               "PULL, not push: GET {deliveryBase}/changes?since=<cursor> returns changes " +
               "(created|updated|deleted) since the cursor — omit since to get {changes:[], cursor} " +

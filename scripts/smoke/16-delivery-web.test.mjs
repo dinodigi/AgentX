@@ -104,7 +104,8 @@ describe("delivery web behavior: error codes, ETags, public uploads", () => {
     assert.equal(submit.status, 201);
 
     const rows = await delivery(p.deliveryToken, "/rsvps");
-    assert.deepEqual(rows.json.data[0].photo, { id: asset.id, url: asset.url });
+    // Resolved assets carry contentType (J2) alongside id/url.
+    assert.deepEqual(rows.json.data[0].photo, { id: asset.id, url: asset.url, contentType: "text/plain" });
   });
 
   it("upload gates: type allowlist, no asset field, publicWrite off, bad ids 404", async () => {

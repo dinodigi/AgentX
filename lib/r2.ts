@@ -1,4 +1,12 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  HeadObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+} from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
@@ -75,6 +83,51 @@ function sanitize(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 128);
 }
 
+/** True if the object exists (HeadObject). 404 → false; other errors rethrow. */
+export async function objectExists(key: string): Promise<boolean> {
+  try {
+    await client().send(new HeadObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: key }));
+    return true;
+  } catch (e) {
+    const status = (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
+    if (status === 404 || (e as { name?: string }).name === "NotFound") return false;
+    throw e;
+  }
+}
+
+/** Fetch an object's bytes. */
+export async function getObjectBytes(key: string): Promise<Buffer> {
+  const res = await client().send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: key }));
+  return Buffer.from(await res.Body!.transformToByteArray());
+}
+
+/** Store an object with content-type + a long immutable cache (derived images). */
+export async function putObject(key: string, body: Buffer, contentType: string): Promise<void> {
+  await client().send(
+    new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET!,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+      CacheControl: "public, max-age=31536000, immutable",
+    }),
+  );
+}
+
+/** All keys under a prefix (continuation-token loop). */
+export async function listPrefixKeys(prefix: string): Promise<string[]> {
+  const keys: string[] = [];
+  let token: string | undefined;
+  do {
+    const res = await client().send(
+      new ListObjectsV2Command({ Bucket: process.env.R2_BUCKET!, Prefix: prefix, ContinuationToken: token }),
+    );
+    for (const o of res.Contents ?? []) if (o.Key) keys.push(o.Key);
+    token = res.IsTruncated ? res.NextContinuationToken : undefined;
+  } while (token);
+  return keys;
+}
+
 export async function listAssets(
   projectId: string,
   page?: { limit: number; offset: number },
@@ -126,8 +179,27 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
     );
   }
 
-  await client().send(
-    new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: asset.r2Key }),
-  );
+  // Remove the original AND any cached image derivatives (under the asset's dir).
+  // Prefix-delete ONLY when the key has the minted `projectId/uuid/filename`
+  // shape — otherwise a malformed/legacy key could prefix-match unrelated
+  // objects, so fall back to a single-object delete.
+  const parts = asset.r2Key.split("/");
+  const dir = asset.r2Key.slice(0, asset.r2Key.lastIndexOf("/"));
+  const shapeOk = parts.length === 3 && parts[0] === projectId && parts[1].length > 0 && parts[2].length > 0;
+  if (shapeOk) {
+    const keys = new Set(await listPrefixKeys(`${dir}/`));
+    keys.add(asset.r2Key); // ensure the original goes even if listing lagged
+    const all = [...keys];
+    for (let i = 0; i < all.length; i += 1000) {
+      await client().send(
+        new DeleteObjectsCommand({
+          Bucket: process.env.R2_BUCKET!,
+          Delete: { Objects: all.slice(i, i + 1000).map((Key) => ({ Key })) },
+        }),
+      );
+    }
+  } else {
+    await client().send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: asset.r2Key }));
+  }
   await db.delete(assets).where(eq(assets.id, assetId));
 }

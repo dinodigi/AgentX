@@ -457,13 +457,19 @@ is written **once** against the final set instead of chasing it.
 Polish tier. `J1/J2` are self-contained — cherry-pick earlier if the dogfood
 site needs srcsets.
 
-- [ ] 18.1 `J1` (M) — on-demand image transforms `GET /v1/assets/{id}/image?w=&h=&fit=&format=`:
-      sharp + R2-cached derivatives, 12-value size ladder, webp|jpeg.
-      **Revisit the 40-derivative budget before shipping** — normal srcset usage
-      consumes ~24; size it per-format or raise it (it's the load-bearing abuse bound).
-      Verify sharp in a deploy preview (serverExternalPackages) — Render is risk-free.
-- [ ] 18.2 `J2` (S) — transform discoverability in get_project_info + contentType
-      on resolved assets.
+- [x] 18.1 `J1` (M) — on-demand image transforms `GET /v1/assets/{id}/image?w=&h=&fit=&format=`
+      (PUBLIC — originals already public, ids unguessable): sharp + R2-cached
+      derivatives, 12-value ladder (snap-up), webp|jpeg, 302 to a 1-yr-immutable
+      R2 URL. Abuse bounds: 40-derivative/asset budget → 429, per-IP + per-asset-IP
+      rate limits, `limitInputPixels`. SECURITY: SVG/non-raster refused by a
+      **magic-byte content sniff** (declared contentType is attacker-controlled;
+      sharp sniffs by content → SVG-as-jpeg would hit librsvg — fixed proactively,
+      review-confirmed). `deleteAsset` prefix-deletes derivatives, shape-guarded.
+      ✅ 2026-07-08, 32-image-transform smoke (6)
+- [x] 18.2 `J2` (S) — `get_project_info` deliveryApi.images block + `contentType` on
+      resolved assets (+ generated-client asset type + list_assets desc). Review
+      caught the two additive-shape fallouts (a strict smoke assertion + the client
+      readType); both fixed. ✅ 2026-07-08, 32-image-transform + 16-delivery-web
 - [ ] 18.3 `J3` (M) — project locales config + `set_locales` tool + manifest round-trip.
 - [ ] 18.4 `J4` (M) — read-side localization plumbing, shipped inert (variant-map-safe
       delivery/admin/query before any localized field can exist).

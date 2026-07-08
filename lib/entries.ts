@@ -1679,17 +1679,18 @@ export async function resolveAssets(
   if (ids.size === 0) return rows;
 
   const found = await db
-    .select({ id: assets.id, url: assets.url })
+    .select({ id: assets.id, url: assets.url, contentType: assets.contentType })
     .from(assets)
     .where(and(inArray(assets.id, [...ids]), eq(assets.projectId, projectId)));
-  const byId = new Map(found.map((a) => [a.id, a.url]));
+  const byId = new Map(found.map((a) => [a.id, a]));
 
   for (const f of assetFields) {
     for (const r of rows) {
       const v = r.data[f.name];
-      if (typeof v === "string" && byId.has(v)) {
-        r.data[f.name] = { id: v, url: byId.get(v)! };
-      }
+      const a = typeof v === "string" ? byId.get(v) : undefined;
+      // contentType (J2) is additive — lets a consumer know when the
+      // /assets/{id}/image transform URL applies (raster images only).
+      if (a) r.data[f.name] = { id: a.id, url: a.url, contentType: a.contentType };
     }
   }
   return rows;
