@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { bearerFrom } from "@/lib/tokens";
 import { drainJobs, reclaimStale } from "@/lib/jobs";
+import { tickSchedules } from "@/lib/schedules";
 import { HANDLERS } from "@/lib/job-handlers";
 
 /**
@@ -32,8 +33,10 @@ export async function POST(req: NextRequest) {
   }
 
   const reclaimed = await reclaimStale();
+  // Tick BEFORE draining so a due schedule's fire runs in this same pass.
+  const ticked = await tickSchedules();
   const result = await drainJobs(HANDLERS, { maxJobs: 10, budgetMs: 15_000 });
-  return json(200, { ...result, reclaimed });
+  return json(200, { ...result, reclaimed, ticked });
 }
 
 function constantTimeEqual(a: string, b: string): boolean {

@@ -1,7 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { collections, entries, type EventAction } from "@/db/schema";
-import { actionHash, runEventAction, type EntryEvent } from "./events";
+import { collections, entries, projectSchedules, type EventAction, type ScheduleAction } from "@/db/schema";
+import { actionHash, dispatchEmail, runEventAction, type EntryEvent } from "./events";
+import { deliverWebhook } from "./webhook";
 import { matchesClauses } from "./query";
 import type { JobHandlers } from "./jobs";
 
@@ -67,5 +68,56 @@ export const HANDLERS: JobHandlers = {
       entry,
       delayed: { after: live.after },
     });
+  },
+
+  /**
+   * A recurring-schedule fire (G3). Same run-time-truth rule as event_action:
+   * the schedule row is re-fetched — deleted or enabled:false → skip-as-
+   * succeeded, and an action edited since enqueue (hash mismatch) → skip. The
+   * payload action is never the authority. Outcomes land in webhook_deliveries
+   * with a null collectionId (project-level event).
+   */
+  schedule_fire: async (job) => {
+    const p = job.payload as {
+      scheduleId: string;
+      name: string;
+      action: ScheduleAction;
+      scheduledFor: string;
+    };
+    const [s] = await db
+      .select()
+      .from(projectSchedules)
+      .where(and(eq(projectSchedules.id, p.scheduleId), eq(projectSchedules.projectId, job.projectId)))
+      .limit(1);
+    if (!s || !s.enabled) return; // deleted or paused → skip-as-succeeded
+    if (actionHash(s.action as EventAction) !== actionHash(p.action as EventAction)) return; // edited since enqueue
+
+    const firedAt = new Date().toISOString();
+    const payload = {
+      schedule: { id: s.id, name: s.name },
+      scheduledFor: p.scheduledFor,
+      firedAt,
+    };
+    if (s.action.type === "webhook") {
+      await deliverWebhook({
+        projectId: job.projectId,
+        collectionId: null,
+        url: s.action.url,
+        event: "schedule.fired",
+        payload,
+      });
+    } else {
+      // {{name}} / {{scheduledFor}} interpolation for schedule emails.
+      const fill = (t: string) =>
+        t.replace(/\{\{(\w+)\}\}/g, (_, k: string) =>
+          k === "name" ? s.name : k === "scheduledFor" ? p.scheduledFor : "",
+        );
+      const rendered = {
+        to: fill(s.action.to),
+        subject: fill(s.action.subject),
+        text: `schedule "${s.name}" fired\nscheduledFor: ${p.scheduledFor}\nfiredAt: ${firedAt}`,
+      };
+      await dispatchEmail(job.projectId, null, "schedule.fired", rendered, { ...payload, email: rendered });
+    }
   },
 };

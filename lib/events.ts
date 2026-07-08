@@ -183,10 +183,11 @@ export interface RenderedEmail {
   text: string;
 }
 
-/** Send one rendered email via the project's Resend connector; log the outcome. */
-async function dispatchEmail(
+/** Send one rendered email via the project's Resend connector; log the outcome.
+ * Exported for the schedule_fire handler (G3) — collectionId is null there. */
+export async function dispatchEmail(
   projectId: string,
-  collectionId: string,
+  collectionId: string | null,
   event: string,
   rendered: RenderedEmail,
   logPayload: Record<string, unknown>,

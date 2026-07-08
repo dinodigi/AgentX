@@ -40,6 +40,7 @@ import { listDeliveries } from "@/lib/webhook";
 import { refireDelivery } from "@/lib/events";
 import { listAuditLog } from "@/lib/audit";
 import { listJobs } from "@/lib/jobs";
+import { defineSchedule, listSchedules, deleteSchedule } from "@/lib/schedules";
 import { generateClientCode } from "@/lib/mcp/client-code";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
 import { uploadAsset } from "@/lib/r2";
@@ -815,6 +816,64 @@ export const TOOL_DEFS: ToolDef[] = [
         limit: { type: "number", description: "1-100, default 20" },
         offset: { type: "number" },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "define_schedule",
+    description:
+      "Create or update (upsert by name) a recurring schedule that fires a webhook or email — " +
+      "presets only, no cron strings. recurrence: {frequency: hourly|daily|weekly|monthly, " +
+      "at: 'HH:MM' (24h UTC; not for hourly — hourly fires at the top of each hour), weekday " +
+      "(weekly), dayOfMonth 1-28 (monthly; capped so every month has the day)}. UTC-only for now. " +
+      "action: {type:'webhook',url} | {type:'email',to,subject} — the same vocabulary as events " +
+      "but WITHOUT when/after (the recurrence is the timing; email supports {{name}}/" +
+      "{{scheduledFor}}). Fires are at-least-once (receivers must dedupe) and may run up to a " +
+      "minute late; a missed window fires once, never backfills. enabled:false pauses the " +
+      "schedule AND skips its already-queued fires. Outcomes land in get_deliveries as " +
+      "schedule.fired; pending fires show in list_jobs.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "slug, unique per project — upsert key" },
+        recurrence: {
+          type: "object",
+          properties: {
+            frequency: { type: "string", enum: ["hourly", "daily", "weekly", "monthly"] },
+            at: { type: "string", description: '"HH:MM" 24h UTC (daily/weekly/monthly; default "00:00")' },
+            weekday: {
+              type: "string",
+              enum: ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"],
+            },
+            dayOfMonth: { type: "number", description: "1-28 (monthly)" },
+            timezone: { type: "string", description: 'must be "UTC" when present (v1)' },
+          },
+          required: ["frequency"],
+          additionalProperties: false,
+        },
+        action: { type: "object", description: "{type:'webhook',url} | {type:'email',to,subject}" },
+        enabled: { type: "boolean", description: "false = paused (kept, not ticked); default true" },
+      },
+      required: ["name", "recurrence", "action"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_schedules",
+    description:
+      "List this project's recurring schedules: {name, recurrence, action, enabled, nextRunAt, lastRunAt}.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "delete_schedule",
+    description:
+      "Delete a schedule by name. Returns the full deleted spec so it can be re-created with " +
+      "define_schedule (the reversibility story). To PAUSE instead, define_schedule with " +
+      "enabled:false — that also skips already-queued fires.",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
       additionalProperties: false,
     },
   },
@@ -1634,6 +1693,60 @@ export async function callTool(
           offset,
           hasMore,
           nextOffset: hasMore ? offset + limit : null,
+        });
+      }
+
+      case "define_schedule": {
+        const a = z
+          .object({
+            name: z.string(),
+            recurrence: z.record(z.unknown()),
+            action: z.record(z.unknown()),
+            enabled: z.boolean().optional(),
+          })
+          .parse(rawArgs);
+        // Deep validation (recurrence presets, action vocabulary, connector
+        // requirements) lives in defineSchedule — one definition of valid.
+        const row = await defineSchedule(projectId, {
+          name: a.name,
+          recurrence: a.recurrence as never,
+          action: a.action as never,
+          enabled: a.enabled,
+        });
+        return ok({
+          name: row.name,
+          recurrence: row.recurrence,
+          action: row.action,
+          enabled: row.enabled,
+          nextRunAt: row.nextRunAt,
+        });
+      }
+
+      case "list_schedules": {
+        const rows = await listSchedules(projectId);
+        return ok(
+          rows.map((s) => ({
+            name: s.name,
+            recurrence: s.recurrence,
+            action: s.action,
+            enabled: s.enabled,
+            nextRunAt: s.nextRunAt,
+            lastRunAt: s.lastRunAt,
+          })),
+        );
+      }
+
+      case "delete_schedule": {
+        const a = nameArg.parse(rawArgs);
+        const deleted = await deleteSchedule(projectId, a.name);
+        return ok({
+          deleted: {
+            name: deleted.name,
+            recurrence: deleted.recurrence,
+            action: deleted.action,
+            enabled: deleted.enabled,
+          },
+          hint: "re-create it with define_schedule using this spec",
         });
       }
 

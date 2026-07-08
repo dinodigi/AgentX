@@ -285,9 +285,17 @@ backfill, C's sweep, H's prune, K's reconciliation all name it as their runner).
       matching event (dedupe per entry+event+action; documented). `runEventAction`
       is the shared dispatch exit for immediate + delayed (+ later G3/G4) actions.
       ✅ 2026-07-08, 24-delayed-events smoke (7)
-- [ ] 13.3 `G3` (M) — recurring schedules: `project_schedules` + define/list/delete_schedule
-      + drain-tick (migration; makes `webhook_deliveries.collectionId` nullable —
-      unblocks K4's unmapped-event logging).
+- [x] 13.3 `G3` (M) — recurring schedules: `project_schedules` + define/list/
+      delete_schedule + drain-tick (migration; `webhook_deliveries.collectionId`
+      now nullable — unblocks K4's unmapped-event logging). UTC-only v1 (spec
+      openMinor #6 — IANA/DST is a later increment). Two real bugs caught by the
+      concurrent-drain smoke before ship: (1) tick enqueued BEFORE the CAS advance
+      → double-fire once the first job completed; now the CAS winner alone
+      enqueues. (2) CAS compared timestamptz (µs) to a JS Date (ms) → a
+      µs-precision row never advanced (silently dead schedule); now
+      `date_trunc('milliseconds', …)` both sides (the entries.ts cursor idiom).
+      Run-time truth on fire: deleted/disabled schedule or edited action
+      (hash mismatch) → skip-as-succeeded. ✅ 2026-07-08, 25-schedules smoke (5)
 - [ ] 13.4 `G4` (M) — declarative state machines: `collections.workflow`
       {field, initial, transitions[{from, to, actors, actions}]}; enforcement via
       shared `applyWorkflowOnCreate` called from **all** create paths (single +

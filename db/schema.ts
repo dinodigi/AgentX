@@ -209,7 +209,8 @@ export const webhookDeliveries = pgTable(
     projectId: uuid("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
-    collectionId: uuid("collection_id").notNull(),
+    // Nullable since G3: schedule.fired deliveries are project-level (no collection).
+    collectionId: uuid("collection_id"),
     url: text("url").notNull(),
     event: text("event").notNull(),
     payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
@@ -378,6 +379,59 @@ export const jobs = pgTable(
   ],
 );
 
+/**
+ * Recurrence presets — no cron strings (self-describing enums, zod-validated).
+ * v1 is UTC-only: `timezone` is accepted but must be "UTC" (IANA zones + their
+ * DST edge cases are a later increment). dayOfMonth caps at 28 so every month
+ * has the day. `at` defaults to "00:00"; hourly fires at the top of each hour.
+ */
+export interface ScheduleRecurrence {
+  frequency: "hourly" | "daily" | "weekly" | "monthly";
+  /** "HH:MM" 24h UTC (daily/weekly/monthly). */
+  at?: string;
+  /** Required for weekly. */
+  weekday?: "sunday" | "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday";
+  /** Required for monthly; 1..28. */
+  dayOfMonth?: number;
+  /** v1: must be "UTC" when present. */
+  timezone?: string;
+}
+
+/** A schedule's action — the same webhook/email vocabulary as entry events,
+ * but without `when`/`after` (there is no entry to evaluate against). */
+export type ScheduleAction =
+  | { type: "webhook"; url: string }
+  | { type: "email"; to: string; subject: string };
+
+/**
+ * Recurring schedules (G3), ticked by the drain endpoint: due rows CAS-advance
+ * nextRunAt and only the advance WINNER enqueues the dedupeKey'd `schedule_fire`
+ * job (overlapping drains can't double-fire a window). Fires are at-least-once
+ * and may run up to a scheduler granularity (~1 min) late; missed windows fire
+ * ONCE, never backfill.
+ */
+export const projectSchedules = pgTable(
+  "project_schedules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    recurrence: jsonb("recurrence").$type<ScheduleRecurrence>().notNull(),
+    action: jsonb("action").$type<ScheduleAction>().notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("project_schedules_name_idx").on(t.projectId, t.name),
+    index("project_schedules_due_idx").on(t.enabled, t.nextRunAt),
+  ],
+);
+
 export interface Branding {
   displayName?: string;
   logoUrl?: string;
@@ -395,5 +449,6 @@ export type WebhookDelivery = InferSelectModel<typeof webhookDeliveries>;
 export type AuditLogRow = InferSelectModel<typeof auditLog>;
 export type TransactReceipt = InferSelectModel<typeof transactReceipts>;
 export type Job = InferSelectModel<typeof jobs>;
+export type ProjectSchedule = InferSelectModel<typeof projectSchedules>;
 export type TrashedEntry = InferSelectModel<typeof entriesTrash>;
 export type EntryVersion = InferSelectModel<typeof entryVersions>;

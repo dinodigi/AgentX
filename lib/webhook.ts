@@ -15,7 +15,8 @@ const TIMEOUT_MS = 10_000;
 
 export async function deliverWebhook(opts: {
   projectId: string;
-  collectionId: string;
+  /** null for project-level events (schedule.fired) — no collection to pin. */
+  collectionId: string | null;
   url: string;
   event: string;
   payload: Record<string, unknown>;
@@ -87,7 +88,7 @@ export async function listDeliveries(
 }
 
 async function log(
-  opts: { projectId: string; collectionId: string; url: string; event: string; payload: Record<string, unknown> },
+  opts: { projectId: string; collectionId: string | null; url: string; event: string; payload: Record<string, unknown> },
   status: "success" | "failed",
   attempts: number,
   lastError: string | null,
