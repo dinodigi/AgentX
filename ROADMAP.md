@@ -426,8 +426,13 @@ is written **once** against the final set instead of chasing it.
       flip) transition was swallowed by the timing-leak drop; fixed by gating the
       drop on prev-also-visible (design openMinor #5's "both pass" clause I'd
       omitted). ✅ 2026-07-08, 29-changes-delivery smoke (6)
-- [ ] 17.3 `H3` (S) — collection-delete convergence: tombstones-first, disclosed
-      in the delete plan.
+- [x] 17.3 `H3` (S) — collection-delete convergence: `deleteCollection` appends a
+      `deleted` tombstone per live entry (keyset-paged, chunks of 500) BEFORE the
+      cascade — `recordChangesStrict` THROWS so a lost tombstone aborts the delete
+      (a spurious one from an aborted delete is harmless). vis from final defs, so
+      the H2 reader serves a tombstone only for delivery-visible entries; orphaned
+      created/updated rows stop surfacing. Plan discloses `changeFeedTombstones`.
+      ✅ 2026-07-08, 30-changes-collection-delete smoke (2)
 - [ ] 17.4 `H4` (M) — SSE stream with bounded lifetime; Netlify degrade to
       long-poll documented; Render streams natively.
 - [ ] 17.5 `H5` (S) — self-description + generated client code (poll/SSE/webhook

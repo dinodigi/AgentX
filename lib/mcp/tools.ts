@@ -1240,8 +1240,14 @@ export async function callTool(
           return ok({
             requiresConfirmation: true,
             code: "E_CONFIRM_REQUIRED",
-            plan: { wouldDeleteEntries: plan.entryCount, trashedEntries: plan.trashedEntries },
-            hint: "re-run with confirm: true to delete permanently",
+            plan: {
+              wouldDeleteEntries: plan.entryCount,
+              trashedEntries: plan.trashedEntries,
+              changeFeedTombstones: plan.changeFeedTombstones,
+            },
+            hint:
+              `re-run with confirm: true to delete permanently. ${plan.changeFeedTombstones} tombstone ` +
+              "rows will be appended to the change feed so synced clients converge.",
           });
         }
         await deleteCollection(projectId, a.name);

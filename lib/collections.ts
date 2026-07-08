@@ -1,10 +1,11 @@
-import { and, count, eq, sql } from "drizzle-orm";
+import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
 import { collections, entries, entriesTrash, type Collection, type EventAction } from "@/db/schema";
 import { getConnector } from "./connectors";
 import { parseAfter } from "./events";
 import { validateWorkflow } from "./workflow";
+import { recordChangesStrict } from "./changes";
 import { ValidationError } from "./validation";
 import { validateFieldDefs, collectionNameSchema } from "./validation";
 import { buildWhere, type WhereItem } from "./query";
@@ -704,6 +705,9 @@ export interface DeletePlan {
   trashedEntries: number;
   /** Relation fields in OTHER collections that target this one. */
   inboundRelations: { collection: string; field: string }[];
+  /** H3: `deleted` tombstones appended to the change feed so synced clients
+   * converge (= entryCount — one per live entry). */
+  changeFeedTombstones: number;
 }
 
 /** What deleting a collection would destroy or break. */
@@ -729,16 +733,45 @@ export async function planDeleteCollection(
       }
     }
   }
+  const entryCount = countRows[0]?.n ?? 0;
   return {
-    entryCount: countRows[0]?.n ?? 0,
+    entryCount,
     trashedEntries: trashRows[0]?.n ?? 0,
     inboundRelations,
+    changeFeedTombstones: entryCount,
   };
 }
 
 /** Delete a collection and (via cascade) its entries. Caller enforces the plan. */
 export async function deleteCollection(projectId: string, name: string): Promise<void> {
   const target = await getCollection(projectId, name);
+  if (target) {
+    // H3: append a `deleted` tombstone per live entry BEFORE the cascade, so a
+    // synced client converges instead of keeping ghost entries. entry_changes
+    // has no FK to collections, so these rows outlive the delete. Tombstones-
+    // first is safe without a transaction: a spurious tombstone from an aborted
+    // delete is harmless (entry still exists → client re-fetches), a LOST one is
+    // not — so a chunk-insert failure ABORTS the delete (strict writer throws).
+    // vis is computed from the collection's FINAL defs, so the H2 reader serves
+    // a tombstone only for an entry that was delivery-visible.
+    const CHUNK = 500;
+    let after = "00000000-0000-0000-0000-000000000000";
+    for (;;) {
+      const rows = await db
+        .select({ id: entries.id, data: entries.data })
+        .from(entries)
+        .where(and(eq(entries.collectionId, target.id), gt(entries.id, after)))
+        .orderBy(asc(entries.id))
+        .limit(CHUNK);
+      if (rows.length === 0) break;
+      await recordChangesStrict(
+        rows.map((r) => ({ projectId, collection: target, kind: "deleted" as const, entryId: r.id, data: r.data })),
+      );
+      after = rows[rows.length - 1].id;
+      if (rows.length < CHUNK) break;
+    }
+  }
+
   await db
     .delete(collections)
     .where(and(eq(collections.projectId, projectId), eq(collections.name, name)));

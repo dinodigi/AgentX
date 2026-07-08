@@ -76,7 +76,7 @@ export async function recordChange(input: ChangeInput): Promise<void> {
   }
 }
 
-/** Record MANY changes in one insert (bulk create, collection-delete tombstones). */
+/** Record MANY changes in one insert (bulk create, transact). Swallowed. */
 export async function recordChanges(inputs: ChangeInput[]): Promise<void> {
   if (inputs.length === 0) return;
   try {
@@ -85,6 +85,15 @@ export async function recordChanges(inputs: ChangeInput[]): Promise<void> {
   } catch (e) {
     console.error("recordChanges failed", e);
   }
+}
+
+/** Like recordChanges but THROWS on failure — for collection-delete tombstones
+ * (H3), where a lost tombstone (a client keeps ghost entries forever) is worse
+ * than aborting the delete; a spurious tombstone from an aborted delete is
+ * harmless (the entry still exists, the client just re-fetches). */
+export async function recordChangesStrict(inputs: ChangeInput[]): Promise<void> {
+  if (inputs.length === 0) return;
+  await db.insert(entryChanges).values(inputs.map(rowValues));
 }
 
 /** A change projected for the delivery surface. Tombstones carry no data. */
