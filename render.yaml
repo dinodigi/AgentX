@@ -1,0 +1,91 @@
+# Render Blueprint — deploy AgentX as an always-on Node service + a drain cron.
+#
+# Why Render (vs the Netlify serverless deploy):
+#  - The web service is a long-lived process → NO cold starts (the spiky first
+#    load on Netlify), and it can hold a pooled DB connection later.
+#  - Co-located in `virginia` (US-East) with the Neon DB (us-east-1) → the
+#    per-query round-trips are ~1-5ms instead of cross-region.
+#  - sharp (image transforms) runs natively — the /v1/assets/{id}/image route
+#    that 500s on Netlify just works here.
+#
+# One-time setup in the Render dashboard after "New → Blueprint → connect repo":
+#  1. Set the `sync: false` env vars below (same values as your local .env.local).
+#  2. `CRON_SECRET` is auto-generated + shared via the env group — no action.
+#  3. Deploy. Same shared Neon DB, so no migration.
+
+envVarGroups:
+  # Shared so the web service and the drain cron agree on the same secret.
+  - name: agentx-shared
+    envVars:
+      - key: CRON_SECRET
+        generateValue: true # random; both services read it
+
+services:
+  # ── The app ───────────────────────────────────────────────────────────────
+  - type: web
+    name: agentx
+    runtime: node
+    region: virginia # co-locate with Neon us-east-1 — kills cross-region DB latency
+    plan: starter # IMPORTANT: `free` sleeps after ~15 min idle (reintroduces cold
+      # starts, defeating the point). Starter is always-on.
+    branch: master
+    buildCommand: npm ci && npm run build
+    startCommand: npm start # next start binds Render's $PORT
+    # No healthCheckPath — Render's TCP port check is enough for a first deploy and
+    # can't false-fail it. Add `healthCheckPath: /api/mcp` (GET → 200) later if you
+    # want app-level restarts.
+    autoDeploy: true
+    envVars:
+      - fromGroup: agentx-shared # CRON_SECRET
+      - key: NODE_VERSION
+        value: "22"
+      # Static, non-secret — safe to keep in the Blueprint.
+      - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
+        value: /sign-in
+      - key: NEXT_PUBLIC_CLERK_SIGN_UP_URL
+        value: /sign-up
+      # Secrets / project-specific — set in the dashboard (sync:false = not in repo).
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CONNECTOR_MASTER_KEY
+        sync: false
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_PUBLIC_BASE_URL
+        sync: false
+
+  # ── The job drain (replaces the Netlify scheduled function) ───────────────
+  # Every minute, POST /api/jobs/drain with the shared CRON_SECRET. Uses node's
+  # global fetch (no curl/image dep); a non-2xx exits non-zero so Render surfaces
+  # a failing tick. The endpoint is fail-closed (503 until CRON_SECRET is set).
+  - type: cron
+    name: agentx-jobs-drain
+    runtime: node
+    region: virginia
+    plan: starter
+    branch: master
+    schedule: "* * * * *"
+    buildCommand: "echo 'no build — drain is a one-line fetch'"
+    startCommand: >
+      node -e "fetch('https://'+process.env.WEB_HOST+'/api/jobs/drain',{method:'POST',headers:{authorization:'Bearer '+process.env.CRON_SECRET}}).then(r=>{console.log('drain',r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e);process.exit(1)})"
+    envVars:
+      - fromGroup: agentx-shared # same CRON_SECRET as the web service
+      - key: NODE_VERSION
+        value: "22"
+      - key: WEB_HOST # the web service's hostname (e.g. agentx.onrender.com)
+        fromService:
+          type: web
+          name: agentx
+          property: host
