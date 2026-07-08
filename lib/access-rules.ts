@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Collection, ClaimRule } from "@/db/schema";
+import type { Collection, ClaimRule, ReadPreset } from "@/db/schema";
 import { verifyEndUser, type EndUser } from "./user-auth";
 import type { WhereClause } from "./query";
 
@@ -116,6 +116,41 @@ async function requireUser(
     return { ok: false, gate: denied(401, `invalid user token: ${auth.reason}`) };
   }
   return { ok: true, user: auth.user };
+}
+
+/** The read-gate inputs, decoupled from a live Collection so it can be
+ *  evaluated against a stored snapshot (change feed: write-time `vis` OR current
+ *  access). */
+export interface ReadSpec {
+  read?: ReadPreset;
+  ownerField?: string;
+  org?: { claim: string; field: string };
+}
+
+/**
+ * Does `user` pass `spec`'s READ gate for ONE entry snapshot? Mirrors gateRead's
+ * identity logic but per-snapshot (the change feed applies it to stored data for
+ * both the write-time and current visibility of its then-AND-now intersection).
+ * Fail-closed: org requires a matching claim on the snapshot; authenticated/
+ * owner/claim require a verified user.
+ */
+export function snapshotReadable(
+  spec: ReadSpec,
+  snapshot: Record<string, unknown>,
+  user: EndUser | null,
+): boolean {
+  const org = spec.org;
+  if (org) {
+    if (!user) return false;
+    const orgVal = orgClaimValue(user, org.claim);
+    if (orgVal === null || snapshot[org.field] !== orgVal) return false;
+  }
+  const presets = toList(spec.read ?? "public");
+  if (presets.includes("public")) return true; // org (if any) already enforced
+  if (!user) return false;
+  if (presets.some((p) => p === "authenticated" || (isClaimRule(p) && claimMatches(user, p)))) return true;
+  if (presets.includes("owner")) return !!spec.ownerField && snapshot[spec.ownerField] === user.id;
+  return false;
 }
 
 export async function gateRead(

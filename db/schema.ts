@@ -475,7 +475,7 @@ export interface ChangeVis {
   /** did prevData match publicFilter at write time (plain updates only). */
   prevPf?: boolean;
   /** access.read mode at write time. */
-  read: "public" | "authenticated" | "owner" | ClaimRule | (string | ClaimRule)[];
+  read: ReadPreset;
   /** ownerField at write time (owner-gated collections). */
   ownerField?: string;
   /** org row scope at write time (F3). Captured here so removing an org scope

@@ -394,6 +394,7 @@ const RESERVED_NAMES = new Set([
   "appearance",
   "connectors",
   "assets",
+  "changes", // H2: GET /v1/changes is a static route that would shadow a collection
 ]);
 
 export const collectionNameSchema = z

@@ -2,6 +2,8 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { entryChanges, type ChangeKind, type ChangeVis, type Collection, type EntryChange } from "@/db/schema";
 import { matchesClauses, type WhereItem } from "./query";
+import { snapshotReadable, type ReadSpec } from "./access-rules";
+import type { EndUser } from "./user-auth";
 import { defer } from "./defer";
 import { ValidationError } from "./validation";
 
@@ -83,6 +85,117 @@ export async function recordChanges(inputs: ChangeInput[]): Promise<void> {
   } catch (e) {
     console.error("recordChanges failed", e);
   }
+}
+
+/** A change projected for the delivery surface. Tombstones carry no data. */
+export interface DeliveryChange {
+  cursor: string;
+  collection: string;
+  id: string;
+  kind: ChangeKind;
+  at: string;
+  changedFields?: string[];
+  data?: Record<string, unknown>;
+}
+
+const pick = (data: Record<string, unknown>, fields: string[]): Record<string, unknown> => {
+  const out: Record<string, unknown> = {};
+  for (const f of fields) if (f in data) out[f] = data[f];
+  return out;
+};
+
+/** Does a snapshot pass BOTH write-time (vis) and current visibility for `user`?
+ *  fieldsOut is the served field set (vis ∩ current publicRead); empty ⇒ no. */
+function passesBoth(
+  snapshot: Record<string, unknown>,
+  visPf: boolean,
+  visReadSpec: ReadSpec,
+  current: Collection,
+  fieldsOut: string[],
+  user: EndUser | null,
+): boolean {
+  if (fieldsOut.length === 0) return false;
+  // then: write-time publicFilter + write-time identity gate
+  if (!visPf || !snapshotReadable(visReadSpec, snapshot, user)) return false;
+  // now: current publicFilter + current identity gate
+  const pf = (current.publicFilter as WhereItem[] | null) ?? [];
+  if (pf.length > 0 && !matchesClauses(current.fields, pf, snapshot)) return false;
+  const nowSpec: ReadSpec = {
+    read: current.access?.read,
+    ownerField: current.access?.ownerField,
+    org: current.access?.org,
+  };
+  return snapshotReadable(nowSpec, snapshot, user);
+}
+
+/**
+ * Gate one raw feed row for the delivery surface, encoding the cursor with
+ * `seal`. Returns a projected change, a tombstone, or null (dropped — the cursor
+ * still advances past it). The privacy core (H2): a row is served ONLY if it
+ * passed both its write-time visibility AND the collection's CURRENT visibility
+ * (broadening never exposes history; narrowing hides immediately), and only its
+ * publicRead-both-then-and-now fields are projected. A visible→hidden update
+ * becomes a `deleted` tombstone; a delete of a never-visible row is suppressed;
+ * an orphaned collection serves only tombstones (existence, no data).
+ */
+export function projectChangeForDelivery(
+  row: EntryChange,
+  current: Collection | null,
+  user: EndUser | null,
+  seal: (seq: number) => string,
+): DeliveryChange | null {
+  const base = { cursor: seal(Number(row.seq)), collection: row.collectionName, id: row.entryId };
+  const at = (row.createdAt as Date).toISOString();
+  const visSpec: ReadSpec = { read: row.vis.read, ownerField: row.vis.ownerField, org: row.vis.org };
+
+  // Orphaned collection (deleted since): drop created/updated; serve a delete
+  // tombstone only if the pre-delete snapshot was visible at write time.
+  if (!current) {
+    if (row.kind !== "deleted") return null;
+    // No current defs — gate on write-time vis alone.
+    const fieldsThen = row.vis.fields;
+    if (fieldsThen.length === 0 || !row.vis.pf || !snapshotReadable(visSpec, row.data, user)) return null;
+    return { ...base, kind: "deleted", at };
+  }
+
+  const currentPublic = current.fields.filter((f) => f.publicRead).map((f) => f.name);
+  const fieldsOut = row.vis.fields.filter((f) => currentPublic.includes(f));
+
+  if (row.kind === "deleted") {
+    return passesBoth(row.data, row.vis.pf, visSpec, current, fieldsOut, user)
+      ? { ...base, kind: "deleted", at }
+      : null; // never-visible delete → suppress (mirror 404-not-403)
+  }
+
+  // created / updated
+  const visibleNow = passesBoth(row.data, row.vis.pf, visSpec, current, fieldsOut, user);
+  if (visibleNow) {
+    const data = pick(row.data, fieldsOut);
+    const changedFields = row.changedFields?.filter((f) => fieldsOut.includes(f));
+    // Timing-leak drop (openMinor #5): an update that changed only PRIVATE fields
+    // must not broadcast timing — BUT only when the row was ALREADY visible (a
+    // genuine visible→visible no-op). A hidden→visible transition (e.g. a private
+    // `published` flip, title unchanged) also has an unchanged projection, and it
+    // MUST be emitted — its original `created` was suppressed, so this is the only
+    // event that tells a subscriber the row now exists.
+    if (
+      row.kind === "updated" &&
+      row.prevData &&
+      (changedFields?.length ?? 0) === 0 &&
+      JSON.stringify(data) === JSON.stringify(pick(row.prevData, fieldsOut)) &&
+      passesBoth(row.prevData, row.vis.prevPf ?? false, visSpec, current, fieldsOut, user)
+    ) {
+      return null;
+    }
+    return { ...base, kind: row.kind, at, changedFields, data };
+  }
+
+  // Update that left visibility (was visible, now hidden) ⇒ tombstone.
+  if (row.kind === "updated" && row.prevData && row.vis.prevPf) {
+    const prevVisible = passesBoth(row.prevData, row.vis.prevPf, visSpec, current, fieldsOut, user);
+    if (prevVisible) return { ...base, kind: "deleted", at };
+  }
+  return null;
 }
 
 export interface ListChangesOpts {

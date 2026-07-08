@@ -415,9 +415,17 @@ is written **once** against the final set instead of chasing it.
       a real omission the spec itself made: `vis` left out `access.org` — an
       independent fail-closed scope that must be captured at write time or H2 can
       never enforce the org intersection; now captured. ✅ 2026-07-08, 28-changes smoke (7)
-- [ ] 17.2 `H2` (M) — `GET /v1/changes?since=` polling endpoint, then-AND-now
-      privacy gating (write-time vis ∩ current rules — evaluated against F's
-      preset-union shapes), ETag 304; `changes` reserved name (verify first).
+- [x] 17.2 `H2` (M) — `GET /v1/changes?since=` polling endpoint, then-AND-now
+      privacy gating (`projectChangeForDelivery`: served iff snapshot passed BOTH
+      write-time vis AND current rules; fields = vis ∩ current publicRead;
+      visible→hidden = tombstone, never-visible-delete suppressed, private-only
+      edit dropped), ETag 304, `changes` reserved. `snapshotReadable` evaluates
+      public/authenticated/owner/claim/any-of + org against a stored snapshot for
+      both then/now. Adversarial review (4 lenses, all exposure lenses CLEAN)
+      caught 1 completeness bug — the draft→publish (hidden→visible via a private
+      flip) transition was swallowed by the timing-leak drop; fixed by gating the
+      drop on prev-also-visible (design openMinor #5's "both pass" clause I'd
+      omitted). ✅ 2026-07-08, 29-changes-delivery smoke (6)
 - [ ] 17.3 `H3` (S) — collection-delete convergence: tombstones-first, disclosed
       in the delete plan.
 - [ ] 17.4 `H4` (M) — SSE stream with bounded lifetime; Netlify degrade to
