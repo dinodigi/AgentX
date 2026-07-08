@@ -3,6 +3,7 @@ import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
 import { collections, entries, entriesTrash, type Collection, type EventAction } from "@/db/schema";
 import { getConnector } from "./connectors";
+import { parseAfter } from "./events";
 import { ValidationError } from "./validation";
 import { validateFieldDefs, collectionNameSchema } from "./validation";
 import { buildWhere, type WhereItem } from "./query";
@@ -173,6 +174,12 @@ async function validateAccessAndEvents(
       }
       // Conditional clauses get the same define-time validation as query where.
       if (a.when?.length) buildWhere(fields, a.when);
+      // Delayed actions: `after` must parse and stay within 1m..365d (G2).
+      if (a.after !== undefined && parseAfter(a.after) === null) {
+        throw new ValidationError(
+          `events: after "${a.after}" is invalid — use "<n>m" | "<n>h" | "<n>d" (minutes/hours/days), between "1m" and "365d", e.g. after: "3d"`,
+        );
+      }
     }
     if (all.some((a) => a.type === "email") && !(await getConnector(projectId, "resend"))) {
       throw new ValidationError(

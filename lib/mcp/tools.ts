@@ -200,8 +200,14 @@ export const TOOL_DEFS: ToolDef[] = [
             "{{field}} interpolation from entry data. Any action takes when: [clauses] (same shape " +
             "as query where, evaluated against the post-change entry — e.g. fire only when " +
             "status='confirmed') and disabled: true (paused, kept in the schema). updated events " +
-            "carry {previous, changedFields}. All outcomes land in the delivery log (get_deliveries); " +
-            "failed ones can be replayed with refire_delivery.",
+            "carry {previous, changedFields}. Add after: '45m'|'12h'|'3d' (1m..365d) to DEFER the " +
+            "action: it is queued at emit time (timer starts at the FIRST matching event; later " +
+            "updates do not reset it or queue a second send while one is pending), and at send time " +
+            "the action is re-read from this config and `when` is re-evaluated against the CURRENT " +
+            "entry — so disabling, removing, or editing an action also cancels its pending delayed " +
+            "sends, and a deleted entry skips silently. Delayed sends omit previous/changedFields. " +
+            "Pending ones are visible via list_jobs. All outcomes land in the delivery log " +
+            "(get_deliveries); failed ones can be replayed with refire_delivery.",
           properties: {
             created: { type: "array", items: { type: "object" } },
             updated: { type: "array", items: { type: "object" } },
@@ -843,6 +849,10 @@ const whereItemSchema = z.union([
 const eventActionBase = {
   when: z.array(whereItemSchema).optional(),
   disabled: z.boolean().optional(),
+  after: z
+    .string()
+    .regex(/^\d+(m|h|d)$/, 'after must be "<n>m" | "<n>h" | "<n>d", e.g. "3d"')
+    .optional(),
 };
 const eventActionSchema = z.union([
   z.object({ type: z.literal("webhook"), url: z.string(), ...eventActionBase }),

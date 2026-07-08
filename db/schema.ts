@@ -20,6 +20,13 @@ interface EventActionBase {
   when?: WhereItem[];
   /** Paused: kept in the schema, skipped at emit time. */
   disabled?: boolean;
+  /**
+   * Defer the action: "45m" | "12h" | "3d" (1m..365d). Enqueued as a job at emit
+   * time; at SEND time the action is re-read from the collection config and
+   * `when` is re-evaluated against the current entry — so disabling, removing,
+   * or editing the action also cancels its pending delayed sends (G2).
+   */
+  after?: string;
 }
 
 /** An action fired by an entry event. Email requires the resend connector. */

@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Collection, EventAction } from "@/db/schema";
 import { deliverWebhook } from "./webhook";
 import { connectorSecret, getConnector } from "./connectors";
 import { matchesClauses } from "./query";
 import { ValidationError } from "./validation";
+import { enqueueJob } from "./jobs";
 import { db } from "@/db";
 import { webhookDeliveries } from "@/db/schema";
 
@@ -19,6 +21,43 @@ import { webhookDeliveries } from "@/db/schema";
  */
 
 export type EntryEvent = "created" | "updated" | "deleted";
+
+/** `after` grammar: "45m" | "12h" | "3d", bounded 1 minute .. 365 days. */
+const AFTER_RE = /^(\d+)(m|h|d)$/;
+const AFTER_UNIT_MS = { m: 60_000, h: 3_600_000, d: 86_400_000 } as const;
+const AFTER_MAX_MS = 365 * AFTER_UNIT_MS.d;
+
+/** Parse an `after` duration to ms, or null when malformed / out of bounds. */
+export function parseAfter(after: string): number | null {
+  const m = AFTER_RE.exec(after);
+  if (!m) return null;
+  const ms = Number(m[1]) * AFTER_UNIT_MS[m[2] as keyof typeof AFTER_UNIT_MS];
+  return ms >= AFTER_UNIT_MS.m && ms <= AFTER_MAX_MS ? ms : null;
+}
+
+/**
+ * Stable identity of an action's CONTENT: sha256 over canonical JSON (sorted
+ * keys), excluding only `disabled`. Queued delayed jobs carry this hash and are
+ * matched against the CURRENT config at run time — so editing url/to/subject/
+ * when/after orphans (skips) jobs queued under the old definition, while
+ * toggling `disabled` keeps matching (disabled:true = paused, not re-identified).
+ */
+export function actionHash(action: EventAction): string {
+  const { disabled: _disabled, ...content } = action;
+  return createHash("sha256").update(canonicalJson(content)).digest("hex");
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 
 export async function emitEntryEvent(
   collection: Collection,
@@ -53,19 +92,62 @@ export async function emitEntryEvent(
     ...(extra ?? {}),
   };
 
-  await Promise.allSettled(
-    actions.map((a) =>
-      a.type === "webhook"
-        ? deliverWebhook({
-            projectId: collection.projectId,
-            collectionId: collection.id,
-            url: a.url,
-            event: `entry.${event}`,
-            payload,
-          })
-        : sendEmailAction(collection, `entry.${event}`, a, entry, payload),
-    ),
-  );
+  // Partition: `after` actions are enqueued as jobs (G2); the rest fire now.
+  // The dedupeKey pins timing to the FIRST matching event — later updates
+  // neither reset the timer nor enqueue a second send while one is queued.
+  const immediate = actions.filter((a) => !a.after);
+  const delayed = actions.filter((a) => a.after);
+
+  await Promise.allSettled([
+    ...immediate.map((a) => runEventAction(collection, `entry.${event}`, a, entry, payload)),
+    ...delayed.map((a) => {
+      const ms = parseAfter(a.after!);
+      if (ms === null) return Promise.resolve(); // define-time validation bars this
+      const hash = actionHash(a);
+      return enqueueJob({
+        projectId: collection.projectId,
+        kind: "event_action",
+        runAt: new Date(Date.now() + ms),
+        dedupeKey: `${entry.id}:${event}:${hash}`,
+        payload: {
+          collectionId: collection.id,
+          collectionName: collection.name,
+          event,
+          entryId: entry.id,
+          actionHash: hash,
+          // Display/debug ONLY — the handler re-resolves the action from the
+          // CURRENT collection config and never executes this copy.
+          enqueuedAction: a,
+          ...(changedFields ? { changedFields } : {}),
+        },
+      });
+    }),
+  ]);
+}
+
+/**
+ * Dispatch ONE action (webhook or email) with a ready payload — the shared exit
+ * point for immediate events, delayed jobs (G2), and later schedule/transition
+ * actions. Every outcome lands in webhook_deliveries.
+ */
+export async function runEventAction(
+  collection: Collection,
+  event: string,
+  action: EventAction,
+  entry: { id: string; data?: Record<string, unknown> },
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (action.type === "webhook") {
+    await deliverWebhook({
+      projectId: collection.projectId,
+      collectionId: collection.id,
+      url: action.url,
+      event,
+      payload,
+    });
+  } else {
+    await sendEmailAction(collection, event, action, entry, payload);
+  }
 }
 
 /** {{field}} placeholders resolve from entry data; {{id}} from the entry id. */

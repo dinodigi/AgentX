@@ -277,9 +277,14 @@ backfill, C's sweep, H's prune, K's reconciliation all name it as their runner).
       let a duplicate slip in while the original was `running`, so its
       `running→pending` reschedule collided → stall. Fixed: dedupe index covers
       `status IN (pending, running)`; regression-tested. ✅ 2026-07-08, 23-jobs smoke
-- [ ] 13.2 `G2` (S) — delayed actions: `after: "3d"` on EventAction; queued payloads
-      are **references + actionHash** — current config re-resolved at run time
-      (config edit = kill switch).
+- [x] 13.2 `G2` (S) — delayed actions: `after: "3d"` on EventAction (1m..365d);
+      queued payloads are **references + actionHash** (sha256 canonical JSON,
+      `disabled` excluded so pause keeps identity) — current config re-resolved at
+      run time: absent/edited/disabled action or deleted entry → skip-as-succeeded,
+      `when` re-evaluated against the CURRENT entry. Timer pins to the FIRST
+      matching event (dedupe per entry+event+action; documented). `runEventAction`
+      is the shared dispatch exit for immediate + delayed (+ later G3/G4) actions.
+      ✅ 2026-07-08, 24-delayed-events smoke (7)
 - [ ] 13.3 `G3` (M) — recurring schedules: `project_schedules` + define/list/delete_schedule
       + drain-tick (migration; makes `webhook_deliveries.collectionId` nullable —
       unblocks K4's unmapped-event logging).
