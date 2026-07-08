@@ -3,6 +3,7 @@ import {
   uuid,
   text,
   boolean,
+  integer,
   jsonb,
   timestamp,
   uniqueIndex,
@@ -327,6 +328,49 @@ export const transactReceipts = pgTable(
   (t) => [uniqueIndex("transact_receipts_key_idx").on(t.projectId, t.idempotencyKey)],
 );
 
+/** A job's lifecycle. Only `pending` rows are claimable; the rest are terminal
+ * except `running`, which a stale-lease reclaim can return to `pending`. */
+export type JobStatus = "pending" | "running" | "succeeded" | "failed" | "canceled";
+
+/**
+ * The shared job queue — one boring pg table drained by POST /api/jobs/drain.
+ * Claimed with a single-statement FOR UPDATE SKIP LOCKED UPDATE (proven safe on
+ * neon-http: concurrent drains partition work with zero coordination). Jobs are
+ * MUTABLE intent (claimed/rescheduled); webhook_deliveries stays the immutable
+ * outcome log. Only declarative features enqueue jobs — never arbitrary code.
+ */
+export const jobs = pgTable(
+  "jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull().default({}),
+    dedupeKey: text("dedupe_key"),
+    runAt: timestamp("run_at", { withTimezone: true }).defaultNow().notNull(),
+    status: text("status").$type<JobStatus>().notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [
+    index("jobs_status_run_at_idx").on(t.status, t.runAt),
+    // Suppress duplicate IN-FLIGHT work per project+kind. Covers BOTH pending and
+    // running (not just pending): if it covered only pending, a duplicate could be
+    // enqueued while the original is running, then the original's running→pending
+    // reschedule (finishJob / reclaimStale) would collide → unique_violation and a
+    // wedged queue. Scoped by project_id so one tenant can't suppress another's job.
+    uniqueIndex("jobs_dedupe_idx")
+      .on(t.projectId, t.kind, t.dedupeKey)
+      .where(sql`dedupe_key IS NOT NULL AND status IN ('pending', 'running')`),
+  ],
+);
+
 export interface Branding {
   displayName?: string;
   logoUrl?: string;
@@ -343,5 +387,6 @@ export type ProjectConnector = InferSelectModel<typeof projectConnectors>;
 export type WebhookDelivery = InferSelectModel<typeof webhookDeliveries>;
 export type AuditLogRow = InferSelectModel<typeof auditLog>;
 export type TransactReceipt = InferSelectModel<typeof transactReceipts>;
+export type Job = InferSelectModel<typeof jobs>;
 export type TrashedEntry = InferSelectModel<typeof entriesTrash>;
 export type EntryVersion = InferSelectModel<typeof entryVersions>;

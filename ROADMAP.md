@@ -265,11 +265,18 @@ validation ask → pull 16; sync/polling pain → pull 17; srcset/i18n need → 
 One boring pg `jobs` table; the **last piece of shared machinery** (E's embed
 backfill, C's sweep, H's prune, K's reconciliation all name it as their runner).
 
-- [ ] 13.1 `G1` (M) — jobs table + single-statement `FOR UPDATE SKIP LOCKED` claim
-      (**prove on neon-http in smoke before building on it**; fallback: optimistic
-      per-row claim; B2's `withTransaction` is plan C) + hardened `POST /api/jobs/drain`
-      (CRON_SECRET bearer — the host-agnostic cron surface: Netlify scheduled fn
-      today, Render cron tomorrow) + opportunistic drain via `after()` + `list_jobs`.
+- [x] 13.1 `G1` (M) — jobs table + single-statement `FOR UPDATE SKIP LOCKED` claim
+      — **PROVEN on neon-http** (spike: 60 jobs / 12 concurrent claimers → 0 double-claim,
+      so plan-A, not the optimistic/`withTransaction` fallbacks) + hardened
+      `POST /api/jobs/drain` (CRON_SECRET bearer, fail-closed 503 `E_UNCONFIGURED`
+      when unset/<16, `timingSafeEqual` compare) + `list_jobs`. Review pre-fixes:
+      dedupe index scoped by `project_id` (openMinor #1); opportunistic `after()`
+      drain-nudges **deferred** out of G1 (openMinor #4 — cron is the guaranteed
+      path). Netlify scheduled fn is the only host-specific piece. Adversarial
+      review (4 lenses) caught a real queue-wedge: dedupe scoped to `pending` only
+      let a duplicate slip in while the original was `running`, so its
+      `running→pending` reschedule collided → stall. Fixed: dedupe index covers
+      `status IN (pending, running)`; regression-tested. ✅ 2026-07-08, 23-jobs smoke
 - [ ] 13.2 `G2` (S) — delayed actions: `after: "3d"` on EventAction; queued payloads
       are **references + actionHash** — current config re-resolved at run time
       (config edit = kill switch).

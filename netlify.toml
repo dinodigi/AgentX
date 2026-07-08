@@ -7,3 +7,8 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# Custom functions (the scheduled job drainer) live here alongside the Next.js
+# plugin's generated functions. jobs-drain.mjs self-declares its cron schedule.
+[functions]
+  directory = "netlify/functions"

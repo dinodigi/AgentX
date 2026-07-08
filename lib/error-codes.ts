@@ -22,6 +22,8 @@ export const ERROR_CODES = {
   E_SCOPE: "the token lacks the required scope for this operation",
   E_UNKNOWN_TOOL: "no such tool — tools/list shows the full surface",
   E_INTERNAL: "unexpected server error — not agent-repairable; retry or report",
+  E_UNCONFIGURED:
+    "a required server env var is missing or too weak — the message names the exact var and constraint (operator-fixed, not agent-repairable)",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

@@ -39,6 +39,7 @@ import { listAssets, deleteAsset } from "@/lib/r2";
 import { listDeliveries } from "@/lib/webhook";
 import { refireDelivery } from "@/lib/events";
 import { listAuditLog } from "@/lib/audit";
+import { listJobs } from "@/lib/jobs";
 import { generateClientCode } from "@/lib/mcp/client-code";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
 import { uploadAsset } from "@/lib/r2";
@@ -787,6 +788,25 @@ export const TOOL_DEFS: ToolDef[] = [
         entryId: { type: "string" },
         action: { type: "string", enum: ["create", "update", "delete", "restore", "purge"] },
         limit: { type: "number" },
+        offset: { type: "number" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_jobs",
+    description:
+      "List background jobs for this project, newest first. Jobs are created ONLY by declarative " +
+      "features (delayed event actions, schedules) and drained by the platform's cron — there is no " +
+      "arbitrary-code path. Each row: {id, kind, status: pending|running|succeeded|failed|canceled, " +
+      "runAt, attempts, maxAttempts, lastError, dedupeKey, payload, createdAt}. Optional filters: " +
+      "kind, status. Supports limit/offset (default 20, max 100); returns {jobs, limit, offset, hasMore, nextOffset}.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        kind: { type: "string" },
+        status: { type: "string", enum: ["pending", "running", "succeeded", "failed", "canceled"] },
+        limit: { type: "number", description: "1-100, default 20" },
         offset: { type: "number" },
       },
       additionalProperties: false,
@@ -1573,6 +1593,38 @@ export async function callTool(
           bytes: Buffer.from(a.dataBase64, "base64"),
         });
         return ok({ id: asset.id, url: asset.url });
+      }
+
+      case "list_jobs": {
+        const a = z
+          .object({
+            kind: z.string().optional(),
+            status: z.enum(["pending", "running", "succeeded", "failed", "canceled"]).optional(),
+            limit: z.number().optional(),
+            offset: z.number().optional(),
+          })
+          .parse(rawArgs);
+        const limit = Math.min(Math.max(a.limit ?? 20, 1), 100);
+        const offset = Math.max(a.offset ?? 0, 0);
+        const { jobs: rows, hasMore } = await listJobs(projectId, { kind: a.kind, status: a.status, limit, offset });
+        return ok({
+          jobs: rows.map((j) => ({
+            id: j.id,
+            kind: j.kind,
+            status: j.status,
+            runAt: j.runAt,
+            attempts: j.attempts,
+            maxAttempts: j.maxAttempts,
+            lastError: j.lastError,
+            dedupeKey: j.dedupeKey,
+            payload: j.payload,
+            createdAt: j.createdAt,
+          })),
+          limit,
+          offset,
+          hasMore,
+          nextOffset: hasMore ? offset + limit : null,
+        });
       }
 
       default:
