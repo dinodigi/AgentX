@@ -87,6 +87,10 @@ describe("get_client_code: generated client compiles and runs", () => {
     assert.equal(r.value.filename, "agentx.ts");
     assert.match(r.value.code, /export interface Posts \{/);
     assert.match(r.value.code, /"draft" \| "live"/);
+    // H5: the generated client ships a realtime feed accessor + reconcile guidance.
+    assert.match(r.value.code, /export interface ChangeEvent/);
+    assert.match(r.value.code, /changes: \{/);
+    assert.match(r.value.code, /reconcile/i);
     const postsBlock = r.value.code.match(/export interface Posts \{[^}]*\}/)?.[0] ?? "";
     assert.ok(postsBlock.includes("title"), "Posts read type missing");
     assert.ok(!postsBlock.includes("internal"), "private field leaked into the public read type");
@@ -95,7 +99,7 @@ describe("get_client_code: generated client compiles and runs", () => {
     // A consumer that exercises the generated types: wrong shapes here = tsc failure.
     writeFileSync(
       path.join(tmp, "consumer.ts"),
-      `import { createClient, AgentXError, type Posts, type MessagesCreate } from "./agentx";
+      `import { createClient, AgentXError, type Posts, type MessagesCreate, type ChangeEvent } from "./agentx";
 const ax = createClient({ token: "t" });
 ax.setUserToken(null);
 export async function main(): Promise<void> {
@@ -108,7 +112,14 @@ export async function main(): Promise<void> {
   const msg: MessagesCreate = { email: "a@b.c", body: "hi" };
   const created: { id: string } = await ax.messages.create(msg);
   const up: { id: string; url: string } = await ax.messages.upload(new Blob(["x"]), "x.txt");
-  if (!(one.title.length > 0 && created.id && up.id)) throw new AgentXError(500, "unreachable");
+  // Realtime (H5): poll returns a cursor + typed ChangeEvents; stream returns a stop fn.
+  const feed = await ax.changes.poll({ collections: ["posts"] });
+  const kinds: ChangeEvent["kind"][] = feed.changes.map((c) => c.kind);
+  const stop: () => void = ax.changes.stream((c: ChangeEvent) => { void c.id; }, { since: feed.cursor });
+  stop();
+  if (!(one.title.length > 0 && created.id && up.id && feed.cursor !== undefined && kinds)) {
+    throw new AgentXError(500, "unreachable");
+  }
 }
 `,
     );
@@ -138,6 +149,35 @@ export async function main(): Promise<void> {
 
     const one = await ax.posts.get(rows[0].id);
     assert.equal(one.title, "Alpha");
+  });
+
+  it("compiled client polls the realtime change feed (H5)", async () => {
+    const ax = client.createClient({ baseUrl: `${BASE}/api/v1`, token: p.deliveryToken });
+    const boot = await retryTransient(() => ax.changes.poll());
+    assert.deepEqual(boot.changes, [], "bootstrap poll is empty");
+    assert.ok(boot.cursor, "bootstrap yields a cursor");
+    // A new post must surface from the bootstrap cursor (past the hold-back).
+    const created = await mcp(p.mcpToken, "create_entry", { collection: "posts", data: { title: "Realtime", status: "live" } });
+    let seen;
+    for (let i = 0; i < 12; i++) {
+      const page = await ax.changes.poll({ since: boot.cursor });
+      seen = page.changes.find((c) => c.id === created.value.id);
+      if (seen) break;
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    assert.ok(seen, "the new post surfaces via ax.changes.poll");
+    assert.equal(seen.kind, "created");
+    assert.equal(seen.data.title, "Realtime");
+    assert.ok(!("internal" in (seen.data ?? {})), "private field never appears in the feed");
+  });
+
+  it("get_project_info advertises the change-feed URLs + realtime positioning (H5)", async () => {
+    const info = await mcp(p.mcpToken, "get_project_info", {});
+    assert.ok(info.ok, info.errorText);
+    assert.match(info.value.urls.changes, /\/api\/v1\/changes$/);
+    assert.match(info.value.urls.changesStream, /\/api\/v1\/changes\/stream$/);
+    assert.match(info.value.deliveryApi.realtime, /PULL, not push/);
+    assert.match(info.value.deliveryApi.realtime, /reconcile/i);
   });
 
   it("compiled client writes through publicWrite and surfaces AgentXError", async () => {

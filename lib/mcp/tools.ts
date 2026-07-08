@@ -1121,6 +1121,8 @@ export async function callTool(
             deliveryBase: `${ctx.baseUrl}/api/v1`,
             admin: `${ctx.baseUrl}/admin/${projectId}`,
             mcp: `${ctx.baseUrl}/api/mcp`,
+            changes: `${ctx.baseUrl}/api/v1/changes`,
+            changesStream: `${ctx.baseUrl}/api/v1/changes/stream`,
           },
           deliveryApi: {
             auth: "Authorization: Bearer <project token> on every request",
@@ -1145,6 +1147,17 @@ export async function callTool(
               "POST {deliveryBase}/{collection}/uploads — multipart/form-data 'file' part; " +
               "same gates as write plus the collection needs an asset field; returns {id,url} " +
               "to reference in the submission. 10 MB / image, pdf, text, csv, json only.",
+            realtime:
+              "PULL, not push: GET {deliveryBase}/changes?since=<cursor> returns changes " +
+              "(created|updated|deleted) since the cursor — omit since to get {changes:[], cursor} " +
+              "and stream forward; ETag 304 when idle. Or consume GET {deliveryBase}/changes/stream " +
+              "(SSE, bounded lifetime — reconnect with ?since or Last-Event-ID; the poll endpoint is " +
+              "the guaranteed-everywhere floor). Same publicRead/publicFilter/identity gating as a " +
+              "direct read, intersected with WRITE-TIME visibility so broadening a rule never exposes " +
+              "history. A hidden→shown row arrives as created/updated (upsert on unknown id); a " +
+              "shown→hidden row and a delete arrive as kind:deleted; refs are raw uuids. On a gap, a " +
+              "whole-collection delete, or a field rename, do a full list GET to reconcile. Push to " +
+              "YOUR server stays events:{webhook} on define_collection.",
             conventions:
               "errors are {error, code} with stable E_* codes; GETs carry ETags " +
               "(send If-None-Match, get 304)",

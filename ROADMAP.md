@@ -441,8 +441,14 @@ is written **once** against the final set instead of chasing it.
       the smoke testable), `last-event-id` added to CORS (#3), per-project
       concurrent-stream cap of 5 → 429 (#8). Resume via `?since`/`Last-Event-ID`.
       ✅ 2026-07-08, 31-changes-sse smoke (2)
-- [ ] 17.5 `H5` (S) — self-description + generated client code (poll/SSE/webhook
-      positioning). Retention prune runs as a G1 job.
+- [x] 17.5 `H5` (S) — self-description: `get_project_info` advertises `urls.changes`
+      + `changesStream` and a `realtime` positioning line (pull vs push); `get_client_code`
+      generates a `ChangeEvent` type + a `changes.{poll,stream}` accessor (ETag/304,
+      SSE with ?since resume + poll fallback, the reconcile rule in-band); admin API
+      page gains a Realtime card. Verified end-to-end: the generated poll/stream
+      client typechecks under `--strict` AND polls the live feed. ✅ 2026-07-08, 11-client-code (+2)
+- **Retention:** H1's probabilistic on-write prune is the stopgap; migrate to a G1
+  scheduled job (the runner now exists) when convenient — deferred, low-priority.
 - **Honest positioning:** documented-lossy near-realtime pull (~2–4s worst case);
   sync-minded clients periodically reconcile with a full list GET.
 

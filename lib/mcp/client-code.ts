@@ -225,6 +225,18 @@ export class AgentXError extends Error {
     super(message);
     this.name = "AgentXError";
   }
+}
+
+/** One change from the realtime feed. \`data\` holds only publicRead fields;
+ *  kind:"deleted" carries no data. Treat an unknown id as an upsert. */
+export interface ChangeEvent {
+  cursor: string;
+  collection: string;
+  id: string;
+  kind: "created" | "updated" | "deleted";
+  at: string;
+  changedFields?: string[];
+  data?: Record<string, unknown>;
 }`;
 
   const factory = `export function createClient(options: AgentXClientOptions) {
@@ -255,10 +267,93 @@ export class AgentXError extends Error {
     return json as T;
   }
 
+  function authHeaders(): Record<string, string> {
+    const h: Record<string, string> = { authorization: "Bearer " + options.token };
+    if (userToken) h["x-user-token"] = userToken;
+    return h;
+  }
+
+  /** One page of the change feed. Persist \`cursor\` and pass it as \`since\` next
+   *  time; \`ifNoneMatch\` (the previous ETag) yields notModified when idle. */
+  async function pollChanges(opts: { since?: string; collections?: string[]; ifNoneMatch?: string } = {}) {
+    const url = new URL(baseUrl + "/changes");
+    if (opts.since) url.searchParams.set("since", opts.since);
+    if (opts.collections?.length) url.searchParams.set("collections", opts.collections.join(","));
+    const headers = authHeaders();
+    if (opts.ifNoneMatch) headers["if-none-match"] = opts.ifNoneMatch;
+    const res = await fetch(url.toString(), { headers });
+    const etag = res.headers.get("etag") ?? undefined;
+    if (res.status === 304) return { changes: [] as ChangeEvent[], cursor: opts.since ?? "", hasMore: false, notModified: true, etag };
+    const json = (await res.json().catch(() => null)) as
+      | { changes?: ChangeEvent[]; cursor?: string; hasMore?: boolean; error?: string; code?: string }
+      | null;
+    if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status, json?.code);
+    return { changes: json?.changes ?? [], cursor: json?.cursor ?? "", hasMore: Boolean(json?.hasMore), notModified: false, etag };
+  }
+
   return {
     /** Swap the end-user JWT after login/logout. */
     setUserToken(t: string | null) {
       userToken = t;
+    },
+
+    /**
+     * Realtime change feed (PULL, not push). \`poll\` fetches changes since a
+     * cursor (persist it); \`stream\` consumes SSE with automatic ?since resume
+     * across the bounded-lifetime reconnects and a poll fallback. RECONCILE: on a
+     * gap, a whole-collection delete, or a field rename, do a full .list() — the
+     * feed is near-exact, not guaranteed-complete. Treat an unknown id as upsert.
+     */
+    changes: {
+      poll: pollChanges,
+      /** Consume the SSE stream, invoking onChange per event. Returns a stop fn. */
+      stream(onChange: (c: ChangeEvent) => void, opts: { since?: string; collections?: string[] } = {}): () => void {
+        let cursor = opts.since;
+        let stopped = false;
+        (async () => {
+          while (!stopped) {
+            try {
+              const url = new URL(baseUrl + "/changes/stream");
+              if (cursor) url.searchParams.set("since", cursor);
+              if (opts.collections?.length) url.searchParams.set("collections", opts.collections.join(","));
+              const res = await fetch(url.toString(), { headers: authHeaders() });
+              if (!res.ok || !res.body) throw new AgentXError(res.status, "stream failed");
+              const reader = res.body.getReader();
+              const dec = new TextDecoder();
+              let buf = "";
+              while (!stopped) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += dec.decode(value, { stream: true });
+                let i: number;
+                while ((i = buf.indexOf("\\n\\n")) >= 0) {
+                  const frame = buf.slice(0, i);
+                  buf = buf.slice(i + 2);
+                  const id = /^id: (.+)$/m.exec(frame)?.[1];
+                  const ev = /^event: (.+)$/m.exec(frame)?.[1];
+                  const data = /^data: (.+)$/m.exec(frame)?.[1];
+                  if (id) cursor = id;
+                  if (ev === "change" && data) onChange(JSON.parse(data) as ChangeEvent);
+                  else if (ev === "cursor" && data) cursor = (JSON.parse(data) as { cursor: string }).cursor;
+                }
+              }
+            } catch {
+              // Fall back to a poll (also advances the cursor), then reconnect.
+              try {
+                const p = await pollChanges({ since: cursor });
+                for (const c of p.changes) onChange(c);
+                if (p.cursor) cursor = p.cursor;
+              } catch {
+                /* keep trying */
+              }
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+          }
+        })();
+        return () => {
+          stopped = true;
+        };
+      },
     },
 ${included.map(accessorBlock).join("\n")}
   };
