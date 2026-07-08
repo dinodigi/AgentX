@@ -296,10 +296,17 @@ backfill, C's sweep, H's prune, K's reconciliation all name it as their runner).
       `date_trunc('milliseconds', …)` both sides (the entries.ts cursor idiom).
       Run-time truth on fire: deleted/disabled schedule or edited action
       (hash mismatch) → skip-as-succeeded. ✅ 2026-07-08, 25-schedules smoke (5)
-- [ ] 13.4 `G4` (M) — declarative state machines: `collections.workflow`
-      {field, initial, transitions[{from, to, actors, actions}]}; enforcement via
-      shared `applyWorkflowOnCreate` called from **all** create paths (single +
-      bulk + transact cores); transitions actor-gated (delivery excluded by default).
+- [x] 13.4 `G4` (M) — declarative state machines: `collections.workflow`
+      {field, initial, transitions[{from, to, actors, actions}]}; `applyWorkflowOnCreate`
+      on **all** create paths (single + bulk + transact); transitions actor-gated
+      (delivery excluded by default); `checkTransition` guards update + update_if
+      (CAS `from`-guard, `from` from the advisory pre-read); matched transition fires
+      `entry.transitioned` actions. Define-time bars non-enum field, out-of-option
+      states, overlapping (from,to), and `after` on transition actions. Adversarial
+      review (4 lenses) confirmed 1 real hole — `restore_entry_version` was a third
+      ungated `db.update(entries)` site that could reverse a transition; fixed by
+      pinning the workflow field to live (restore = content-only). Transact-create
+      spoof closed mid-review. ✅ 2026-07-08, 26-workflow smoke (9)
 - [ ] 13.5 `G4b` (S) — CAS-transition proof: racing-transitions smoke isolating the
       self-join pre-image claims before anything composes on them.
 - [ ] 13.6 `G5` (S) — `cancel_job`, admin Automation section, transition-aware entry form.

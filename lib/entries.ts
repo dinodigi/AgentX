@@ -31,7 +31,9 @@ import {
   type OrderByClause,
   type RelatedContextMap,
 } from "./query";
-import { emitEntryEvent, type EntryEvent } from "./events";
+import { emitEntryEvent, runEventAction, type EntryEvent } from "./events";
+import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workflow";
+import type { WorkflowActor } from "@/db/schema";
 import { recordAudit } from "./audit";
 import { defer } from "./defer";
 import { withTransaction, type DbExecutor } from "./db-tx";
@@ -197,6 +199,33 @@ export interface EmitDescriptor {
   event: EntryEvent;
   entry: { id: string; data?: Record<string, unknown> };
   previous?: Record<string, unknown>;
+  /** G4: set when this update crossed a workflow transition — the public fn
+   * fires the matched transition's actions as an entry.transitioned event. */
+  transition?: { field: string; from: string; to: string };
+}
+
+/** Map an AuditActor to a workflow actor, or undefined for an unknown surface
+ * (which then may NOT drive a transition — fail-closed). */
+function workflowActor(actor: AuditActor): WorkflowActor | undefined {
+  return actor.type === "mcp" || actor.type === "admin" || actor.type === "delivery" ? actor.type : undefined;
+}
+
+/** Fire a matched transition's actions (deferred) as an entry.transitioned event. */
+function fireTransition(collection: Collection, emit: EmitDescriptor): void {
+  if (!emit.transition || !collection.workflow) return;
+  const t = matchTransition(collection.workflow, emit.transition.from, emit.transition.to);
+  if (!t?.actions?.length) return;
+  const payload = {
+    collection: collection.name,
+    entry: emit.entry,
+    ...(emit.previous ? { previous: { data: emit.previous } } : {}),
+    transition: emit.transition,
+  };
+  defer(() =>
+    Promise.allSettled(
+      t.actions!.map((a) => runEventAction(collection, "entry.transitioned", a, emit.entry, payload)),
+    ),
+  );
 }
 
 /**
@@ -250,6 +279,7 @@ export async function createEntry(
   opts: { idempotencyKey?: string; actor?: AuditActor } = {},
 ): Promise<Entry> {
   const clean = validate(collection.fields, data, false);
+  applyWorkflowOnCreate(collection, clean); // default/enforce the initial state
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
 
@@ -281,6 +311,7 @@ async function updateEntryCore(
   collection: Collection,
   id: string,
   patch: Record<string, unknown>,
+  actorType?: WorkflowActor,
 ): Promise<{ entry: Entry; emit: EmitDescriptor }> {
   const [current] = await dbc
     .select()
@@ -288,6 +319,29 @@ async function updateEntryCore(
     .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
     .limit(1);
   if (!current) throw new ValidationError(`entry ${id} not found`, "E_NOT_FOUND");
+
+  // G4: a workflow move is validated (actor + from→to) BEFORE the write and
+  // guarded so a concurrent change since our read fails as E_CONFLICT.
+  const guards: SQL[] = [];
+  let transition: EmitDescriptor["transition"];
+  const wf = collection.workflow;
+  if (wf && wf.field in patch) {
+    if (!actorType) {
+      throw new ValidationError(`workflow: "${wf.field}" can only be changed by a known actor (mcp/admin/delivery)`);
+    }
+    const check = checkTransition(collection, actorType, patch)!; // throws E_VALIDATION on a bad target/actor
+    const from = current.data[wf.field];
+    if (from !== check.to) {
+      if (typeof from !== "string" || !check.allowedFroms.includes(from)) {
+        throw new ValidationError(
+          `workflow: "${wf.field}" cannot move ${JSON.stringify(from)} → "${check.to}" for actor "${actorType}" — allowed from: ${check.allowedFroms.join(", ")}`,
+        );
+      }
+      guards.push(sql`${entries.data}->>${wf.field} = ${from}`);
+      transition = { field: wf.field, from, to: check.to };
+    }
+    // from === to is an idempotent no-op: write it, fire nothing.
+  }
 
   // null = explicit unset (validate() already rejected null on required fields).
   const sets: Record<string, unknown> = {};
@@ -303,18 +357,26 @@ async function updateEntryCore(
     [row] = await dbc
       .update(entries)
       .set({ data: merged, updatedAt: new Date() })
-      .where(eq(entries.id, id))
+      .where(and(eq(entries.id, id), ...guards))
       .returning();
   } catch (e) {
     rethrowUnique(e);
   }
-  // The row existed at pre-read but a concurrent commit may have deleted it
-  // before the UPDATE (no row lock is held) — surface a clean E_NOT_FOUND
-  // rather than dereferencing undefined.
-  if (!row) throw new ValidationError(`entry ${id} not found`, "E_NOT_FOUND");
+  if (!row) {
+    // With a transition guard, a 0-row means the field moved since our read (or
+    // the row was deleted): a conflict to re-read and retry. Without a guard, a
+    // 0-row means a concurrent delete → E_NOT_FOUND.
+    if (transition) {
+      throw new ValidationError(
+        `workflow: "${transition.field}" changed since read — concurrent transition, re-read and retry`,
+        "E_CONFLICT",
+      );
+    }
+    throw new ValidationError(`entry ${id} not found`, "E_NOT_FOUND");
+  }
   return {
     entry: row,
-    emit: { event: "updated", entry: { id: row.id, data: row.data }, previous: current.data },
+    emit: { event: "updated", entry: { id: row.id, data: row.data }, previous: current.data, transition },
   };
 }
 
@@ -329,8 +391,9 @@ export async function updateEntry(
   const { refChecks } = buildEntrySchema(collection.fields, true);
   await verifyRefs(projectId, patch, refChecks);
 
-  const { entry, emit } = await updateEntryCore(db, collection, id, patch);
+  const { entry, emit } = await updateEntryCore(db, collection, id, patch, workflowActor(actor));
   defer(() => emitEntryEvent(collection, emit.event, emit.entry, emit.previous));
+  fireTransition(collection, emit);
   if (emit.previous) {
     recordVersion({
       projectId,
@@ -539,6 +602,29 @@ async function updateEntryIfCore(
     ...buildWhere(collection.fields, opts.if ?? []),
   ];
 
+  // G4: a workflow move on the CAS path. `to` is validated for the actor before
+  // SQL; the field must currently be an allowed `from` (or already `to` — an
+  // idempotent no-op) or the CAS 0-rows as a conflict. `from` is recovered from
+  // the advisory pre-read below, like `previous`.
+  const wf = collection.workflow;
+  const wfField = wf && wf.field in patch ? wf.field : null;
+  let wfTo: string | null = null;
+  if (wf && wfField) {
+    const actorType = workflowActor(opts.actor ?? UNKNOWN_ACTOR);
+    if (!actorType) {
+      throw new ValidationError(`workflow: "${wf.field}" can only be changed by a known actor (mcp/admin/delivery)`);
+    }
+    const check = checkTransition(collection, actorType, patch)!;
+    wfTo = check.to;
+    const guardVals = [...new Set([...check.allowedFroms, check.to])];
+    conditions.push(
+      sql`(${entries.data}->>${wf.field}) = ANY(${sql`ARRAY[${sql.join(
+        guardVals.map((v) => sql`${v}`),
+        sql`, `,
+      )}]::text[]`})`,
+    );
+  }
+
   // null = explicit unset, mirroring update_entry: subtract unset keys, then
   // merge the rest — all inside the single conditional UPDATE.
   const casSets: Record<string, unknown> = {};
@@ -591,10 +677,17 @@ async function updateEntryIfCore(
     const diagnosis = await diagnoseCasFailure(dbc, collection, id, opts, incField, raceFree);
     return { ok: false, diagnosis };
   }
+  // Recover the transition `from` from the advisory pre-read (hedged on
+  // neon-http, race-free inside a tx) — only when it actually moved.
+  let transition: EmitDescriptor["transition"];
+  if (wfField && wfTo !== null) {
+    const from = preRead?.data[wfField];
+    if (typeof from === "string" && from !== wfTo) transition = { field: wfField, from, to: wfTo };
+  }
   return {
     ok: true,
     entry: row,
-    emit: { event: "updated", entry: { id: row.id, data: row.data }, previous: preRead?.data },
+    emit: { event: "updated", entry: { id: row.id, data: row.data }, previous: preRead?.data, transition },
     changedFields: [...Object.keys(patch), ...(opts.increment ? [opts.increment.field] : [])],
   };
 }
@@ -618,6 +711,7 @@ export async function updateEntryIf(
   const { entry, emit, changedFields } = result;
   const actor = opts.actor ?? UNKNOWN_ACTOR;
   defer(() => emitEntryEvent(collection, emit.event, emit.entry, emit.previous));
+  fireTransition(collection, emit);
   // C8: CAS captures a version too, from the advisory pre-read (not a self-join).
   if (emit.previous) {
     recordVersion({
@@ -684,6 +778,15 @@ export async function restoreEntryVersion(
       `entry ${entryId} is not live — restore it from trash before restoring a version`,
       "E_NOT_FOUND",
     );
+  }
+
+  // Restore is CONTENT time-travel, not a workflow transition: never move the
+  // state-machine field outside a declared, actor-gated transition. Pin it to
+  // the live value so an old snapshot can't reverse actor-gated progress
+  // (e.g. published→draft) by sidestepping the transition check.
+  const wf = collection.workflow;
+  if (wf && wf.field in clean && clean[wf.field] !== current.data[wf.field]) {
+    clean[wf.field] = current.data[wf.field];
   }
 
   let row: Entry | undefined;
@@ -953,6 +1056,7 @@ export async function transact(
 
       if (op.op === "create") {
         const clean = validate(collection.fields, data, false);
+        applyWorkflowOnCreate(collection, clean); // initial-state rule on the transact create path too
         const { refChecks } = buildEntrySchema(collection.fields);
         await verifyRefs(projectId, clean, refChecks, assumeExisting);
         prepared.push({ kind: "create", collection, id: createIds[i]!, clean, changedFields: Object.keys(clean) });
@@ -964,7 +1068,7 @@ export async function transact(
         prepared.push({ kind: "update", collection, id, clean, changedFields: Object.keys(clean) });
       } else if (op.op === "update_if") {
         if (!id) throw new ValidationError("update_if op requires an id");
-        const casOpts: UpdateIfOpts = { if: op.if, data, increment: op.increment };
+        const casOpts: UpdateIfOpts = { if: op.if, data, increment: op.increment, actor };
         const casPlan = await prepareUpdateIf(projectId, collection, casOpts, assumeExisting);
         prepared.push({ kind: "update_if", collection, id, casOpts, casPlan });
       } else {
@@ -1060,7 +1164,7 @@ export async function transact(
             if (emit) emitPlan.push({ collection: p.collection, emit });
             auditPlan.push({ collection: p.collection, id: p.id, action: "create", changedFields: p.changedFields });
           } else if (p.kind === "update") {
-            const { emit } = await updateEntryCore(tx, p.collection, p.id, p.clean!);
+            const { emit } = await updateEntryCore(tx, p.collection, p.id, p.clean!, workflowActor(actor));
             emitPlan.push({ collection: p.collection, emit });
             auditPlan.push({ collection: p.collection, id: p.id, action: "update", changedFields: p.changedFields });
             if (emit.previous) {
@@ -1114,6 +1218,7 @@ export async function transact(
   defer(async () => {
     for (const { collection, emit } of emitPlan) {
       await emitEntryEvent(collection, emit.event, emit.entry, emit.previous);
+      fireTransition(collection, emit); // transact updates fire transition actions too
     }
   });
   for (const a of auditPlan) {
@@ -1193,6 +1298,7 @@ export async function bulkCreateEntries(
     items.map(async (item, index) => {
       try {
         const clean = validate(collection.fields, item, false);
+        applyWorkflowOnCreate(collection, clean); // same initial-state rule as createEntry
         await verifyRefs(projectId, clean, refChecks);
         valid.push({ index, clean });
       } catch (e) {

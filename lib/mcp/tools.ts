@@ -57,9 +57,11 @@ import type { ErrorCode } from "@/lib/error-codes";
 
 const BOUNDARIES =
   "Boundaries: this system defines DATA STRUCTURE + CRUD (plus atomic batches via " +
-  "transact and recoverable deletes via trash/restore). It does NOT do " +
-  "authorization/row-level rules beyond presets (those live in the app layer), i18n, " +
-  "or workflows. Public-read visibility is per-field (set publicRead on each field). " +
+  "transact, recoverable deletes via trash/restore, delayed/scheduled actions, and " +
+  "declarative field-transition workflows — actor-gated state machines with " +
+  "webhook/email actions, no arbitrary code and no multi-entry orchestration). It " +
+  "does NOT do authorization/row-level rules beyond presets (those live in the app " +
+  "layer) or i18n. Public-read visibility is per-field (set publicRead on each field). " +
   "Public-write is per-collection.";
 
 export interface ToolDef {
@@ -214,6 +216,42 @@ export const TOOL_DEFS: ToolDef[] = [
             updated: { type: "array", items: { type: "object" } },
             deleted: { type: "array", items: { type: "object" } },
           },
+          additionalProperties: false,
+        },
+        workflow: {
+          type: "object",
+          description:
+            "declarative state machine over ONE enum field: {field, initial, transitions:[{from: " +
+            "state|state[], to: state, actors?: (mcp|admin|delivery)[], actions?: [event action]}]}. " +
+            "initial is enforced on EVERY create path (including bulk_create_entries and " +
+            "public/delivery writes — an explicit non-initial value is rejected). The field then " +
+            "moves ONLY via a declared transition; an illegal move is rejected with the allowed " +
+            "targets, and a target no transition reaches from the current state conflicts. " +
+            "Transitions are ACTOR-GATED — by default only mcp and admin may transition; add " +
+            "'delivery' to a transition's actors to let end users drive it (e.g. an owner cancelling " +
+            "their own request). NOTE: 'admin' includes client-role members in v1. Overlapping " +
+            "(from,to) pairs are rejected at define time so every move resolves one transition. " +
+            "A matched transition fires its actions as an entry.transitioned event (webhook/email, " +
+            "immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
+          properties: {
+            field: { type: "string", description: "an existing enum field" },
+            initial: { type: "string", description: "one of the field's options" },
+            transitions: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  from: { description: "state or state[]" },
+                  to: { type: "string" },
+                  actors: { type: "array", items: { type: "string", enum: ["mcp", "admin", "delivery"] } },
+                  actions: { type: "array", items: { type: "object" } },
+                },
+                required: ["from", "to"],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ["field", "initial", "transitions"],
           additionalProperties: false,
         },
         renames: {
@@ -934,6 +972,23 @@ const defineArgs = z.object({
     })
     .optional(),
   renames: z.array(z.object({ from: z.string(), to: z.string() })).optional(),
+  workflow: z
+    .object({
+      field: z.string(),
+      initial: z.string(),
+      transitions: z
+        .array(
+          z.object({
+            from: z.union([z.string(), z.array(z.string()).min(1)]),
+            to: z.string(),
+            actors: z.array(z.enum(["mcp", "admin", "delivery"])).optional(),
+            actions: z.array(eventActionSchema).optional(),
+          }),
+        )
+        .min(1),
+    })
+    .nullable()
+    .optional(),
   confirm: z.boolean().optional(),
 });
 const nameArg = z.object({ name: z.string() });
@@ -1082,6 +1137,7 @@ export async function callTool(
           publicFilter: a.publicFilter,
           access: a.access,
           events: a.events,
+          workflow: a.workflow as never,
           renames: a.renames,
           confirm: a.confirm,
         });
@@ -1125,6 +1181,7 @@ export async function callTool(
           publicFilter: c.publicFilter ?? null,
           access: c.access ?? null,
           events: c.events ?? null,
+          workflow: c.workflow ?? null,
           fields: c.fields,
         });
       }

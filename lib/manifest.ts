@@ -32,6 +32,7 @@ export interface ProjectManifest {
     publicFilter: WhereItem[] | null;
     access: Collection["access"] | null;
     events: Record<string, unknown> | null;
+    workflow: Collection["workflow"] | null;
     fields: FieldDef[];
   }[];
 }
@@ -73,6 +74,14 @@ const manifestSchema = z.object({
         .nullable()
         .default(null),
       events: z.record(z.unknown()).nullable().default(null),
+      workflow: z
+        .object({
+          field: z.string(),
+          initial: z.string(),
+          transitions: z.array(z.record(z.unknown())).min(1),
+        })
+        .nullable()
+        .default(null),
       fields: z.array(z.any()),
     }),
   ),
@@ -96,6 +105,7 @@ export async function exportProject(projectId: string): Promise<ProjectManifest>
       publicFilter: c.publicFilter ?? null,
       access: c.access ?? null,
       events: c.events ?? null,
+      workflow: c.workflow ?? null,
       fields: c.fields,
     })),
   };
@@ -176,6 +186,7 @@ export async function importProject(
       publicFilter: col.publicFilter,
       access: col.access,
       events: col.events as never,
+      workflow: col.workflow as never,
       confirm,
     });
     if (result.applied) applied.push(col.name);

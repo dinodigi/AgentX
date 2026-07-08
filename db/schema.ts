@@ -34,6 +34,31 @@ export type EventAction =
   | ({ type: "webhook"; url: string } & EventActionBase)
   | ({ type: "email"; to: string; subject: string } & EventActionBase);
 
+/** Which surfaces may drive a transition. delivery (end users) is excluded by
+ * default — the flagship approval flow is secure unless a transition opts in. */
+export type WorkflowActor = "mcp" | "admin" | "delivery";
+
+/** One edge of a state machine: from → to, actor-gated, firing optional actions. */
+export interface WorkflowTransition {
+  from: string | string[];
+  to: string;
+  /** Defaults to ["mcp","admin"] — delivery must be listed explicitly. */
+  actors?: WorkflowActor[];
+  actions?: EventAction[];
+}
+
+/**
+ * A declarative state machine over one enum field (G4). `initial` is enforced on
+ * EVERY create path; transitions are the only way the field moves, actor-gated.
+ * Define-time rejects overlapping (from,to) pairs, so from→to resolves exactly
+ * one transition.
+ */
+export interface WorkflowConfig {
+  field: string;
+  initial: string;
+  transitions: WorkflowTransition[];
+}
+
 /**
  * Identity presets for the delivery API — parameterized, never an expression
  * language. A ClaimRule matches when a verified JWT custom claim equals one of
@@ -125,6 +150,9 @@ export const collections = pgTable(
       updated?: EventAction[];
       deleted?: EventAction[];
     }>(),
+    /** G4: a state machine over one enum field — initial enforced on create,
+     * actor-gated transitions the only way it moves. */
+    workflow: jsonb("workflow").$type<WorkflowConfig>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

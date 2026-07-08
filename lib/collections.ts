@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { collections, entries, entriesTrash, type Collection, type EventAction } from "@/db/schema";
 import { getConnector } from "./connectors";
 import { parseAfter } from "./events";
+import { validateWorkflow } from "./workflow";
 import { ValidationError } from "./validation";
 import { validateFieldDefs, collectionNameSchema } from "./validation";
 import { buildWhere, type WhereItem } from "./query";
@@ -83,6 +84,9 @@ export interface DefineCollectionInput {
    * so a rename never strands entries the way drop+add would. Types must match.
    */
   renames?: { from: string; to: string }[];
+  /** G4: a state machine over one enum field — initial enforced on create,
+   * actor-gated transitions the only way it moves. */
+  workflow?: Collection["workflow"] | null;
   /** Required when redefinition drops or retypes fields (destructive). */
   confirm?: boolean;
 }
@@ -542,6 +546,37 @@ export async function defineCollection(
   if (input.publicFilter?.length) buildWhere(fields, input.publicFilter);
   await validateAccessAndEvents(projectId, fields, input.access, input.events, input.publicWrite ?? false);
 
+  // G4: the state machine's field/states/transitions must be internally valid;
+  // transition actions get the same validation as event actions.
+  if (input.workflow) {
+    validateWorkflow(input.workflow, fields, (actions) => {
+      for (const a of actions) {
+        if (a.type === "webhook") {
+          if (!/^https?:\/\//.test(a.url)) throw new ValidationError("workflow action: webhook url must be http(s)");
+        } else if (a.type === "email") {
+          if (!a.to || !a.subject) throw new ValidationError("workflow action: email actions need to + subject");
+        } else {
+          throw new ValidationError('workflow action: type must be "webhook" or "email"');
+        }
+        if (a.when?.length) buildWhere(fields, a.when);
+        if (a.after !== undefined) {
+          throw new ValidationError(
+            "workflow action: transition actions fire immediately — `after` is not supported on transitions yet; use an entry event action for delayed sends",
+          );
+        }
+      }
+    });
+    const hasEmail = input.workflow.transitions
+      .flatMap((t) => t.actions ?? [])
+      .some((a) => a.type === "email");
+    if (hasEmail && !(await getConnector(projectId, "resend"))) {
+      throw new ValidationError(
+        "workflow: email transition actions need the Resend connector — connect it in project settings first",
+        "E_CONNECTOR_REQUIRED",
+      );
+    }
+  }
+
   // Relation targets must resolve to a real collection in this project.
   const existing = await listCollections(projectId);
   const known = new Set(existing.map((c) => c.name).concat(name));
@@ -601,6 +636,7 @@ export async function defineCollection(
     publicFilter: input.publicFilter ?? null,
     access: input.access ?? null,
     events: input.events ?? null,
+    workflow: input.workflow ?? null,
     updatedAt: new Date(),
   };
 
@@ -617,6 +653,7 @@ export async function defineCollection(
         publicFilter: values.publicFilter,
         access: values.access,
         events: values.events,
+        workflow: values.workflow,
         updatedAt: values.updatedAt,
       },
     })
