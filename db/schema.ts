@@ -235,6 +235,81 @@ export const assets = pgTable("assets", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+/**
+ * Soft-deleted entries. A delete is a row MOVE from `entries` to here (same
+ * primary-key uuid), so every visibility path — queries, delivery, aggregates —
+ * excludes trashed rows structurally, with zero `deletedAt IS NULL` filters to
+ * forget. Restore moves the row back. Purge (Terraform-style plan + confirm)
+ * deletes from here permanently.
+ */
+export const entriesTrash = pgTable(
+  "entries_trash",
+  {
+    id: uuid("id").primaryKey(), // the original entry id, preserved
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    collectionId: uuid("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull().default({}),
+    idempotencyKey: text("idempotency_key"),
+    handledAt: timestamp("handled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }).defaultNow().notNull(),
+    deletedBy: jsonb("deleted_by").$type<AuditActor>().notNull().default({ type: "unknown" }),
+  },
+  (t) => [
+    index("entries_trash_collection_idx").on(t.collectionId, t.deletedAt),
+    index("entries_trash_project_idx").on(t.projectId, t.deletedAt),
+  ],
+);
+
+/**
+ * Point-in-time PRE-image snapshots, written on every update (last 20 per entry).
+ * Deliberately NO FK to entries, so history survives a trash round-trip — the
+ * entryId may point at a live row, a trashed row, or (until reaped) a purged one.
+ */
+export const entryVersions = pgTable(
+  "entry_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    collectionId: uuid("collection_id")
+      .notNull()
+      .references(() => collections.id, { onDelete: "cascade" }),
+    entryId: uuid("entry_id").notNull(),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+    changedFields: jsonb("changed_fields").$type<string[]>(),
+    actor: jsonb("actor").$type<AuditActor>().notNull().default({ type: "unknown" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("entry_versions_entry_idx").on(t.entryId, t.createdAt)],
+);
+
+/**
+ * One row per committed `transact` batch that carried an idempotencyKey. Written
+ * as the FIRST statement inside the transaction with the complete per-op result
+ * ids (all known before execution), so a retried batch replays the stored
+ * results instead of re-applying — and a rolled-back batch leaves no receipt.
+ */
+export const transactReceipts = pgTable(
+  "transact_receipts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    results: jsonb("results").$type<{ op: string; collection: string; id: string }[]>().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("transact_receipts_key_idx").on(t.projectId, t.idempotencyKey)],
+);
+
 export interface Branding {
   displayName?: string;
   logoUrl?: string;
@@ -250,3 +325,6 @@ export type ProjectMember = InferSelectModel<typeof projectMembers>;
 export type ProjectConnector = InferSelectModel<typeof projectConnectors>;
 export type WebhookDelivery = InferSelectModel<typeof webhookDeliveries>;
 export type AuditLogRow = InferSelectModel<typeof auditLog>;
+export type TransactReceipt = InferSelectModel<typeof transactReceipts>;
+export type TrashedEntry = InferSelectModel<typeof entriesTrash>;
+export type EntryVersion = InferSelectModel<typeof entryVersions>;

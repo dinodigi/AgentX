@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { CORS_HEADERS } from "./cors";
 import type { ErrorCode } from "./error-codes";
+import type { ConstraintIssue } from "./validation";
 
 /**
  * Shared HTTP plumbing for the delivery API: every response carries CORS
@@ -31,9 +32,13 @@ export function deliveryError(
   status: number,
   message: string,
   init?: ResponseInit,
+  issues?: ConstraintIssue[],
 ): Response {
   const code = CODE_BY_STATUS[status] ?? "E_INTERNAL";
-  return corsJson({ error: message, code }, { ...init, status });
+  return corsJson(
+    { error: message, code, ...(issues && issues.length > 0 ? { issues: issues.slice(0, 20) } : {}) },
+    { ...init, status },
+  );
 }
 
 /**

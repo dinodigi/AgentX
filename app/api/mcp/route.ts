@@ -99,5 +99,9 @@ export async function GET(req: NextRequest) {
     scope: info?.scope ?? null,
     tools: TOOL_DEFS.map((t) => t.name),
     errorCodes: ERROR_CODES,
+    errorFormat:
+      "tool errors: line 1 is `Error [CODE]: message`; validation-shaped failures append " +
+      "`issues: [{field, constraint, limit?, allowed?, pattern?, hint}]` — parse it to repair inputs " +
+      "field by field (constraint kinds: type|required|required_if|min|max|pattern|enum|unique|unknown_field|ref_missing)",
   });
 }

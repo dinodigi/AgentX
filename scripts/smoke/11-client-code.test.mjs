@@ -8,6 +8,28 @@ import path from "node:path";
 import { ensureServer, createEphemeralProject, mcp, BASE } from "./helpers.mjs";
 
 /**
+ * The `before` block runs tsc via execFileSync, which BLOCKS the event loop for
+ * ~15-20s — longer than the dev server's HTTP keep-alive timeout. undici's
+ * pooled socket goes half-dead and the first reuse resets (ECONNRESET). A single
+ * retry opens a fresh connection. Purely a test-harness artifact of a blocking
+ * child process next to a keep-alive client; the server is unaffected.
+ */
+async function retryTransient(fn, tries = 3) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      const code = e?.cause?.code ?? e?.code;
+      if (code !== "ECONNRESET" && !/fetch failed/.test(String(e?.message))) throw e;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  throw last;
+}
+
+/**
  * The strongest test in the suite: the generated client must (1) typecheck
  * under --strict next to a typed consumer, and (2) actually work at runtime
  * against the live delivery API. If either breaks, get_client_code is lying.
@@ -106,7 +128,8 @@ export async function main(): Promise<void> {
 
   it("compiled client reads the delivery API (public projection intact)", async () => {
     const ax = client.createClient({ baseUrl: `${BASE}/api/v1`, token: p.deliveryToken });
-    const rows = await ax.posts.list({ sort: { field: "price", dir: "asc" } });
+    // First call after the blocking tsc compile — retry a stale-socket reset.
+    const rows = await retryTransient(() => ax.posts.list({ sort: { field: "price", dir: "asc" } }));
     assert.deepEqual(rows.map((r) => r.title), ["Alpha", "Beta"]);
     assert.ok(!("internal" in rows[0]), "private field leaked at runtime");
 

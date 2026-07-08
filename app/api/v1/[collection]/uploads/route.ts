@@ -64,7 +64,7 @@ export async function POST(
     });
     return corsJson({ id: asset.id, url: asset.url }, { status: 201 });
   } catch (e) {
-    if (e instanceof ValidationError) return deliveryError(422, e.message);
+    if (e instanceof ValidationError) return deliveryError(422, e.message, undefined, e.issues);
     return deliveryError(500, "upload failed");
   }
 }

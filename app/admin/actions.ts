@@ -111,3 +111,73 @@ export async function deleteEntryAction(
   await deleteEntry(collection, entryId, { type: "admin", userId: viewer?.userId });
   redirect(`/admin/${projectId}/${collectionName}`);
 }
+
+/** Restore a trashed entry from the admin Trash page. */
+export async function restoreEntryAction(
+  projectId: string,
+  collectionName: string,
+  entryId: string,
+): Promise<{ error?: string } | void> {
+  const role = await getProjectRole(projectId);
+  if (!role) return { error: "no access to this project" };
+  const collection = await getCollection(projectId, collectionName);
+  if (!collection) return { error: "collection not found" };
+  const viewer = await getViewer();
+  try {
+    const { restoreEntry } = await import("@/lib/trash");
+    await restoreEntry(projectId, collection, entryId, { type: "admin", userId: viewer?.userId });
+  } catch (e) {
+    if (e instanceof ValidationError) return { error: e.message };
+    return { error: "could not restore entry" };
+  }
+  revalidatePath(`/admin/${projectId}/trash`);
+}
+
+/** Permanently purge a trashed entry from the admin Trash page. */
+export async function purgeEntryAction(
+  projectId: string,
+  collectionName: string,
+  entryId: string,
+): Promise<{ error?: string } | void> {
+  const role = await getProjectRole(projectId);
+  if (!role) return { error: "no access to this project" };
+  const collection = await getCollection(projectId, collectionName);
+  if (!collection) return { error: "collection not found" };
+  const viewer = await getViewer();
+  try {
+    const { purgeEntry } = await import("@/lib/trash");
+    await purgeEntry(projectId, collection, entryId, {
+      confirm: true,
+      actor: { type: "admin", userId: viewer?.userId },
+    });
+  } catch (e) {
+    if (e instanceof ValidationError) return { error: e.message };
+    return { error: "could not purge entry" };
+  }
+  revalidatePath(`/admin/${projectId}/trash`);
+}
+
+/** Roll an entry back to a past version from the entry edit page. */
+export async function restoreVersionAction(
+  projectId: string,
+  collectionName: string,
+  entryId: string,
+  versionId: string,
+): Promise<{ error?: string } | void> {
+  const role = await getProjectRole(projectId);
+  if (!role) return { error: "no access to this project" };
+  const collection = await getCollection(projectId, collectionName);
+  if (!collection) return { error: "collection not found" };
+  const viewer = await getViewer();
+  try {
+    const { restoreEntryVersion } = await import("@/lib/entries");
+    await restoreEntryVersion(projectId, collection, entryId, versionId, {
+      type: "admin",
+      userId: viewer?.userId,
+    });
+  } catch (e) {
+    if (e instanceof ValidationError) return { error: e.message };
+    return { error: "could not restore version" };
+  }
+  revalidatePath(`/admin/${projectId}/${collectionName}/${entryId}`);
+}

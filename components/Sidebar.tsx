@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Code2, Image as ImageIcon, Inbox, Menu, Palette, Plug, Settings, Table2 } from "lucide-react";
+import { ArrowLeft, Code2, Image as ImageIcon, Inbox, Menu, Palette, Plug, Settings, Table2, Trash2 } from "lucide-react";
 
 /**
  * The project workspace rail — ink-dark so the content area reads as paper and
@@ -126,6 +126,7 @@ export function Sidebar({
 
       {groupLabel("Project")}
       {item(`/admin/${projectId}/assets`, "Media", ImageIcon)}
+      {item(`/admin/${projectId}/trash`, "Trash", Trash2)}
       {item(`/admin/${projectId}/appearance`, "Appearance", Palette)}
       {item(`/admin/${projectId}/connectors`, "Connectors", Plug)}
       {item(`/admin/${projectId}/api`, "API reference", Code2)}

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FIELD_TYPES, type FieldDef } from "./field-types";
+import { FIELD_TYPES, fieldMin, fieldMax, fieldPattern, type FieldDef } from "./field-types";
 import type { ErrorCode } from "./error-codes";
 
 /**
@@ -24,14 +24,183 @@ import type { ErrorCode } from "./error-codes";
 
 const NAME_RE = /^[a-z][a-z0-9_]*$/;
 
+/**
+ * A field with `pattern` must also set max <= this cap. Length bounds the input
+ * a regex sees — but for a catastrophic pattern like (a+)+$, cost is exponential
+ * in input length, so ~35 chars already hangs the event loop. Length alone is
+ * NOT a ReDoS defense; `patternStarHeightSafe` rejecting the dangerous pattern
+ * CLASS at define time is what makes runtime `re.test` provably bounded.
+ */
+const PATTERN_LENGTH_CAP = 10_000;
+/** Sanity bound on the pattern source itself (readability, not security). */
+const PATTERN_SOURCE_CAP = 200;
+
+/**
+ * Reject catastrophic-backtracking patterns (star height > 1): a quantifier
+ * applied to a group that itself contains a quantifier — (a+)+, (\w+\s?)+,
+ * (a|b+)* etc. This is the safe-regex heuristic. Owner-authored patterns run
+ * against attacker-controlled input on public-write forms, so only linear-time
+ * patterns may ever enter the registry. (A future RE2/recheck pass could widen
+ * coverage to polynomial cases; this closes the demonstrated exponential class.)
+ */
+export function patternStarHeightSafe(src: string): boolean {
+  const stack: { inner: boolean }[] = [{ inner: false }];
+  let inClass = false;
+  let closedGroupHadInner = false;
+  let prevWasGroupClose = false;
+  let i = 0;
+  const isQ = (c: string) => c === "*" || c === "+" || c === "?" || c === "{";
+  while (i < src.length) {
+    const c = src[i];
+    if (c === "\\") { i += 2; prevWasGroupClose = false; continue; }
+    if (inClass) { if (c === "]") inClass = false; i++; prevWasGroupClose = false; continue; }
+    if (c === "[") { inClass = true; i++; prevWasGroupClose = false; continue; }
+    if (c === "(") {
+      stack.push({ inner: false });
+      i++;
+      // Skip a group-type prefix so its chars aren't read as quantifiers:
+      // (?:  (?=  (?!  (?<=  (?<!  (?<name>
+      if (src[i] === "?") {
+        i++;
+        if (src[i] === "<" && src[i + 1] !== "=" && src[i + 1] !== "!") {
+          while (i < src.length && src[i] !== ">") i++;
+          i++; // consume '>'
+        } else {
+          if (src[i] === "<") i++; // lookbehind marker
+          i++; // consume : = or !
+        }
+      }
+      prevWasGroupClose = false;
+      continue;
+    }
+    if (c === ")") {
+      const frame = stack.pop() ?? { inner: false };
+      closedGroupHadInner = frame.inner;
+      // A group that held a quantifier taints its parent, so an outer quantifier
+      // on any ancestor is still caught (conservative star-height).
+      if (frame.inner && stack.length) stack[stack.length - 1].inner = true;
+      prevWasGroupClose = true;
+      i++;
+      continue;
+    }
+    if (isQ(c)) {
+      if (prevWasGroupClose && closedGroupHadInner) return false; // star height >= 2
+      stack[stack.length - 1].inner = true;
+      if (c === "{") { while (i < src.length && src[i] !== "}") i++; }
+      prevWasGroupClose = false;
+      i++;
+      continue;
+    }
+    prevWasGroupClose = false;
+    i++;
+  }
+  return true;
+}
+
+/**
+ * One machine-readable violation. `hint` is the human/agent fix text; the
+ * discriminated extras (limit/allowed/pattern) let an agent repair without
+ * parsing prose. Composed by every error surface (MCP, delivery, and later
+ * transact per-op errors and hook rejections).
+ */
+export type ConstraintKind =
+  | "type"
+  | "required"
+  | "required_if"
+  | "min"
+  | "max"
+  | "pattern"
+  | "enum"
+  | "unique"
+  | "unknown_field"
+  | "ref_missing";
+
+export interface ConstraintIssue {
+  field: string;
+  constraint: ConstraintKind;
+  limit?: number | string;
+  allowed?: string[];
+  pattern?: string;
+  hint: string;
+}
+
 /** Thrown for any agent-repairable input problem; message doubles as the fix hint. */
 export class ValidationError extends Error {
   readonly code: ErrorCode;
-  constructor(message: string, code: ErrorCode = "E_VALIDATION") {
+  /** Structured mirror of `message` — present on validation-shaped failures. */
+  readonly issues?: ConstraintIssue[];
+  constructor(message: string, code: ErrorCode = "E_VALIDATION", issues?: ConstraintIssue[]) {
     super(message);
     this.name = "ValidationError";
     this.code = code;
+    this.issues = issues;
   }
+}
+
+/**
+ * Map a ZodError onto ConstraintIssue[]. `fields` (when the error came from an
+ * entry schema) supplies exact limits/options; pass [] for generic zod errors
+ * (tool args, definition meta-schema) — the mapping degrades to what the issue
+ * itself carries.
+ */
+export function issuesFromZod(err: z.ZodError, fields: FieldDef[]): ConstraintIssue[] {
+  const byName = new Map(fields.map((f) => [f.name, f]));
+  const out: ConstraintIssue[] = [];
+  for (const issue of err.issues) {
+    if (issue.code === z.ZodIssueCode.unrecognized_keys) {
+      for (const key of issue.keys) {
+        out.push({
+          field: key,
+          constraint: "unknown_field",
+          hint: `unknown field "${key}" — not in the collection schema`,
+        });
+      }
+      continue;
+    }
+    const field = String(issue.path[0] ?? "(root)");
+    const def = byName.get(field);
+    const hint = issue.message;
+    switch (issue.code) {
+      case z.ZodIssueCode.too_small:
+        out.push({ field, constraint: "min", limit: (def && fieldMin(def)) ?? Number(issue.minimum), hint });
+        break;
+      case z.ZodIssueCode.too_big:
+        out.push({ field, constraint: "max", limit: (def && fieldMax(def)) ?? Number(issue.maximum), hint });
+        break;
+      case z.ZodIssueCode.invalid_enum_value:
+        out.push({
+          field,
+          constraint: "enum",
+          allowed:
+            def?.type === "enum" ? def.options : issue.options?.map((o) => String(o)),
+          hint,
+        });
+        break;
+      case z.ZodIssueCode.invalid_type:
+        out.push({
+          field,
+          constraint: issue.received === "undefined" ? "required" : "type",
+          hint,
+        });
+        break;
+      case z.ZodIssueCode.custom: {
+        const tagged = (issue.params as { constraint?: ConstraintKind } | undefined)?.constraint;
+        if (tagged === "pattern") {
+          out.push({ field, constraint: "pattern", pattern: def && fieldPattern(def), hint });
+        } else if (tagged === "min" || tagged === "max") {
+          out.push({ field, constraint: tagged, limit: def && (tagged === "min" ? fieldMin(def) : fieldMax(def)), hint });
+        } else if (tagged === "required_if" || tagged === "required") {
+          out.push({ field, constraint: tagged, hint });
+        } else {
+          out.push({ field, constraint: "type", hint });
+        }
+        break;
+      }
+      default:
+        out.push({ field, constraint: "type", hint });
+    }
+  }
+  return out;
 }
 
 /** Meta-schema: the shape of a single field definition. */
@@ -47,9 +216,13 @@ const fieldDefSchema = z
     publicRead: z.boolean().optional(),
     // constraints (subsystem 05), validated per type by superRefine below
     unique: z.boolean().optional(),
-    min: z.number().optional(),
-    max: z.number().optional(),
+    min: z.union([z.number(), z.string()]).optional(),
+    max: z.union([z.number(), z.string()]).optional(),
+    integer: z.boolean().optional(),
     requiredIf: z.object({ field: z.string(), equals: z.string() }).strict().optional(),
+    pattern: z.string().optional(),
+    patternHint: z.string().optional(),
+    searchable: z.boolean().optional(),
     // type-specific, validated by superRefine below
     options: z.array(z.string().min(1)).optional(),
     targetCollection: z.string().regex(NAME_RE).optional(),
@@ -75,20 +248,101 @@ const fieldDefSchema = z
         message: "targetCollection/labelField are only valid on relation fields",
       });
     }
-    if (f.unique && f.type !== "text" && f.type !== "number") {
+    if (f.unique && !["text", "number", "date"].includes(f.type)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "unique is only valid on text/number fields",
+        message: "unique is only valid on text/number/date fields",
       });
     }
-    if ((f.min !== undefined || f.max !== undefined) && !["text", "richtext", "number"].includes(f.type)) {
+    if (
+      (f.min !== undefined || f.max !== undefined) &&
+      !["text", "richtext", "number", "date"].includes(f.type)
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "min/max are only valid on text/richtext (length) and number (value) fields",
+        message:
+          "min/max are only valid on text/richtext (length), number (value), and date (ISO value) fields",
       });
     }
-    if (f.min !== undefined && f.max !== undefined && f.min > f.max) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "min must be <= max" });
+    if (f.type === "date") {
+      for (const [knob, v] of [["min", f.min], ["max", f.max]] as const) {
+        if (v !== undefined && (typeof v !== "string" || Number.isNaN(Date.parse(v)))) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `date ${knob} must be a parseable ISO date string`,
+          });
+        }
+      }
+    } else if (["text", "richtext", "number"].includes(f.type)) {
+      if (
+        (f.min !== undefined && typeof f.min !== "number") ||
+        (f.max !== undefined && typeof f.max !== "number")
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `min/max must be numbers on ${f.type} fields (ISO strings are for date fields)`,
+        });
+      }
+    }
+    if (f.min !== undefined && f.max !== undefined && typeof f.min === typeof f.max) {
+      const inverted =
+        typeof f.min === "number"
+          ? f.min > (f.max as number)
+          : Date.parse(f.min as string) > Date.parse(f.max as string);
+      if (inverted) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "min must be <= max" });
+      }
+    }
+    if (f.integer && f.type !== "number") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "integer is only valid on number fields" });
+    }
+    if (f.searchable && f.type !== "text" && f.type !== "richtext") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "searchable is only valid on text/richtext fields",
+      });
+    }
+    if (f.pattern !== undefined) {
+      if (f.type !== "text") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "pattern is only valid on text fields" });
+      }
+      if (f.pattern.length > PATTERN_SOURCE_CAP) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `pattern source must be <= ${PATTERN_SOURCE_CAP} characters`,
+        });
+      }
+      try {
+        new RegExp(f.pattern);
+        if (!patternStarHeightSafe(f.pattern)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              "pattern has nested quantifiers (e.g. (a+)+ ) which risk catastrophic " +
+              "backtracking — rewrite so no quantifier is applied to a group that already " +
+              "contains one",
+          });
+        }
+      } catch (e) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `pattern is not a valid JS regular expression: ${(e as Error).message}`,
+        });
+      }
+      if (typeof f.max !== "number") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `pattern requires a max length so validation cost is bounded — set max (<= ${PATTERN_LENGTH_CAP})`,
+        });
+      } else if (f.max > PATTERN_LENGTH_CAP) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `with pattern, max must be <= ${PATTERN_LENGTH_CAP}`,
+        });
+      }
+    }
+    if (f.patternHint !== undefined && f.pattern === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "patternHint is only valid alongside pattern" });
     }
   });
 
@@ -150,21 +404,62 @@ function valueSchemaFor(field: FieldDef): z.ZodTypeAny {
     case "text":
     case "richtext": {
       let s = z.string();
-      if (field.min !== undefined) s = s.min(field.min, `must be at least ${field.min} characters`);
-      if (field.max !== undefined) s = s.max(field.max, `must be at most ${field.max} characters`);
+      if (typeof field.min === "number") s = s.min(field.min, `must be at least ${field.min} characters`);
+      if (typeof field.max === "number") s = s.max(field.max, `must be at most ${field.max} characters`);
+      if (field.type === "text" && field.pattern !== undefined) {
+        const re = new RegExp(field.pattern); // compiled once per schema build
+        const message = field.patternHint ?? `must match pattern ${field.pattern}`;
+        // Meta-schema guarantees a numeric max whenever pattern is set.
+        const lengthCap = typeof field.max === "number" ? field.max : undefined;
+        return s.superRefine((val, ctx) => {
+          // Values past max are already invalid — never feed them to the regex,
+          // so a hostile pattern can't be handed unbounded input.
+          if (lengthCap !== undefined && val.length > lengthCap) return;
+          if (!re.test(val)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message,
+              params: { constraint: "pattern" },
+            });
+          }
+        });
+      }
       return s;
     }
     case "number": {
       let n = z.number();
-      if (field.min !== undefined) n = n.min(field.min, `must be >= ${field.min}`);
-      if (field.max !== undefined) n = n.max(field.max, `must be <= ${field.max}`);
+      if (field.integer) n = n.int("must be an integer");
+      if (typeof field.min === "number") n = n.min(field.min, `must be >= ${field.min}`);
+      if (typeof field.max === "number") n = n.max(field.max, `must be <= ${field.max}`);
       return n;
     }
     case "boolean":
       return z.boolean();
-    case "date":
-      // Accept ISO strings; reject nonsense dates.
-      return z.string().refine((s) => !Number.isNaN(Date.parse(s)), "invalid ISO date");
+    case "date": {
+      // Accept ISO strings; reject nonsense dates. Bounds compare as instants.
+      const min = typeof field.min === "string" ? field.min : undefined;
+      const max = typeof field.max === "string" ? field.max : undefined;
+      let d: z.ZodTypeAny = z
+        .string()
+        .refine((s) => !Number.isNaN(Date.parse(s)), "invalid ISO date");
+      if (min !== undefined) {
+        d = d.refine((s: string) => Number.isNaN(Date.parse(s)) || Date.parse(s) >= Date.parse(min), {
+          message: `must be on or after ${min}`,
+          params: { constraint: "min" },
+        });
+      }
+      if (max !== undefined) {
+        d = d.refine((s: string) => Number.isNaN(Date.parse(s)) || Date.parse(s) <= Date.parse(max), {
+          message: `must be on or before ${max}`,
+          params: { constraint: "max" },
+        });
+      }
+      // Store canonical UTC ISO so unique-index text equality = instant
+      // equality ('2026-07-04T10:00+02:00' and '2026-07-04T08:00:00.000Z' collide).
+      return d.transform((s: string) =>
+        Number.isNaN(Date.parse(s)) ? s : new Date(s).toISOString(),
+      );
+    }
     case "enum":
       return z.enum(field.options as [string, ...string[]]);
     case "asset":
@@ -201,8 +496,13 @@ export function buildEntrySchema(fields: FieldDef[], partial = false): CompiledS
 
   for (const field of fields) {
     let v = valueSchemaFor(field);
-    const isRequired = field.required && !partial;
-    if (!isRequired) v = v.optional();
+    if (partial) {
+      // Updates: null = explicit unset. Required fields reject null below —
+      // with a dedicated hint — so shapes stay uniform here.
+      v = v.nullable().optional();
+    } else if (!field.required) {
+      v = v.optional();
+    }
     shape[field.name] = v;
 
     if (field.type === "relation") {
@@ -215,6 +515,26 @@ export function buildEntrySchema(fields: FieldDef[], partial = false): CompiledS
   // .strict() => unknown keys are rejected, so an AI can't stash arbitrary data.
   let schema: z.ZodTypeAny = z.object(shape).strict();
 
+  // Updates: `required` means "can never be unset" — null is rejected with a
+  // dedicated hint (create-time required-ness is handled by the shapes above).
+  if (partial) {
+    const required = fields.filter((f) => f.required);
+    if (required.length > 0) {
+      schema = schema.superRefine((data: Record<string, unknown>, ctx) => {
+        for (const f of required) {
+          if (data[f.name] === null) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [f.name],
+              message: "field is required and cannot be unset",
+              params: { constraint: "required" },
+            });
+          }
+        }
+      });
+    }
+  }
+
   // Conditional requireds hold at create time only, like `required`.
   const conditionals = fields.filter((f) => f.requiredIf);
   if (conditionals.length > 0 && !partial) {
@@ -226,6 +546,7 @@ export function buildEntrySchema(fields: FieldDef[], partial = false): CompiledS
             code: z.ZodIssueCode.custom,
             path: [f.name],
             message: `required when ${cond.field} = "${cond.equals}"`,
+            params: { constraint: "required_if" },
           });
         }
       }

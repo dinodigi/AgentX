@@ -32,31 +32,54 @@ interface FieldBase {
    */
   publicRead?: boolean;
   /**
-   * Value must be unique within the collection (text/number only). Enforced by
-   * a partial DB index, so concurrent writers can't race past it.
+   * Value must be unique within the collection (text/number/date). Enforced by
+   * a partial DB index, so concurrent writers can't race past it. Date values
+   * are stored normalized to UTC ISO-8601 so index equality = instant equality.
    */
   unique?: boolean;
-  /** Numbers: min/max VALUE. text/richtext: min/max LENGTH. */
-  min?: number;
-  max?: number;
   /** Required only when a sibling enum field holds a specific option (create-time). */
   requiredIf?: { field: string; equals: string };
 }
 
 export interface TextField extends FieldBase {
   type: "text";
+  /** min/max LENGTH bounds. */
+  min?: number;
+  max?: number;
+  /**
+   * JS RegExp source the value must match. Requires max (<= 10000) so a hostile
+   * pattern can never be fed unbounded input; nested quantifiers are rejected.
+   */
+  pattern?: string;
+  /** Returned verbatim when a value fails pattern — write it as a fix hint. */
+  patternHint?: string;
+  /** Include this field in full-text search (search_entries / delivery ?q=). */
+  searchable?: boolean;
 }
 export interface RichTextField extends FieldBase {
   type: "richtext";
+  /** min/max LENGTH bounds. */
+  min?: number;
+  max?: number;
+  /** Include this field (HTML tags stripped) in full-text search. */
+  searchable?: boolean;
 }
 export interface NumberField extends FieldBase {
   type: "number";
+  /** min/max VALUE bounds. */
+  min?: number;
+  max?: number;
+  /** Reject non-whole values (guards increment results too). */
+  integer?: boolean;
 }
 export interface BooleanField extends FieldBase {
   type: "boolean";
 }
 export interface DateField extends FieldBase {
   type: "date";
+  /** min/max ISO-string VALUE bounds (compared as instants). */
+  min?: string;
+  max?: string;
 }
 export interface EnumField extends FieldBase {
   type: "enum";
@@ -84,6 +107,14 @@ export type FieldDef =
   | AssetField
   | RelationField;
 
+/** Read a type-specific knob from any field def without narrowing at the call site. */
+export const fieldSearchable = (f: FieldDef): boolean =>
+  (f.type === "text" || f.type === "richtext") && f.searchable === true;
+export const fieldMin = (f: FieldDef): number | string | undefined => ("min" in f ? f.min : undefined);
+export const fieldMax = (f: FieldDef): number | string | undefined => ("max" in f ? f.max : undefined);
+export const fieldPattern = (f: FieldDef): string | undefined => (f.type === "text" ? f.pattern : undefined);
+export const fieldInteger = (f: FieldDef): boolean | undefined => (f.type === "number" ? f.integer : undefined);
+
 /**
  * Terse, machine-readable description of each primitive and its config knobs.
  * Returned verbatim by the MCP `list_field_types` tool so the AI composes valid
@@ -95,18 +126,34 @@ export const FIELD_TYPE_SPECS: Record<
 > = {
   text: {
     summary: "Single-line or short plain text.",
-    config: ["unique?: boolean", "min/max?: number (LENGTH bounds)"],
+    config: [
+      "unique?: boolean",
+      "min/max?: number (LENGTH bounds)",
+      "pattern?: string (JS RegExp source the value must match; requires max <= 10000)",
+      "patternHint?: string (returned verbatim on pattern failure — write it as a fix hint)",
+      "searchable?: boolean (include in full-text search)",
+    ],
   },
   richtext: {
     summary: "Formatted long-form body content (stored as HTML/markdown).",
-    config: ["min/max?: number (LENGTH bounds)"],
+    config: ["min/max?: number (LENGTH bounds)", "searchable?: boolean (tags stripped for search)"],
   },
   number: {
     summary: "Numeric value (int or float).",
-    config: ["unique?: boolean", "min/max?: number (VALUE bounds)"],
+    config: [
+      "unique?: boolean",
+      "min/max?: number (VALUE bounds)",
+      "integer?: boolean (reject non-whole values; update_entry_if increments must be whole too)",
+    ],
   },
   boolean: { summary: "True/false toggle.", config: [] },
-  date: { summary: "ISO-8601 date/datetime.", config: [] },
+  date: {
+    summary: "ISO-8601 date/datetime. Values are stored normalized to UTC ISO-8601.",
+    config: [
+      "unique?: boolean (instant-level: the same moment in two offsets collides)",
+      "min/max?: ISO string (VALUE bounds, compared as instants)",
+    ],
+  },
   enum: { summary: "One value from a fixed option list.", config: ["options: string[] (required)"] },
   asset: { summary: "Reference to an uploaded file (id from upload_asset).", config: [] },
   relation: {
@@ -117,7 +164,8 @@ export const FIELD_TYPE_SPECS: Record<
 
 /** Constraint knobs available on every field, shown by list_field_types. */
 export const COMMON_FIELD_CONFIG = [
-  "required?: boolean (create-time)",
+  "required?: boolean (enforced on create; on update the field rejects null — it can never be unset)",
   'requiredIf?: {field, equals} — required only when a sibling ENUM field equals an option (create-time)',
   "publicRead?: boolean (delivery visibility)",
+  "in update calls, set a field to null to unset it (optional fields only)",
 ];

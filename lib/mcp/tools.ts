@@ -16,14 +16,23 @@ import {
   bulkCreateEntries,
   queryEntriesPage,
   resolveRefsForRead,
+  expandRelations,
+  includeReverse,
+  collectRelatedTargets,
   validateSelect,
   projectData,
   encodeCursor,
   decodeCursor,
   aggregateEntries,
   updateEntryIf,
+  transact,
+  TransactError,
+  restoreEntryVersion,
   ValidationError,
 } from "@/lib/entries";
+import { restoreEntry, listTrash, purgeEntry, emptyTrash } from "@/lib/trash";
+import { listEntryVersions } from "@/lib/versions";
+import { searchEntriesPage, searchableFields } from "@/lib/search";
 import { getProject } from "@/lib/admin";
 import { listAssets, deleteAsset } from "@/lib/r2";
 import { listDeliveries } from "@/lib/webhook";
@@ -34,7 +43,7 @@ import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connec
 import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
 import { exportEntries } from "@/lib/export";
-import { formatZodError } from "@/lib/validation";
+import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
 import type { ErrorCode } from "@/lib/error-codes";
 
 /**
@@ -44,10 +53,11 @@ import type { ErrorCode } from "@/lib/error-codes";
  */
 
 const BOUNDARIES =
-  "Boundaries: this system defines DATA STRUCTURE + CRUD only. It does NOT do " +
-  "authorization/row-level rules (those live in the app layer), transactional/atomic " +
-  "multi-step actions, versioning, i18n, or workflows. Public-read visibility is " +
-  "per-field (set publicRead on each field). Public-write is per-collection.";
+  "Boundaries: this system defines DATA STRUCTURE + CRUD (plus atomic batches via " +
+  "transact and recoverable deletes via trash/restore). It does NOT do " +
+  "authorization/row-level rules beyond presets (those live in the app layer), i18n, " +
+  "or workflows. Public-read visibility is per-field (set publicRead on each field). " +
+  "Public-write is per-collection.";
 
 export interface ToolDef {
   name: string;
@@ -59,7 +69,13 @@ export interface ToolDef {
 const WHERE_CLAUSE_JSON = {
   type: "object",
   properties: {
-    field: { type: "string" },
+    field: {
+      type: "string",
+      description:
+        'field name, or "relationField.targetField" (one hop) to filter by a related record\'s ' +
+        "field — ops are type-checked against the target field; on MCP the target is read like " +
+        "any MCP read (publicFilter/access do not apply)",
+    },
     op: { type: "string", enum: ["eq", "contains", "gt", "lt", "in"] },
     value: { description: "scalar, or string[] for op 'in'" },
   },
@@ -112,13 +128,17 @@ export const TOOL_DEFS: ToolDef[] = [
     description:
       "Create or update a collection (a data model). `fields` is an array of field " +
       "defs, each: {name, label, type, required?, publicRead?} plus constraints " +
-      "(unique? on text/number — DB-enforced; min/max? = value bounds on number, LENGTH " +
-      "bounds on text/richtext; requiredIf?: {field, equals} against a sibling enum) and " +
+      "(unique? on text/number/date — DB-enforced, dates stored normalized to UTC ISO; " +
+      "min/max? = value bounds on number, LENGTH bounds on text/richtext, ISO-string instant " +
+      "bounds on date; integer? on number; pattern? = JS-regex source on text, requires max <= 10000, " +
+      "patternHint? = the failure message; requiredIf?: {field, equals} against a sibling enum) and " +
       "type-specific config (enum:options[], relation:{targetCollection,labelField}). " +
       "Instantly manageable in the admin; no per-project UI code. Public fields are served " +
       "by the delivery API (see get_project_info). Set publicWrite:true + webhookUrl for a form. " +
       "Redefining an existing collection with dropped/retyped fields returns a diff plan " +
       "and requires confirm:true (affected entries are counted, not silently orphaned). " +
+      "Tightening a constraint on existing data applies immediately and returns " +
+      "constraintWarnings[] (violation counts) — old rows stay readable, new writes must comply. " +
       "To RENAME a field, pass renames: [{from, to}] with the new name in fields — entry " +
       `data is backfilled, no confirm needed; without renames a rename is a destructive drop+add. ${BOUNDARIES}`,
     inputSchema: {
@@ -196,7 +216,10 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "describe_collection",
-    description: "Return one collection's full field definitions and flags.",
+    description:
+      "Return one collection's full field definitions and flags. Constraints " +
+      "(min/max/pattern/enum/integer/unique) are enforced on WRITE only — rows that " +
+      "predate a tightened constraint keep their stored values.",
     inputSchema: {
       type: "object",
       properties: { name: { type: "string" } },
@@ -240,7 +263,9 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "update_entry",
-    description: "Partially update one entry by id. Provided fields are validated and merged.",
+    description:
+      "Partially update one entry by id. Provided fields are validated and merged. " +
+      "Set a field to null to UNSET it (remove the key) — required fields reject null.",
     inputSchema: {
       type: "object",
       properties: {
@@ -257,10 +282,14 @@ export const TOOL_DEFS: ToolDef[] = [
     description:
       "Atomic compare-and-set on one entry — conditions and change apply in ONE statement, so " +
       "concurrent writers can't race between check and write. if: same clause shape as " +
-      "query_entries where, checked against the CURRENT row. data: ordinary validated patch. " +
+      "query_entries where, checked against the CURRENT row. data: ordinary validated patch " +
+      "(null = unset, like update_entry). " +
       "increment: {field, by} computes new = old + by IN SQL (never read-modify-write); the " +
-      "field's min/max constraints guard the result automatically. On a failed condition " +
-      "returns E_CONFLICT — re-read and retry. Book-a-seat: " +
+      "field's min/max constraints guard the result automatically (integer fields also require " +
+      "a whole `by`, and a stored value that predates the integer knob conflicts rather than " +
+      "incrementing). A no-op returns a diagnosed failure: E_NOT_FOUND (no such entry), or " +
+      "E_CONFLICT whose message names the cause — an if-clause that didn't hold, the increment " +
+      "field being unset, or the increment breaching min/max. Re-read and retry. Book-a-seat: " +
       '{if:[{field:"seats",op:"gt",value:0}], increment:{field:"seats",by:-1}}.',
     inputSchema: {
       type: "object",
@@ -285,7 +314,10 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "delete_entry",
-    description: "Delete one entry by id. Permanent — there is no versioning or trash.",
+    description:
+      "Delete one entry by id. Moves it to TRASH — recoverable via restore_entry " +
+      "(~30 days); permanent removal ships as purge_entry. Delivery reads and queries " +
+      "exclude trashed rows immediately.",
     inputSchema: {
       type: "object",
       properties: {
@@ -297,6 +329,165 @@ export const TOOL_DEFS: ToolDef[] = [
     },
   },
   {
+    name: "list_trash",
+    description:
+      "List trashed (soft-deleted) entries across the project, newest-deleted first. " +
+      "Each row: {id, collection, data, deletedAt, deletedBy}. Page with before=<deletedAt cursor>. " +
+      "Trashed rows auto-purge after ~30 days; restore_entry recovers them until then.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "1-100, default 50" },
+        before: { type: "string", description: "ISO deletedAt cursor from a previous page" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "restore_entry",
+    description:
+      "Restore a trashed entry to its collection by id (within the ~30-day retention window). " +
+      "Returns the same id. Re-emits an entry.created event carrying {restored:true, deletedAt} — " +
+      "the restored entry keeps its ORIGINAL createdAt, so consumers polling by createdAt may need " +
+      "a full resync to see it. Fails if the idempotency key was reused by a new create while trashed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        id: { type: "string" },
+      },
+      required: ["collection", "id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "purge_entry",
+    description:
+      "Permanently remove ONE trashed entry — restore is no longer possible after this. " +
+      "Without confirm:true returns a plan {inboundRefCount (entries that reference it and would " +
+      "dangle), assetsFreed (assets that become deletable)} and code E_CONFIRM_REQUIRED. Trash " +
+      "auto-purges after ~30 days regardless.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        id: { type: "string" },
+        confirm: { type: "boolean" },
+      },
+      required: ["collection", "id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "empty_trash",
+    description:
+      "Permanently remove ALL trashed entries, optionally scoped to one collection. Without " +
+      "confirm:true returns a plan {count} and code E_CONFIRM_REQUIRED. Irreversible.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string", description: "optional: limit to one collection" },
+        confirm: { type: "boolean" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_entry_versions",
+    description:
+      "PRE-image snapshots of an entry, newest first. Captured on update_entry, update_entry_if, " +
+      "and admin edits; capped at the last 20 per entry. Each: {versionId, createdAt, actor, " +
+      "changedFields, data}. Restore one with restore_entry_version.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        id: { type: "string" },
+        limit: { type: "number" },
+        offset: { type: "number" },
+      },
+      required: ["collection", "id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "restore_entry_version",
+    description:
+      "Roll an entry back to a past version by versionId. The snapshot is re-validated against " +
+      "the CURRENT schema — an incompatible old snapshot (since-dropped/added fields) is rejected. " +
+      "The pre-restore state is captured as a new version, so this is itself undoable. The entry " +
+      "must be live (restore_entry it from trash first).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        id: { type: "string" },
+        versionId: { type: "string" },
+      },
+      required: ["collection", "id", "versionId"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "transact",
+    description:
+      "Apply up to 25 entry ops as ONE all-or-nothing batch (a single DB transaction). ops: " +
+      "[{op:'create',collection,data} | {op:'update',collection,id,data} | {op:'delete',collection,id}]. " +
+      "Every op is validated and ref-checked before anything runs; if any op fails (validation, a " +
+      "unique conflict, or an update/delete hitting no row) NOTHING is applied and the error names " +
+      "the failing op index. Stricter than delete_entry: a delete op on a missing id ABORTS the batch " +
+      "(not a silent no-op). Events and the audit log fire only after commit, in op order. " +
+      "ENTRY ops only — no schema/definition ops. MCP-only (not on the delivery API). " +
+      "Cross-op refs: a create op may set ref:'order'; a LATER op references its new id as " +
+      "\"$ref:order\" — either as a relation-field value or as its own id. Refs may only point to " +
+      "EARLIER create ops, and a relation using $ref must target that ref's collection. The " +
+      "$ref sentinel is only interpreted in relation fields and id positions (literal elsewhere). " +
+      "An update_if op does an atomic compare-and-set inside the batch (same if/data/increment as " +
+      "update_entry_if) — e.g. decrement seats AND create the booking together, all-or-nothing. " +
+      "dryRun:true validates every op (collections, $refs, schema) and returns the plan WITHOUT " +
+      "writing; it cannot pre-check an update_if race (conditions run only at execute time). " +
+      "Pass idempotencyKey to make retries safe: a replayed batch returns the original result ids " +
+      "with replayed:true and applies nothing twice (a rolled-back batch does NOT consume the key, " +
+      "so retry after fixing the data). Without a key, a timeout AFTER commit is indistinguishable " +
+      "from failure — re-query state before retrying. Returns {applied:true, results:[{op,collection,id}]}. " +
+      'Example: [{op:"create",collection:"orders",data:{...},ref:"order"},' +
+      '{op:"create",collection:"line_items",data:{order:"$ref:order",qty:2}}].',
+    inputSchema: {
+      type: "object",
+      properties: {
+        dryRun: { type: "boolean", description: "validate + return the plan, write nothing" },
+        idempotencyKey: { type: "string", description: "makes a retried batch safe (replayed:true)" },
+        ops: {
+          type: "array",
+          minItems: 1,
+          maxItems: 25,
+          items: {
+            type: "object",
+            properties: {
+              op: { type: "string", enum: ["create", "update", "delete", "update_if"] },
+              collection: { type: "string" },
+              id: { type: "string", description: "required for update/delete/update_if; may be \"$ref:<name>\"" },
+              data: { type: "object", description: "required for create/update; optional for update_if" },
+              ref: { type: "string", description: "create only: name this op for later \"$ref:<name>\"" },
+              if: { type: "array", items: WHERE_ITEM_JSON, description: "update_if only: CAS conditions" },
+              increment: {
+                type: "object",
+                description: "update_if only: atomic {field, by} increment",
+                properties: { field: { type: "string" }, by: { type: "number" } },
+                required: ["field", "by"],
+                additionalProperties: false,
+              },
+            },
+            required: ["op", "collection"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["ops"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "query_entries",
     description:
       "List entries in a collection (relations resolved to {id,label}). Supports limit/offset " +
@@ -304,7 +495,8 @@ export const TOOL_DEFS: ToolDef[] = [
       "{field, dir: asc|desc}. Ops are type-checked: contains=text/richtext, gt/lt=number/date, " +
       "in=text/enum/relation with value: string[]. Where items AND together; an item may be an OR " +
       "group {anyOf: [clauses]} (one level, no nesting). select: [fields] trims each entry's data " +
-      "to those fields (id always included). " +
+      "to those fields (id always included). expand: [relationField] replaces those relation values " +
+      "with {id, label, data} — the full target record (depth 1), killing the N+1 round-trip. " +
       "Returns {entries, limit, offset, hasMore, nextOffset, nextCursor} — page with offset: " +
       "nextOffset, or (preferred for deep/chronological paging) pass cursor: nextCursor, which " +
       "uses the stable default ordering and stays exact past thousands of rows. cursor excludes " +
@@ -318,6 +510,30 @@ export const TOOL_DEFS: ToolDef[] = [
         cursor: { type: "string", description: "nextCursor from a previous page" },
         where: { type: "array", items: WHERE_ITEM_JSON },
         select: { type: "array", items: { type: "string" } },
+        expand: {
+          type: "array",
+          items: { type: "string" },
+          description: "relation fields to expand to {id, label, data} (depth 1)",
+        },
+        includeReverse: {
+          type: "array",
+          maxItems: 3,
+          description:
+            "embed children that point back at each entry: [{collection, field, limit?}] where " +
+            "field is a relation on `collection` targeting this one. Attached per entry as " +
+            "related:{'collection.field':{entries,hasMore}} (capped, default 20/max 100 per parent; " +
+            "page deeper via a direct query_entries where field eq parentId).",
+          items: {
+            type: "object",
+            properties: {
+              collection: { type: "string" },
+              field: { type: "string" },
+              limit: { type: "number" },
+            },
+            required: ["collection", "field"],
+            additionalProperties: false,
+          },
+        },
         orderBy: {
           type: "object",
           properties: {
@@ -334,11 +550,39 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "get_entry",
-    description: "Fetch one entry by id (relations → {id,label}, assets → {id,url}).",
+    description:
+      "Fetch one entry by id (relations → {id,label}, assets → {id,url}). expand: [relationField] " +
+      "expands those to {id, label, data} — the full target record (depth 1).",
     inputSchema: {
       type: "object",
-      properties: { collection: { type: "string" }, id: { type: "string" } },
+      properties: {
+        collection: { type: "string" },
+        id: { type: "string" },
+        expand: { type: "array", items: { type: "string" }, description: "relation fields to expand" },
+      },
       required: ["collection", "id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "search_entries",
+    description:
+      "Keyword full-text search over every field marked searchable:true (INCLUDING non-public " +
+      "ones — MCP is trusted). websearch syntax (quoted phrases, OR, -exclude). Results are " +
+      "rank-ordered (best first); offset paging only. Optional where filters (same shape as " +
+      "query_entries) narrow the set. Not semantic/vector search. Errors if the collection has " +
+      "no searchable fields.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        q: { type: "string", description: "search query (websearch syntax, 1-500 chars)" },
+        where: { type: "array", items: WHERE_ITEM_JSON },
+        select: { type: "array", items: { type: "string" } },
+        limit: { type: "number", description: "default 20, max 100" },
+        offset: { type: "number" },
+      },
+      required: ["collection", "q"],
       additionalProperties: false,
     },
   },
@@ -523,7 +767,7 @@ export const TOOL_DEFS: ToolDef[] = [
       properties: {
         collection: { type: "string" },
         entryId: { type: "string" },
-        action: { type: "string", enum: ["create", "update", "delete"] },
+        action: { type: "string", enum: ["create", "update", "delete", "restore", "purge"] },
         limit: { type: "number" },
         offset: { type: "number" },
       },
@@ -608,6 +852,11 @@ const queryArgs = z.object({
   offset: z.number().optional(),
   where: z.array(whereItemSchema).optional(),
   select: z.array(z.string()).optional(),
+  expand: z.array(z.string()).optional(),
+  includeReverse: z
+    .array(z.object({ collection: z.string(), field: z.string(), limit: z.number().optional() }))
+    .max(3)
+    .optional(),
   cursor: z.string().optional(),
   orderBy: z
     .object({ field: z.string(), dir: z.enum(["asc", "desc"]) })
@@ -627,8 +876,14 @@ export interface ToolResult {
 function ok(data: unknown): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
 }
-function err(message: string, code: ErrorCode): ToolResult {
-  return { content: [{ type: "text", text: `Error [${code}]: ${message}` }], isError: true };
+function err(message: string, code: ErrorCode, issues?: ConstraintIssue[]): ToolResult {
+  // Line 1 stays `Error [CODE]: message` (agents already parse it); the issues
+  // block is an additive machine-readable mirror, capped so a bulk payload of
+  // violations can't flood the transcript.
+  const text =
+    `Error [${code}]: ${message}` +
+    (issues && issues.length > 0 ? `\nissues: ${JSON.stringify(issues.slice(0, 20))}` : "");
+  return { content: [{ type: "text", text }], isError: true };
 }
 
 async function mustCollection(projectId: string, name: string) {
@@ -682,7 +937,15 @@ export async function callTool(
               "relations resolve to {id,label}, assets to {id,url}; " +
               "filters: ?field=value (public fields, equality); sort: ?sort=field:asc|desc; " +
               "projection: ?select=a,b (public fields, id always included); " +
-              "pagination: ?limit=&offset=",
+              "pagination: ?limit=&offset=. " +
+              "?expand=relField expands a public relation to {id,label,data} (target must be " +
+              "publicly readable; its row visibility applies). " +
+              "?relField.targetField=value filters by a related record's public field (target " +
+              "row visibility applies). " +
+              "?include=child.relField embeds a public child collection's rows that point back " +
+              "(both the child and its back-reference field must be public). " +
+              "?q=terms full-text search over public searchable fields, rank-ordered (websearch " +
+              "syntax), rate-limited. Same params on GET {deliveryBase}/{collection}/{id}.",
             write:
               "POST {deliveryBase}/{collection} — anonymous when publicWrite, or " +
               "authenticated per access rules; validated like create_entry; fires events",
@@ -734,6 +997,7 @@ export async function callTool(
           collection: result.collection.name,
           fields: result.collection.fields.length,
           ...(result.diff ? { changes: result.diff } : {}),
+          ...(result.constraintWarnings ? { constraintWarnings: result.constraintWarnings } : {}),
         });
       }
 
@@ -782,7 +1046,7 @@ export async function callTool(
           return ok({
             requiresConfirmation: true,
             code: "E_CONFIRM_REQUIRED",
-            plan: { wouldDeleteEntries: plan.entryCount },
+            plan: { wouldDeleteEntries: plan.entryCount, trashedEntries: plan.trashedEntries },
             hint: "re-run with confirm: true to delete permanently",
           });
         }
@@ -828,8 +1092,11 @@ export async function callTool(
           if (result.reason === "not_found") {
             return err(`no entry ${a.id} in "${a.collection}"`, "E_NOT_FOUND");
           }
+          // conflict | unset | bounds all keep E_CONFLICT (code stability) but
+          // carry the guard-specific diagnosis so an agent can repair precisely.
           return err(
-            "condition not met — the if clauses (or a min/max increment guard) don't match the current row; re-read and retry",
+            result.message ??
+              "condition not met — re-read the entry and retry",
             "E_CONFLICT",
           );
         }
@@ -843,6 +1110,104 @@ export async function callTool(
         return ok({ deleted: a.id });
       }
 
+      case "list_trash": {
+        const a = z
+          .object({ limit: z.number().optional(), before: z.string().optional() })
+          .parse(rawArgs);
+        return ok(await listTrash(projectId, a));
+      }
+
+      case "restore_entry": {
+        const a = z.object({ collection: z.string(), id: z.string() }).parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        const restored = await restoreEntry(projectId, c, a.id, { type: "mcp" });
+        return ok({ id: restored.id, restored: true });
+      }
+
+      case "purge_entry": {
+        const a = z
+          .object({ collection: z.string(), id: z.string(), confirm: z.boolean().optional() })
+          .parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        const r = await purgeEntry(projectId, c, a.id, { confirm: a.confirm, actor: { type: "mcp" } });
+        if (!r.purged) {
+          return ok({ requiresConfirmation: true, code: "E_CONFIRM_REQUIRED", plan: r.plan, hint: r.hint });
+        }
+        return ok({ purged: true, id: r.id });
+      }
+
+      case "empty_trash": {
+        const a = z
+          .object({ collection: z.string().optional(), confirm: z.boolean().optional() })
+          .parse(rawArgs);
+        const c = a.collection ? await mustCollection(projectId, a.collection) : undefined;
+        const r = await emptyTrash(projectId, { collection: c, confirm: a.confirm, actor: { type: "mcp" } });
+        if (!r.emptied) {
+          return ok({ requiresConfirmation: true, code: "E_CONFIRM_REQUIRED", plan: r.plan, hint: r.hint });
+        }
+        return ok({ emptied: true, purged: r.purged });
+      }
+
+      case "list_entry_versions": {
+        const a = z
+          .object({
+            collection: z.string(),
+            id: z.string(),
+            limit: z.number().optional(),
+            offset: z.number().optional(),
+          })
+          .parse(rawArgs);
+        await mustCollection(projectId, a.collection);
+        return ok(await listEntryVersions(projectId, a.id, { limit: a.limit, offset: a.offset }));
+      }
+
+      case "restore_entry_version": {
+        const a = z
+          .object({ collection: z.string(), id: z.string(), versionId: z.string() })
+          .parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        const entry = await restoreEntryVersion(projectId, c, a.id, a.versionId, { type: "mcp" });
+        return ok({ id: entry.id, data: entry.data });
+      }
+
+      case "transact": {
+        const a = z
+          .object({
+            dryRun: z.boolean().optional(),
+            idempotencyKey: z.string().optional(),
+            ops: z
+              .array(
+                z.object({
+                  op: z.enum(["create", "update", "delete", "update_if"]),
+                  collection: z.string(),
+                  id: z.string().optional(),
+                  data: z.record(z.unknown()).optional(),
+                  ref: z.string().optional(),
+                  if: z.array(whereItemSchema).optional(),
+                  increment: z.object({ field: z.string(), by: z.number() }).optional(),
+                }),
+              )
+              .min(1)
+              .max(25),
+          })
+          .parse(rawArgs);
+        try {
+          const outcome = await transact(projectId, a.ops, { type: "mcp" }, {
+            dryRun: a.dryRun,
+            idempotencyKey: a.idempotencyKey,
+          });
+          return ok(outcome);
+        } catch (e) {
+          if (e instanceof TransactError) {
+            return err(
+              `op[${e.opIndex}] ${e.message}; transaction rolled back — no ops applied`,
+              e.code,
+            );
+          }
+          throw e;
+        }
+      }
+
       case "query_entries": {
         const a = queryArgs.parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
@@ -853,21 +1218,31 @@ export async function callTool(
             "E_VALIDATION",
           );
         }
+        const related = await collectRelatedTargets(projectId, c, a.where ?? [], "mcp");
         const page = await queryEntriesPage(c, {
           limit: a.limit,
           offset: a.offset,
           where: a.where,
           orderBy: a.orderBy,
           after: a.cursor !== undefined ? decodeCursor(a.cursor) : undefined,
+          related,
         });
         // Project before resolving refs so unselected relations cost nothing.
         const rows = a.select
           ? page.rows.map((r) => ({ ...r, data: projectData(r.data, a.select!) }))
           : page.rows;
+        if (a.expand) await expandRelations(projectId, c, rows, a.expand, "full");
         const resolved = await resolveRefsForRead(projectId, c, rows);
+        const reverse = a.includeReverse
+          ? await includeReverse(projectId, c, resolved.map((r) => r.id), a.includeReverse, "full")
+          : undefined;
         const last = page.rows[page.rows.length - 1];
         return ok({
-          entries: resolved.map((r) => ({ id: r.id, data: r.data })),
+          entries: resolved.map((r) => ({
+            id: r.id,
+            data: r.data,
+            ...(reverse?.get(r.id) ? { related: reverse.get(r.id) } : {}),
+          })),
           limit: page.limit,
           hasMore: page.hasMore,
           // Offset paging (breaks past a few thousand rows)…
@@ -881,13 +1256,68 @@ export async function callTool(
         });
       }
 
+      case "search_entries": {
+        const a = z
+          .object({
+            collection: z.string(),
+            q: z.string(),
+            where: z.array(whereItemSchema).optional(),
+            select: z.array(z.string()).optional(),
+            limit: z.number().optional(),
+            offset: z.number().optional(),
+          })
+          .parse(rawArgs);
+        const c = await mustCollection(projectId, a.collection);
+        if (a.select) validateSelect(c.fields, a.select);
+        const page = await searchEntriesPage(c, {
+          q: a.q,
+          fields: searchableFields(c.fields),
+          where: a.where,
+          limit: a.limit,
+          offset: a.offset,
+        });
+        const rows = a.select
+          ? page.rows.map((r) => ({ ...r, data: projectData(r.data, a.select!) }))
+          : page.rows;
+        const resolved = await resolveRefsForRead(projectId, c, rows);
+        return ok({
+          entries: resolved.map((r) => ({
+            id: r.id,
+            rank: (r as unknown as { rank: number }).rank,
+            data: r.data,
+          })),
+          limit: page.limit,
+          offset: page.offset,
+          hasMore: page.hasMore,
+          nextOffset: page.hasMore ? page.offset + page.limit : null,
+        });
+      }
+
       case "get_entry": {
-        const a = z.object({ collection: z.string(), id: z.string() }).parse(rawArgs);
+        const a = z
+          .object({
+            collection: z.string(),
+            id: z.string(),
+            expand: z.array(z.string()).optional(),
+            includeReverse: z
+              .array(z.object({ collection: z.string(), field: z.string(), limit: z.number().optional() }))
+              .max(3)
+              .optional(),
+          })
+          .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         const row = await getEntry(c, a.id);
         if (!row) return err(`no entry ${a.id} in "${a.collection}"`, "E_NOT_FOUND");
+        if (a.expand) await expandRelations(projectId, c, [row], a.expand, "full");
         const [resolved] = await resolveRefsForRead(projectId, c, [row]);
-        return ok({ id: resolved.id, data: resolved.data });
+        const reverse = a.includeReverse
+          ? await includeReverse(projectId, c, [resolved.id], a.includeReverse, "full")
+          : undefined;
+        return ok({
+          id: resolved.id,
+          data: resolved.data,
+          ...(reverse?.get(resolved.id) ? { related: reverse.get(resolved.id) } : {}),
+        });
       }
 
       case "count_entries": {
@@ -895,7 +1325,8 @@ export async function callTool(
           .omit({ limit: true, offset: true, orderBy: true, select: true, cursor: true })
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
-        return ok({ count: await countEntries(c, a.where ?? []) });
+        const relatedC = await collectRelatedTargets(projectId, c, a.where ?? [], "mcp");
+        return ok({ count: await countEntries(c, a.where ?? [], relatedC) });
       }
 
       case "aggregate_entries": {
@@ -916,10 +1347,12 @@ export async function callTool(
           })
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
+        const relatedA = await collectRelatedTargets(projectId, c, a.where ?? [], "mcp");
         const result = await aggregateEntries(c, {
           aggregates: a.aggregates,
           groupBy: a.groupBy,
           where: a.where,
+          related: relatedA,
         });
         const shape = (values: (number | null)[]) =>
           a.aggregates.map((spec, i) => ({
@@ -1086,7 +1519,7 @@ export async function callTool(
           .object({
             collection: z.string().optional(),
             entryId: z.string().optional(),
-            action: z.enum(["create", "update", "delete"]).optional(),
+            action: z.enum(["create", "update", "delete", "restore", "purge"]).optional(),
             limit: z.number().optional(),
             offset: z.number().optional(),
           })
@@ -1134,8 +1567,8 @@ export async function callTool(
         return err(`unknown tool "${name}"`, "E_UNKNOWN_TOOL");
     }
   } catch (e) {
-    if (e instanceof z.ZodError) return err(formatZodError(e), "E_VALIDATION");
-    if (e instanceof ValidationError) return err(e.message, e.code);
+    if (e instanceof z.ZodError) return err(formatZodError(e), "E_VALIDATION", issuesFromZod(e, []));
+    if (e instanceof ValidationError) return err(e.message, e.code, e.issues);
     return err(e instanceof Error ? e.message : String(e), "E_INTERNAL");
   }
 }

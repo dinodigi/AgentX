@@ -1,16 +1,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, eq } from "drizzle-orm";
-import { Globe, History } from "lucide-react";
+import { Globe, History, RotateCcw } from "lucide-react";
 import { db } from "@/db";
 import { entries, type AuditActor } from "@/db/schema";
 import { getCollection } from "@/lib/collections";
 import { listAuditLog } from "@/lib/audit";
+import { listEntryVersions } from "@/lib/versions";
 import { loadRelationChoices } from "@/lib/admin";
 import { publicFields } from "@/lib/entries";
 import { EntryForm } from "@/components/EntryForm";
 import { DeleteEntryButton } from "@/components/DeleteEntryButton";
-import { saveEntry, deleteEntryAction } from "../../../actions";
+import { ConfirmButton } from "@/components/ConfirmButton";
+import { saveEntry, deleteEntryAction, restoreVersionAction } from "../../../actions";
 
 /** Who performed an audit action, in client-readable words. */
 function actorLabel(actor: AuditActor): string {
@@ -36,7 +38,7 @@ export default async function EditEntry({
   const collection = await getCollection(projectId, name);
   if (!collection) notFound();
 
-  const [entry, relationChoices, audit] = await Promise.all([
+  const [entry, relationChoices, audit, versionsPage] = await Promise.all([
     db
       .select()
       .from(entries)
@@ -45,8 +47,10 @@ export default async function EditEntry({
       .then((r) => r[0]),
     loadRelationChoices(projectId, collection.fields),
     listAuditLog(projectId, { entryId, limit: 8, offset: 0 }),
+    listEntryVersions(projectId, entryId, { limit: 10 }),
   ]);
   if (!entry) notFound();
+  const versions = versionsPage.versions;
 
   const pub = publicFields(collection).length;
 
@@ -110,7 +114,15 @@ export default async function EditEntry({
                   {audit.slice(0, 8).map((row, i) => (
                     <li key={i} className="text-xs leading-relaxed text-[--color-ink-mute]">
                       <span className="font-medium text-[--color-ink-soft]">
-                        {row.action === "create" ? "Created" : row.action === "delete" ? "Deleted" : "Updated"}
+                        {row.action === "create"
+                          ? "Created"
+                          : row.action === "delete"
+                            ? "Deleted"
+                            : row.action === "restore"
+                              ? "Restored"
+                              : row.action === "purge"
+                                ? "Purged"
+                                : "Updated"}
                       </span>{" "}
                       by {actorLabel(row.actor)}
                       {row.action === "update" && row.changedFields?.length
@@ -121,6 +133,38 @@ export default async function EditEntry({
                         {row.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}{" "}
                         {row.createdAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                       </span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {versions.length > 0 && (
+              <>
+                <div className="my-3 border-t border-[--color-line]" />
+                <div className="flex items-center gap-1.5 font-medium">
+                  <RotateCcw className="h-4 w-4 text-[--color-ink-mute]" />
+                  Versions
+                </div>
+                <p className="mt-1 text-xs text-[--color-ink-mute]">
+                  Restore rolls this entry back to a past state (itself undoable).
+                </p>
+                <ul className="mt-1.5 space-y-2">
+                  {versions.map((v) => (
+                    <li key={v.versionId} className="flex items-center justify-between gap-2">
+                      <span className="text-xs leading-relaxed text-[--color-ink-mute]">
+                        {new Date(v.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}{" "}
+                        {new Date(v.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                        {v.changedFields?.length ? (
+                          <span className="text-[--color-line-strong]"> · {v.changedFields.join(", ")}</span>
+                        ) : null}
+                      </span>
+                      <ConfirmButton
+                        label="Restore"
+                        pendingLabel="Restoring…"
+                        confirmLabel="Confirm"
+                        arm
+                        action={restoreVersionAction.bind(null, projectId, name, entryId, v.versionId)}
+                      />
                     </li>
                   ))}
                 </ul>

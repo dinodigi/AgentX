@@ -2,7 +2,7 @@ import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { assets, entries, type Asset } from "@/db/schema";
+import { assets, entries, entriesTrash, type Asset } from "@/db/schema";
 import { ValidationError } from "./validation";
 
 /**
@@ -102,15 +102,26 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
     .limit(1);
   if (!asset) throw new ValidationError(`asset ${assetId} not found`, "E_NOT_FOUND");
 
+  const like = "%" + assetId + "%";
   const [ref] = await db
     .select({ n: sql<number>`count(*)` })
     .from(entries)
-    .where(
-      and(eq(entries.projectId, projectId), sql`${entries.data}::text LIKE ${"%" + assetId + "%"}`),
-    );
+    .where(and(eq(entries.projectId, projectId), sql`${entries.data}::text LIKE ${like}`));
   if (Number(ref.n) > 0) {
     throw new ValidationError(
       `blocked: ${ref.n} entries still reference asset ${assetId} — clear those fields first`,
+      "E_BLOCKED",
+    );
+  }
+
+  // A trashed entry can still be restored, so it still pins the asset.
+  const [trashRef] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(entriesTrash)
+    .where(and(eq(entriesTrash.projectId, projectId), sql`${entriesTrash.data}::text LIKE ${like}`));
+  if (Number(trashRef.n) > 0) {
+    throw new ValidationError(
+      `blocked: ${trashRef.n} trashed entries still reference asset ${assetId} — restore-and-clear the field or purge them first`,
       "E_BLOCKED",
     );
   }

@@ -9,11 +9,13 @@ import { defer } from "./defer";
  * auditing must never take down the mutation path — but deferred via after()
  * so serverless freeze can't drop the row.
  */
+export type AuditAction = "create" | "update" | "delete" | "restore" | "purge";
+
 export function recordAudit(opts: {
   projectId: string;
   collectionName: string;
   entryId: string;
-  action: "create" | "update" | "delete";
+  action: AuditAction;
   actor: AuditActor;
   changedFields?: string[];
 }): void {
@@ -35,7 +37,7 @@ export function recordAudit(opts: {
 export interface AuditFilter {
   collectionName?: string;
   entryId?: string;
-  action?: "create" | "update" | "delete";
+  action?: AuditAction;
   limit: number;
   offset: number;
 }

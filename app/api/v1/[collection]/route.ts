@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { bearerFrom, resolveProjectId } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
 import { rateLimit } from "@/lib/ratelimit";
+import { searchEntriesPage, publicSearchableFields } from "@/lib/search";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
 import { gateRead, gateCreate, stampOwner } from "@/lib/access-rules";
@@ -9,6 +10,9 @@ import {
   createEntry,
   queryEntries,
   resolveRefsForRead,
+  expandRelations,
+  includeReverse,
+  collectRelatedTargets,
   toPublicView,
   publicFields,
   ValidationError,
@@ -71,11 +75,85 @@ export async function GET(
     }
   }
 
+  // ?expand=author,category expands publicRead relation fields to {id,label,data}.
+  // The target collection must be publicly readable (>=1 publicRead field and
+  // access.read public/absent); its row visibility (publicFilter) is applied.
+  let expand: string[] | null = null;
+  const expandParam = url.searchParams.get("expand");
+  if (expandParam !== null) {
+    expand = expandParam.split(",").map((s) => s.trim()).filter(Boolean);
+    for (const name of expand) {
+      const f = pub.find((x) => x.name === name && x.type === "relation") as
+        | Extract<(typeof pub)[number], { type: "relation" }>
+        | undefined;
+      if (!f) {
+        const expandable = pub.filter((x) => x.type === "relation").map((x) => x.name);
+        return deliveryError(
+          422,
+          `cannot expand "${name}" — expandable public relation fields: ${expandable.join(", ") || "(none)"}`,
+        );
+      }
+      const target = await getCollection(projectId, f.targetCollection);
+      const targetRead = (target?.access as { read?: string } | null)?.read;
+      if (!target || publicFields(target).length === 0 || (targetRead && targetRead !== "public")) {
+        return deliveryError(
+          422,
+          `cannot expand "${name}" — target collection "${f.targetCollection}" is not publicly readable`,
+        );
+      }
+    }
+  }
+
   // Filters and sorting are restricted to PUBLIC fields — filtering on a
   // private field would leak its contents through result differences.
   const where: WhereClause[] = [];
   for (const [key, value] of url.searchParams.entries()) {
-    if (key === "limit" || key === "offset" || key === "sort" || key === "select") continue;
+    if (
+      key === "limit" ||
+      key === "offset" ||
+      key === "sort" ||
+      key === "select" ||
+      key === "expand" ||
+      key === "include" ||
+      key === "q"
+    )
+      continue;
+
+    // A "relationField.targetField" key is a related filter (?author.name=X).
+    // It must reference a PUBLIC relation head, a PUBLICLY-READABLE target, and a
+    // PUBLIC tail — the target's own row visibility (publicFilter) is then ANDed
+    // inside the subquery so a match implies the related row is publicly visible.
+    if (key.includes(".")) {
+      const head = key.slice(0, key.indexOf("."));
+      const tail = key.slice(key.indexOf(".") + 1);
+      const headField = pub.find((f) => f.name === head && f.type === "relation") as
+        | Extract<(typeof pub)[number], { type: "relation" }>
+        | undefined;
+      if (!headField) {
+        return deliveryError(
+          422,
+          `cannot filter by "${key}" — "${head}" is not a public relation field on this collection`,
+        );
+      }
+      const target = await getCollection(projectId, headField.targetCollection);
+      const targetRead = (target?.access as { read?: string } | null)?.read;
+      if (!target || publicFields(target).length === 0 || (targetRead && targetRead !== "public")) {
+        return deliveryError(
+          422,
+          `cannot filter by "${key}" — target collection "${headField.targetCollection}" is not publicly readable; related filters are only allowed against targets you could GET directly`,
+        );
+      }
+      const tailField = publicFields(target).find((f) => f.name === tail);
+      if (!tailField) {
+        return deliveryError(
+          422,
+          `cannot filter by "${key}" — "${tail}" is not a public field on "${headField.targetCollection}"`,
+        );
+      }
+      where.push({ field: key, op: "eq", value: coerceParam(tailField.type, value) });
+      continue;
+    }
+
     const field = pub.find((f) => f.name === key);
     if (!field) {
       return deliveryError(
@@ -84,6 +162,36 @@ export async function GET(
       );
     }
     where.push({ field: key, op: "eq", value: coerceParam(field.type, value) });
+  }
+
+  // ?include=comments.post,likes.post embeds children that reference each row.
+  // The child collection must be publicly readable; its publicFilter is applied.
+  let includeSpecs: { collection: string; field: string }[] | null = null;
+  const includeParam = url.searchParams.get("include");
+  if (includeParam !== null) {
+    const parts = includeParam.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length > 3) return deliveryError(422, "include: at most 3 child paths");
+    includeSpecs = [];
+    for (const part of parts) {
+      const [childName, relField] = part.split(".");
+      if (!childName || !relField) {
+        return deliveryError(422, `include "${part}" must be "childCollection.relationField"`);
+      }
+      const childColl = await getCollection(projectId, childName);
+      const childRead = (childColl?.access as { read?: string } | null)?.read;
+      if (!childColl || publicFields(childColl).length === 0 || (childRead && childRead !== "public")) {
+        return deliveryError(422, `include "${part}" — child collection "${childName}" is not publicly readable`);
+      }
+      // The back-reference field must ALSO be publicRead: grouping children by it
+      // discloses child.<field> === parent.id, so a private back-ref would leak.
+      if (!publicFields(childColl).some((f) => f.name === relField && f.type === "relation")) {
+        return deliveryError(
+          422,
+          `include "${part}" — "${relField}" is not a public relation field on "${childName}"`,
+        );
+      }
+      includeSpecs.push({ collection: childName, field: relField });
+    }
   }
 
   let orderBy: OrderByClause | undefined;
@@ -99,6 +207,26 @@ export async function GET(
     orderBy = { field, dir };
   }
 
+  // ?q= full-text search over the PUBLIC searchable subset, rank-ordered.
+  const q = url.searchParams.get("q");
+  if (q !== null) {
+    if (publicSearchableFields(collection.fields).length === 0) {
+      return deliveryError(
+        422,
+        "search is not enabled for this collection — no public searchable fields; mark a searchable field publicRead via define_collection",
+      );
+    }
+    if (sort) return deliveryError(422, "search results are rank-ordered — drop ?sort");
+    // Keyword search is CPU-bound SQL on an unauthenticated GET — rate-limit it.
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    const rl = await rateLimit(`${projectId}:${ip}`);
+    if (!rl.allowed) {
+      return deliveryError(429, "too many searches — try again shortly", {
+        headers: { "retry-after": String(rl.retryAfterSec) },
+      });
+    }
+  }
+
   try {
     // Row gates first: declarative publicFilter, then the owner clause.
     const effectiveWhere = [
@@ -106,19 +234,37 @@ export async function GET(
       ...(gate.ownerClause ? [gate.ownerClause] : []),
       ...where,
     ];
-    const rows = await queryEntries(collection, { limit, offset, where: effectiveWhere, orderBy });
+    const related = await collectRelatedTargets(projectId, collection, effectiveWhere, "delivery");
+    const rows =
+      q !== null
+        ? (
+            await searchEntriesPage(collection, {
+              q,
+              fields: publicSearchableFields(collection.fields),
+              where: effectiveWhere,
+              limit,
+              offset,
+            })
+          ).rows
+        : await queryEntries(collection, { limit, offset, where: effectiveWhere, orderBy, related });
+    if (expand) await expandRelations(projectId, collection, rows, expand, "public");
     const resolved = await resolveRefsForRead(projectId, collection, rows);
+    const reverse = includeSpecs
+      ? await includeReverse(projectId, collection, resolved.map((r) => r.id), includeSpecs, "public")
+      : undefined;
     const data = resolved.map((e) => {
       const view = toPublicView(collection, e);
-      if (!select) return view;
+      const rel = reverse?.get(e.id);
+      if (!select) return rel ? { ...view, related: rel } : view;
       const picked: Record<string, unknown> = { id: view.id };
       for (const name of select) if (name in view) picked[name] = view[name];
+      if (rel) picked.related = rel;
       return picked;
     });
     return cachedJson(req, { data });
   } catch (e) {
     if (e instanceof ValidationError) {
-      return deliveryError(422, e.message);
+      return deliveryError(422, e.message, undefined, e.issues);
     }
     throw e;
   }
@@ -172,7 +318,7 @@ export async function POST(
     return corsJson({ id: entry.id }, { status: 201 });
   } catch (e) {
     if (e instanceof ValidationError) {
-      return deliveryError(422, e.message);
+      return deliveryError(422, e.message, undefined, e.issues);
     }
     return deliveryError(500, "internal error");
   }

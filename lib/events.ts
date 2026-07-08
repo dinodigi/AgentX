@@ -25,6 +25,8 @@ export async function emitEntryEvent(
   event: EntryEvent,
   entry: { id: string; data?: Record<string, unknown> },
   previous?: Record<string, unknown>,
+  /** Extra top-level payload fields — e.g. {restored:true, deletedAt} on a restore. */
+  extra?: Record<string, unknown>,
 ): Promise<void> {
   const declared: EventAction[] = [...(collection.events?.[event] ?? [])];
   if (event === "created" && collection.webhookUrl) {
@@ -48,6 +50,7 @@ export async function emitEntryEvent(
     collection: collection.name,
     entry,
     ...(previous ? { previous: { data: previous }, changedFields } : {}),
+    ...(extra ?? {}),
   };
 
   await Promise.allSettled(
