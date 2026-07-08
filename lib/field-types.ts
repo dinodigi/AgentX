@@ -39,6 +39,12 @@ interface FieldBase {
   unique?: boolean;
   /** Required only when a sibling enum field holds a specific option (create-time). */
   requiredIf?: { field: string; equals: string };
+  /**
+   * Field-level write gate for the DELIVERY API only (admin/MCP unaffected):
+   * "none" = never writable via delivery; {claim, equals} = writable only by a
+   * matching verified user. Server-stamped identity fields are exempt.
+   */
+  writableBy?: "none" | { claim: string; equals: string | string[] };
 }
 
 export interface TextField extends FieldBase {
@@ -167,5 +173,6 @@ export const COMMON_FIELD_CONFIG = [
   "required?: boolean (enforced on create; on update the field rejects null — it can never be unset)",
   'requiredIf?: {field, equals} — required only when a sibling ENUM field equals an option (create-time)',
   "publicRead?: boolean (delivery visibility)",
+  'writableBy?: "none" | {claim, equals} — delivery-only write gate (admin/MCP unaffected)',
   "in update calls, set a field to null to unset it (optional fields only)",
 ];

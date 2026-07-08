@@ -84,8 +84,21 @@ function Method({ verb, tone }: { verb: string; tone: "get" | "post" | "mut" }) 
 
 function CollectionDocs({ collection }: { collection: Collection }) {
   const pub = publicFields(collection);
-  const read = collection.access?.read ?? "public";
-  const write = collection.access?.write ?? "none";
+  // access presets may be a preset string, a {claim,equals} rule, or an any-of
+  // array — render a compact human label rather than the raw shape.
+  const presetLabel = (v: unknown): string => {
+    const one = (p: unknown): string => {
+      if (typeof p === "string") return p;
+      if (p && typeof p === "object" && "claim" in p) {
+        const r = p as { claim: string; equals: string | string[] };
+        return `${r.claim}=${[r.equals].flat().join("/")}`;
+      }
+      return "rule";
+    };
+    return Array.isArray(v) ? v.map(one).join(" or ") : one(v);
+  };
+  const read = presetLabel(collection.access?.read ?? "public");
+  const write = presetLabel(collection.access?.write ?? "none");
   const eventCount = ["created", "updated", "deleted"].reduce(
     (n, k) => n + (collection.events?.[k as "created"]?.length ?? 0),
     0,

@@ -29,7 +29,7 @@ export default async function CollectionEntries({
 
   const [rows, total] = await Promise.all([
     queryEntries(collection, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, where }).then(
-      (r) => resolveRefsForRead(projectId, collection, r),
+      (r) => resolveRefsForRead(projectId, collection, r, "trusted"),
     ),
     countEntries(collection, where),
   ]);

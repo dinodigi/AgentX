@@ -223,6 +223,14 @@ const fieldDefSchema = z
     pattern: z.string().optional(),
     patternHint: z.string().optional(),
     searchable: z.boolean().optional(),
+    writableBy: z
+      .union([
+        z.literal("none"),
+        z
+          .object({ claim: z.string().min(1), equals: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]) })
+          .strict(),
+      ])
+      .optional(),
     // type-specific, validated by superRefine below
     options: z.array(z.string().min(1)).optional(),
     targetCollection: z.string().regex(NAME_RE).optional(),

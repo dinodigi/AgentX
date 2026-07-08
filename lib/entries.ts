@@ -37,6 +37,8 @@ import { defer } from "./defer";
 import { withTransaction, type DbExecutor } from "./db-tx";
 import { recordVersion } from "./versions";
 import { getCollection } from "./collections";
+import { orgClaimValue } from "./access-rules";
+import type { EndUser } from "./user-auth";
 import type { ErrorCode } from "./error-codes";
 import type { AuditActor } from "@/db/schema";
 
@@ -1373,14 +1375,29 @@ export async function queryEntries(
 }
 
 /**
+ * The reader whose org scope gates relation labels: a verified delivery viewer
+ * (EndUser), an anonymous delivery viewer (null), or a trusted authoring surface
+ * — MCP/admin — that sees every label ("trusted"). Delivery routes pass their
+ * gate.user; MCP/admin pass "trusted".
+ */
+export type ReadViewer = EndUser | null | "trusted";
+
+/**
  * Resolve relation values on a set of entries to { id, label } using each
  * relation's labelField. ONE query for all referenced ids across every
  * relation field, regardless of how many relation fields the schema has.
+ *
+ * For a target collection with access.org, the label is gated by the viewer's
+ * org (fail-closed) — a delivery viewer only sees labels of same-org target
+ * rows; "trusted" surfaces see all. Without this the {id,label} channel would
+ * leak an org-scoped labelField cross-tenant (a parent row need not itself be
+ * org-scoped to point at an org-scoped target).
  */
 export async function resolveRelations(
   projectId: string,
   collection: Collection,
   rows: Entry[],
+  viewer?: ReadViewer,
 ): Promise<Entry[]> {
   const relationFields = collection.fields.filter(
     (f): f is Extract<FieldDef, { type: "relation" }> => f.type === "relation",
@@ -1403,12 +1420,35 @@ export async function resolveRelations(
     .where(and(inArray(entries.id, [...allIds]), eq(entries.projectId, projectId)));
   const byId = new Map(targetRows.map((t) => [t.id, t.data]));
 
+  // Org-scoped targets: the label channel must honour the target's row scope, or
+  // it leaks a cross-org labelField (a parent row need not be org-scoped to point
+  // at an org-scoped target). Resolve the target's access.org once per field and
+  // only reveal the label to a viewer in the same org — fail-closed for an
+  // anonymous viewer or absent/non-string org claim.
+  const trusted = viewer === "trusted";
+  const viewerUser = trusted ? null : (viewer ?? null);
+  const orgByTarget = new Map<string, { field: string; claim: string } | null>();
+  if (!trusted) {
+    for (const rf of relationFields) {
+      if (!orgByTarget.has(rf.targetCollection)) {
+        const tc = await getCollection(projectId, rf.targetCollection);
+        const org = tc?.access?.org;
+        orgByTarget.set(rf.targetCollection, org ? { field: org.field, claim: org.claim } : null);
+      }
+    }
+  }
+
   for (const rf of relationFields) {
+    const org = trusted ? null : orgByTarget.get(rf.targetCollection);
+    const viewerOrg = org && viewerUser ? orgClaimValue(viewerUser, org.claim) : null;
     for (const r of rows) {
       const v = r.data[rf.name];
       if (typeof v === "string" && byId.has(v)) {
         const data = byId.get(v)!;
-        r.data[rf.name] = { id: v, label: String(data[rf.labelField] ?? v) };
+        const crossOrg = org && (viewerOrg === null || data[org.field] !== viewerOrg);
+        r.data[rf.name] = crossOrg
+          ? { id: v, label: v } // fail-closed: never disclose an out-of-org label
+          : { id: v, label: String(data[rf.labelField] ?? v) };
       }
     }
   }
@@ -1459,9 +1499,10 @@ export async function resolveRefsForRead(
   projectId: string,
   collection: Collection,
   rows: Entry[],
+  viewer?: ReadViewer,
 ): Promise<Entry[]> {
   await Promise.all([
-    resolveRelations(projectId, collection, rows),
+    resolveRelations(projectId, collection, rows, viewer),
     resolveAssets(projectId, collection, rows),
   ]);
   return rows;
@@ -1484,6 +1525,7 @@ export async function expandRelations(
   rows: Entry[],
   expand: string[],
   mode: "full" | "public",
+  viewer?: ReadViewer,
 ): Promise<Entry[]> {
   if (expand.length === 0 || rows.length === 0) return rows;
 
@@ -1534,7 +1576,7 @@ export async function expandRelations(
     }
     // Snapshot label values before resolveRefsForRead mutates ref fields in place.
     const rawById = new Map(targetRows.map((t) => [t.id, { ...t.data }]));
-    await resolveRefsForRead(projectId, targetColl, targetRows);
+    await resolveRefsForRead(projectId, targetColl, targetRows, viewer);
     for (const tr of targetRows) {
       const view = mode === "public" ? toPublicView(targetColl, tr) : { id: tr.id, ...tr.data };
       expandedById.set(tr.id, { raw: rawById.get(tr.id)!, view });
@@ -1582,6 +1624,7 @@ export async function includeReverse(
   parentIds: string[],
   specs: ReverseSpec[],
   mode: "full" | "public",
+  viewer?: ReadViewer,
 ): Promise<Map<string, Record<string, ReverseGroup>>> {
   const out = new Map<string, Record<string, ReverseGroup>>();
   if (specs.length === 0 || parentIds.length === 0) return out;
@@ -1649,7 +1692,7 @@ export async function includeReverse(
     // Resolve child refs once for the whole spec, then project per mode.
     const kept = [...byParent.values()].flatMap((list) => list.slice(0, limit));
     const childEntries = kept.map((r) => ({ id: r.id, data: r.data }) as Entry);
-    await resolveRefsForRead(projectId, child, childEntries);
+    await resolveRefsForRead(projectId, child, childEntries, viewer);
     const viewById = new Map<string, Record<string, unknown>>(
       childEntries.map((e) => [e.id, mode === "public" ? toPublicView(child, e) : { id: e.id, data: e.data }]),
     );

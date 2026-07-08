@@ -25,6 +25,21 @@ interface EventActionBase {
 export type EventAction =
   | ({ type: "webhook"; url: string } & EventActionBase)
   | ({ type: "email"; to: string; subject: string } & EventActionBase);
+
+/**
+ * Identity presets for the delivery API — parameterized, never an expression
+ * language. A ClaimRule matches when a verified JWT custom claim equals one of
+ * the given values. A preset ARRAY means any-of (F2). owner/ClaimRule/authenticated
+ * are the rungs above public/none.
+ */
+export interface ClaimRule {
+  claim: string;
+  equals: string | string[];
+}
+type ReadPresetOne = "public" | "authenticated" | "owner" | ClaimRule;
+type WritePresetOne = "none" | "authenticated" | "owner" | ClaimRule;
+export type ReadPreset = ReadPresetOne | ReadPresetOne[];
+export type WritePreset = WritePresetOne | WritePresetOne[];
 import type { InferSelectModel } from "drizzle-orm";
 
 /**
@@ -90,9 +105,11 @@ export const collections = pgTable(
      * to name a text field; it is auto-stamped from the verified JWT sub.
      */
     access: jsonb("access").$type<{
-      read?: "public" | "authenticated" | "owner";
-      write?: "none" | "authenticated" | "owner";
+      read?: ReadPreset;
+      write?: WritePreset;
       ownerField?: string;
+      /** F3: org/team row scoping — {claim, field} stamped like ownerField. */
+      org?: { claim: string; field: string };
     }>(),
     /** Declarative event actions: on created/updated/deleted → webhook/email. */
     events: jsonb("events").$type<{

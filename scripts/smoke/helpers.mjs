@@ -127,7 +127,7 @@ export async function startMockIssuer() {
   return {
     issuer,
     tokenFor: (sub, opts = {}) => {
-      let jwt = new SignJWT({})
+      let jwt = new SignJWT({ ...(opts.claims ?? {}) })
         .setProtectedHeader({ alg: "RS256", kid: "smoke-key" })
         .setIssuer(opts.issuer ?? issuer)
         .setSubject(sub)

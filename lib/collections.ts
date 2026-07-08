@@ -68,12 +68,9 @@ export interface DefineCollectionInput {
    * reference private fields. Admin/MCP reads are unaffected.
    */
   publicFilter?: WhereItem[] | null;
-  /** Identity rule presets (Phase 4). owner rules need ownerField (a text field). */
-  access?: {
-    read?: "public" | "authenticated" | "owner";
-    write?: "none" | "authenticated" | "owner";
-    ownerField?: string;
-  } | null;
+  /** Identity rule presets (Phase 4/12). owner rules need ownerField; claim rules
+   *  and any-of arrays and org scoping are the higher rungs. */
+  access?: Collection["access"] | null;
   /** Declarative event actions (Phase 3). Email needs the Resend connector. */
   events?: {
     created?: EventAction[];
@@ -97,13 +94,31 @@ async function validateAccessAndEvents(
   fields: FieldDef[],
   access: DefineCollectionInput["access"],
   events: DefineCollectionInput["events"],
+  publicWrite: boolean,
 ): Promise<void> {
   if (access) {
-    const read = access.read ?? "public";
-    const write = access.write ?? "none";
-    if (!READ_RULES.includes(read)) throw new ValidationError(`access.read must be one of ${READ_RULES.join("|")}`);
-    if (!WRITE_RULES.includes(write)) throw new ValidationError(`access.write must be one of ${WRITE_RULES.join("|")}`);
-    const needsOwner = read === "owner" || write === "owner" || write === "authenticated";
+    const arr = <T>(v: T | T[] | undefined, dflt: T): T[] => (v === undefined ? [dflt] : Array.isArray(v) ? v : [v]);
+    const readList = arr(access.read, "public" as const);
+    const writeList = arr(access.write, "none" as const);
+    // String presets must be in the allowed set (claim-rule objects pass — the
+    // access zod already validated their {claim, equals} shape).
+    for (const p of readList) {
+      if (typeof p === "string" && !(READ_RULES as readonly string[]).includes(p)) {
+        throw new ValidationError(`access.read presets must be one of ${READ_RULES.join("|")} or a {claim, equals} rule`);
+      }
+    }
+    for (const p of writeList) {
+      if (typeof p === "string" && !(WRITE_RULES as readonly string[]).includes(p)) {
+        throw new ValidationError(`access.write presets must be one of ${WRITE_RULES.join("|")} or a {claim, equals} rule`);
+      }
+    }
+    if (writeList.includes("none") && writeList.length > 1) {
+      throw new ValidationError('access.write "none" cannot be combined with other presets');
+    }
+    // ownerField is required by owner presets (either direction) and by
+    // authenticated WRITE (it stamps the owner); claim rules don't need it.
+    const needsOwner =
+      readList.includes("owner") || writeList.includes("owner") || writeList.includes("authenticated");
     if (needsOwner) {
       const f = fields.find((x) => x.name === access.ownerField);
       if (!access.ownerField || !f) {
@@ -113,6 +128,36 @@ async function validateAccessAndEvents(
       }
       if (f.type !== "text") {
         throw new ValidationError(`access.ownerField "${access.ownerField}" must be a text field (holds the user id)`);
+      }
+    }
+    // Anonymous write = the only write path is publicWrite with no signed-in
+    // create. Such a create has no verified identity, so it can never be
+    // attributed to an owner or org — reject the combo at define time rather
+    // than silently storing a client-chosen (forgeable) identity value.
+    const anonWrite = writeList.length === 1 && writeList[0] === "none" && publicWrite === true;
+    if (anonWrite && (readList.includes("owner") || writeList.includes("owner"))) {
+      throw new ValidationError(
+        'owner-scoped collections cannot accept anonymous writes: an anonymous create cannot be attributed to an owner (the client would control ownerField). Set access.write to "authenticated" or "owner" (or a claim rule), or drop owner/publicWrite',
+      );
+    }
+    // F3: org row scoping — every row carries the user's org claim, fail-closed.
+    if (access.org) {
+      const orgField = fields.find((x) => x.name === access.org!.field);
+      if (!orgField || orgField.type !== "text") {
+        throw new ValidationError(
+          `access.org.field "${access.org.field}" must name an existing text field (holds the org id)`,
+        );
+      }
+      if (readList.includes("public")) {
+        throw new ValidationError(
+          'access.org cannot be combined with read:"public" — public rows can\'t be org-scoped; use read:"authenticated"',
+        );
+      }
+      // No anonymous write into an org-scoped collection — closes org injection.
+      if (anonWrite) {
+        throw new ValidationError(
+          'org-scoped collections cannot accept anonymous writes: set access.write to "authenticated" or "owner" (or a claim rule), or remove access.org/publicWrite',
+        );
       }
     }
   }
@@ -488,7 +533,7 @@ export async function defineCollection(
 
   // publicFilter clauses must be valid against these fields (throws with hint).
   if (input.publicFilter?.length) buildWhere(fields, input.publicFilter);
-  await validateAccessAndEvents(projectId, fields, input.access, input.events);
+  await validateAccessAndEvents(projectId, fields, input.access, input.events, input.publicWrite ?? false);
 
   // Relation targets must resolve to a real collection in this project.
   const existing = await listCollections(projectId);

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { accessSchema } from "@/lib/access-rules";
 import { FIELD_TYPE_SPECS, COMMON_FIELD_CONFIG } from "@/lib/field-types";
 import {
   getCollection,
@@ -160,16 +161,33 @@ export const TOOL_DEFS: ToolDef[] = [
         access: {
           type: "object",
           description:
-            "identity rule presets for the delivery API. read: public|authenticated|owner; " +
-            "write: none|authenticated|owner. owner/authenticated rules need ownerField (a text " +
-            "field storing the end-user id, auto-stamped from the verified JWT — never client-set). " +
-            'write:"owner" also enables PATCH/DELETE /v1/{collection}/{id} for own rows. ' +
-            "Requires the project's Clerk connector. Complex authorization beyond these presets " +
-            "stays in the app layer.",
+            "identity rule presets for the delivery API (parameterized, not an expression language). " +
+            "read: public|authenticated|owner|{claim,equals}. write: none|authenticated|owner|" +
+            "{claim,equals}. Each may also be an ARRAY meaning any-of (e.g. write:[\"owner\", " +
+            '{claim:"role",equals:"editor"}]). A {claim,equals:"x"|["x","y"]} rule matches when the ' +
+            "verified JWT custom claim equals a value (fail-closed: absent/non-string never matches). " +
+            "owner/authenticated need ownerField (a text field, auto-stamped from the JWT sub — never " +
+            'client-set); claim rules don\'t. write:"owner" enables PATCH/DELETE of OWN rows; a matching ' +
+            "claim-write is staff write (mutate ANY row). " +
+            "org:{claim,field} scopes EVERY read/write to the user's org: field (a text field) is " +
+            "stamped from the JWT claim on create and stripped from PATCH bodies; rows are invisible " +
+            "to other orgs and to tokens lacking the claim (fail-closed 403). org can't combine with " +
+            "read:'public' or anonymous writes. Requires the project's Clerk connector.",
           properties: {
-            read: { type: "string", enum: ["public", "authenticated", "owner"] },
-            write: { type: "string", enum: ["none", "authenticated", "owner"] },
+            read: {
+              description: "public|authenticated|owner|{claim,equals} or an array of those",
+            },
+            write: {
+              description: "none|authenticated|owner|{claim,equals} or an array of those",
+            },
             ownerField: { type: "string" },
+            org: {
+              type: "object",
+              description: "org row scoping: {claim: JWT claim name, field: text field to scope by}",
+              properties: { claim: { type: "string" }, field: { type: "string" } },
+              required: ["claim", "field"],
+              additionalProperties: false,
+            },
           },
           additionalProperties: false,
         },
@@ -818,13 +836,7 @@ const defineArgs = z.object({
   publicWrite: z.boolean().optional(),
   webhookUrl: z.string().url().optional(),
   publicFilter: z.array(whereItemSchema).optional(),
-  access: z
-    .object({
-      read: z.enum(["public", "authenticated", "owner"]).optional(),
-      write: z.enum(["none", "authenticated", "owner"]).optional(),
-      ownerField: z.string().optional(),
-    })
-    .optional(),
+  access: accessSchema.optional(),
   events: z
     .object({
       created: z.array(eventActionSchema).optional(),
@@ -1231,10 +1243,10 @@ export async function callTool(
         const rows = a.select
           ? page.rows.map((r) => ({ ...r, data: projectData(r.data, a.select!) }))
           : page.rows;
-        if (a.expand) await expandRelations(projectId, c, rows, a.expand, "full");
-        const resolved = await resolveRefsForRead(projectId, c, rows);
+        if (a.expand) await expandRelations(projectId, c, rows, a.expand, "full", "trusted");
+        const resolved = await resolveRefsForRead(projectId, c, rows, "trusted");
         const reverse = a.includeReverse
-          ? await includeReverse(projectId, c, resolved.map((r) => r.id), a.includeReverse, "full")
+          ? await includeReverse(projectId, c, resolved.map((r) => r.id), a.includeReverse, "full", "trusted")
           : undefined;
         const last = page.rows[page.rows.length - 1];
         return ok({
@@ -1279,7 +1291,7 @@ export async function callTool(
         const rows = a.select
           ? page.rows.map((r) => ({ ...r, data: projectData(r.data, a.select!) }))
           : page.rows;
-        const resolved = await resolveRefsForRead(projectId, c, rows);
+        const resolved = await resolveRefsForRead(projectId, c, rows, "trusted");
         return ok({
           entries: resolved.map((r) => ({
             id: r.id,
@@ -1308,10 +1320,10 @@ export async function callTool(
         const c = await mustCollection(projectId, a.collection);
         const row = await getEntry(c, a.id);
         if (!row) return err(`no entry ${a.id} in "${a.collection}"`, "E_NOT_FOUND");
-        if (a.expand) await expandRelations(projectId, c, [row], a.expand, "full");
-        const [resolved] = await resolveRefsForRead(projectId, c, [row]);
+        if (a.expand) await expandRelations(projectId, c, [row], a.expand, "full", "trusted");
+        const [resolved] = await resolveRefsForRead(projectId, c, [row], "trusted");
         const reverse = a.includeReverse
-          ? await includeReverse(projectId, c, [resolved.id], a.includeReverse, "full")
+          ? await includeReverse(projectId, c, [resolved.id], a.includeReverse, "full", "trusted")
           : undefined;
         return ok({
           id: resolved.id,

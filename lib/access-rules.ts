@@ -1,27 +1,121 @@
-import type { Collection } from "@/db/schema";
+import { z } from "zod";
+import type { Collection, ClaimRule } from "@/db/schema";
 import { verifyEndUser, type EndUser } from "./user-auth";
 import type { WhereClause } from "./query";
 
+/** The single zod for the access JSONB — shared by define_collection + manifest. */
+const claimRuleSchema = z
+  .object({ claim: z.string().min(1), equals: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]) })
+  .strict();
+const readPresetSchema = z.union([z.enum(["public", "authenticated", "owner"]), claimRuleSchema]);
+const writePresetSchema = z.union([z.enum(["none", "authenticated", "owner"]), claimRuleSchema]);
+export const accessSchema = z
+  .object({
+    read: z.union([readPresetSchema, z.array(readPresetSchema).min(1)]).optional(),
+    write: z.union([writePresetSchema, z.array(writePresetSchema).min(1)]).optional(),
+    ownerField: z.string().optional(),
+    org: z.object({ claim: z.string().min(1), field: z.string() }).strict().optional(),
+  })
+  .strict();
+
 /**
- * Phase 4 rule presets — the delivery API's identity gate. Three levels, no
- * expression language:
+ * The delivery API's identity gate — parameterized presets, no expression
+ * language:
  *
- *   read:  public (default) | authenticated | owner
+ *   read:  public (default) | authenticated | owner | {claim, equals} | any-of[]
  *   write: none (default — publicWrite governs anonymous forms)
- *          | authenticated (signed-in users may CREATE; ownerField stamped)
- *          | owner (create like authenticated, plus UPDATE/DELETE of own rows)
+ *          | authenticated (signed-in may CREATE; ownerField stamped)
+ *          | owner (create + UPDATE/DELETE of own rows)
+ *          | {claim, equals} (staff write: create + mutate ANY row)
+ *          | any-of[]
  *
- * `owner` rows are matched via ownerField (a text field holding the verified
- * JWT sub). publicRead on fields still controls the projection: it means
- * "exposed through the delivery API when the row gate passes".
+ * A ClaimRule matches when a verified JWT custom claim equals one of the given
+ * values (fail-closed: absent/non-string claims never match). An array means
+ * any-of. `owner` rows match via ownerField (JWT sub). publicRead still controls
+ * the field projection when the row gate passes.
  */
 
 export type Gate =
-  | { ok: true; user: EndUser | null; ownerClause?: WhereClause }
+  | { ok: true; user: EndUser | null; rowClauses?: WhereClause[] }
   | { ok: false; status: number; error: string };
 
 function denied(status: number, error: string): Gate {
   return { ok: false, status, error };
+}
+
+/** Fail-closed 403 when an org-scoped collection's user lacks a string org claim. */
+function orgDenied(claim: string): Gate {
+  return denied(
+    403,
+    `token has no "${claim}" claim — the user needs an active organization, or add the claim to the Clerk session token template (a nested/object claim must be lifted to a flat string)`,
+  );
+}
+
+/** The org claim value if present as a non-empty string, else null (fail-closed). */
+export function orgClaimValue(user: EndUser, claim: string): string | null {
+  const v = user.claims[claim];
+  return typeof v === "string" && v !== "" ? v : null;
+}
+
+const toList = <T>(rule: T | T[]): T[] => (Array.isArray(rule) ? rule : [rule]);
+
+function isClaimRule(p: unknown): p is ClaimRule {
+  return typeof p === "object" && p !== null && "claim" in p && "equals" in p;
+}
+
+/** Fail-closed claim match: a JWT claim value (string or string[]) intersecting `equals`. */
+export function claimMatches(user: EndUser, rule: ClaimRule): boolean {
+  const raw = user.claims[rule.claim];
+  const actual =
+    typeof raw === "string"
+      ? [raw]
+      : Array.isArray(raw) && raw.every((x) => typeof x === "string")
+        ? (raw as string[])
+        : []; // absent / object / number — never coerce
+  if (actual.length === 0) return false;
+  const expected = Array.isArray(rule.equals) ? rule.equals : [rule.equals];
+  return actual.some((a) => expected.includes(a));
+}
+
+/** A helpful 403 distinguishing an absent claim from a wrong value (one shape). */
+function claimDenied(user: EndUser, rule: ClaimRule): Gate {
+  const raw = user.claims[rule.claim];
+  const hasStr = typeof raw === "string" || (Array.isArray(raw) && raw.every((x) => typeof x === "string"));
+  const want = Array.isArray(rule.equals) ? rule.equals.join('" or "') : rule.equals;
+  const detail = hasStr ? `has ${rule.claim}=${JSON.stringify(raw)}` : `has no string "${rule.claim}" claim`;
+  return denied(
+    403,
+    `requires claim "${rule.claim}"="${want}" — the user's JWT ${detail}; add it via the Clerk session token template or user metadata`,
+  );
+}
+
+/** Deny an authenticated user who met no preset — precise message for a lone claim rule. */
+function accessDenied(presets: (string | ClaimRule)[], user: EndUser): Gate {
+  const claim = presets.find(isClaimRule);
+  if (claim && presets.filter((p) => !isClaimRule(p)).every((p) => p === "owner")) {
+    return claimDenied(user, claim);
+  }
+  return denied(403, "you do not meet this collection's access rule");
+}
+
+type RequireUser = { ok: false; gate: Gate } | { ok: true; user: EndUser };
+
+async function requireUser(
+  projectId: string,
+  collection: Collection,
+  userToken: string | null,
+): Promise<RequireUser> {
+  const auth = await verifyEndUser(projectId, userToken);
+  if (auth.status === "unconfigured") {
+    return { ok: false, gate: denied(503, "this project has no auth issuer connected (Clerk connector)") };
+  }
+  if (auth.status === "none") {
+    return { ok: false, gate: denied(401, "sign-in required: pass the user's JWT in the X-User-Token header") };
+  }
+  if (auth.status === "invalid") {
+    return { ok: false, gate: denied(401, `invalid user token: ${auth.reason}`) };
+  }
+  return { ok: true, user: auth.user };
 }
 
 export async function gateRead(
@@ -29,28 +123,37 @@ export async function gateRead(
   collection: Collection,
   userToken: string | null,
 ): Promise<Gate> {
-  const rule = collection.access?.read ?? "public";
-  if (rule === "public") return { ok: true, user: null };
+  const presets = toList(collection.access?.read ?? "public");
+  const org = collection.access?.org;
+  // Anonymous public read only when there's no org scope (org needs a claim).
+  if (presets.includes("public") && !org) return { ok: true, user: null };
 
-  const auth = await verifyEndUser(projectId, userToken);
-  if (auth.status === "unconfigured") {
-    return denied(503, "this project has no auth issuer connected (Clerk connector)");
-  }
-  if (auth.status === "none") {
-    return denied(401, "sign-in required: pass the user's JWT in the X-User-Token header");
-  }
-  if (auth.status === "invalid") return denied(401, `invalid user token: ${auth.reason}`);
+  const auth = await requireUser(projectId, collection, userToken);
+  if (!auth.ok) return auth.gate;
+  const user = auth.user;
 
-  if (rule === "owner") {
+  // Org row scope applies to EVERY identity, fail-closed, before any preset.
+  const rowClauses: WhereClause[] = [];
+  if (org) {
+    const orgVal = orgClaimValue(user, org.claim);
+    if (orgVal === null) return orgDenied(org.claim);
+    rowClauses.push({ field: org.field, op: "eq", value: orgVal });
+  }
+
+  // public (only reachable with org, since define-time bars public+org otherwise)
+  // or any passing non-owner preset → full read within the org scope.
+  if (presets.includes("public")) return { ok: true, user, rowClauses };
+  const passedNonOwner = presets.some(
+    (p) => p === "authenticated" || (isClaimRule(p) && claimMatches(user, p)),
+  );
+  if (passedNonOwner) return { ok: true, user, rowClauses };
+  if (presets.includes("owner")) {
     const ownerField = collection.access?.ownerField;
     if (!ownerField) return denied(500, "collection misconfigured: owner rule without ownerField");
-    return {
-      ok: true,
-      user: auth.user,
-      ownerClause: { field: ownerField, op: "eq", value: auth.user.id },
-    };
+    rowClauses.push({ field: ownerField, op: "eq", value: user.id });
+    return { ok: true, user, rowClauses };
   }
-  return { ok: true, user: auth.user };
+  return accessDenied(presets, user);
 }
 
 export async function gateCreate(
@@ -58,57 +161,130 @@ export async function gateCreate(
   collection: Collection,
   userToken: string | null,
 ): Promise<Gate> {
-  const rule = collection.access?.write ?? "none";
+  const presets = toList(collection.access?.write ?? "none");
+  const org = collection.access?.org;
 
-  // No identity rule: anonymous forms via publicWrite, exactly as before.
-  if (rule === "none") {
+  // Pure `none` with no org: anonymous forms via publicWrite. (Define-time bars
+  // org + anonymous write, so an org-scoped collection never reaches here.)
+  if (presets.length === 1 && presets[0] === "none" && !org) {
     if (collection.publicWrite) return { ok: true, user: null };
     return denied(403, "public write is not enabled for this collection");
   }
 
-  const auth = await verifyEndUser(projectId, userToken);
-  if (auth.status === "unconfigured") {
-    return denied(503, "this project has no auth issuer connected (Clerk connector)");
-  }
-  if (auth.status !== "ok") {
-    return denied(
-      401,
-      auth.status === "none"
-        ? "sign-in required: pass the user's JWT in the X-User-Token header"
-        : `invalid user token: ${auth.reason}`,
-    );
-  }
-  return { ok: true, user: auth.user };
+  const auth = await requireUser(projectId, collection, userToken);
+  if (!auth.ok) return auth.gate;
+  const user = auth.user;
+
+  // Org precondition (fail-closed) — also 403s any residual anonymous create path.
+  if (org && orgClaimValue(user, org.claim) === null) return orgDenied(org.claim);
+
+  // authenticated/owner both mean "any signed-in may CREATE"; a claim rule
+  // restricts create to matching users.
+  const passed = presets.some(
+    (p) => p === "authenticated" || p === "owner" || (isClaimRule(p) && claimMatches(user, p)),
+  );
+  if (passed) return { ok: true, user };
+  return accessDenied(presets, user);
 }
 
-/** update/delete are allowed ONLY under write:"owner", only on own rows. */
+/** update/delete: allowed under write:"owner" (own rows) or a matching claim rule (any row). */
 export async function gateMutate(
   projectId: string,
   collection: Collection,
   userToken: string | null,
   entryData: Record<string, unknown>,
 ): Promise<Gate> {
-  if ((collection.access?.write ?? "none") !== "owner") {
-    return denied(403, 'entry mutation via delivery API requires write: "owner"');
+  const presets = toList(collection.access?.write ?? "none");
+  const hasOwner = presets.includes("owner");
+  const claimRules = presets.filter(isClaimRule);
+  if (!hasOwner && claimRules.length === 0) {
+    return denied(403, 'entry mutation via delivery API requires write: "owner" or a claim rule');
   }
+
   const gate = await gateCreate(projectId, collection, userToken);
   if (!gate.ok) return gate;
-  const ownerField = collection.access?.ownerField;
-  if (!ownerField) return denied(500, "collection misconfigured: owner rule without ownerField");
-  if (!gate.user || entryData[ownerField] !== gate.user.id) {
-    // 404 not 403: don't confirm the row exists to non-owners.
-    return denied(404, "not found");
+  const user = gate.user!;
+
+  // Org row check first: the row must belong to the user's org (else 404).
+  const org = collection.access?.org;
+  if (org) {
+    const orgVal = orgClaimValue(user, org.claim);
+    if (orgVal === null) return orgDenied(org.claim); // (gateCreate already checked, but keep tight)
+    if (entryData[org.field] !== orgVal) return denied(404, "not found");
   }
-  return gate;
+
+  // A matching claim rule = staff write: mutate ANY row (within the org scope).
+  if (claimRules.some((r) => claimMatches(user, r))) return gate;
+  // Otherwise owner-scoped: only own rows.
+  if (hasOwner) {
+    const ownerField = collection.access?.ownerField;
+    if (!ownerField) return denied(500, "collection misconfigured: owner rule without ownerField");
+    if (entryData[ownerField] === user.id) return gate;
+  }
+  // 404 not 403: don't confirm the row exists to non-owners.
+  return denied(404, "not found");
 }
 
-/** Force the ownerField to the verified user on authenticated creates. */
-export function stampOwner(
+/**
+ * Server-set identity fields on create: ownerField ← JWT sub, org.field ← the
+ * org claim. Client-supplied values are always overwritten (the gates guarantee
+ * the claim exists), so a user can never forge ownership or inject another org.
+ *
+ * On the ANONYMOUS path (publicWrite, user === null) there is no verified
+ * identity to attribute, so the stamped fields are STRIPPED rather than left
+ * as-is — otherwise a client could POST {owner:"victim"} and inject a row into
+ * the victim's owner-scoped view (the org twin of this is barred at define time;
+ * this closes both twins at runtime, defense-in-depth).
+ */
+export function stampIdentity(
   collection: Collection,
   user: EndUser | null,
   data: Record<string, unknown>,
 ): Record<string, unknown> {
+  const out = { ...data };
   const ownerField = collection.access?.ownerField;
-  if (!ownerField || !user) return data;
-  return { ...data, [ownerField]: user.id };
+  const org = collection.access?.org;
+  if (!user) {
+    if (ownerField) delete out[ownerField];
+    if (org) delete out[org.field];
+    return out;
+  }
+  if (ownerField) out[ownerField] = user.id;
+  if (org) {
+    const orgVal = orgClaimValue(user, org.claim);
+    if (orgVal !== null) out[org.field] = orgVal;
+  }
+  return out;
+}
+
+/** The fields stamped from verified identity — stripped from delivery PATCH bodies. */
+export function stampedIdentityFields(collection: Collection): string[] {
+  const out: string[] = [];
+  if (collection.access?.ownerField) out.push(collection.access.ownerField);
+  if (collection.access?.org) out.push(collection.access.org.field);
+  return out;
+}
+
+/**
+ * F4: field-level write gates on the DELIVERY surface. Returns the names of any
+ * writableBy fields present in the payload the user isn't allowed to write —
+ * "none" is never delivery-writable; a claim rule needs a matching verified
+ * user. Server-stamped identity fields are exempt (they're stripped/set).
+ */
+export function checkFieldWrites(
+  collection: Collection,
+  user: EndUser | null,
+  payload: Record<string, unknown>,
+): string[] {
+  const exempt = new Set(stampedIdentityFields(collection));
+  const offending: string[] = [];
+  for (const f of collection.fields) {
+    if (!f.writableBy || exempt.has(f.name) || !(f.name in payload)) continue;
+    const allowed =
+      f.writableBy === "none"
+        ? false
+        : user !== null && claimMatches(user, f.writableBy);
+    if (!allowed) offending.push(f.name);
+  }
+  return offending;
 }

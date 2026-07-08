@@ -5,7 +5,7 @@ import { rateLimit } from "@/lib/ratelimit";
 import { searchEntriesPage, publicSearchableFields } from "@/lib/search";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
-import { gateRead, gateCreate, stampOwner } from "@/lib/access-rules";
+import { gateRead, gateCreate, stampIdentity, checkFieldWrites } from "@/lib/access-rules";
 import {
   createEntry,
   queryEntries,
@@ -231,7 +231,7 @@ export async function GET(
     // Row gates first: declarative publicFilter, then the owner clause.
     const effectiveWhere = [
       ...((collection.publicFilter as WhereItem[] | null) ?? []),
-      ...(gate.ownerClause ? [gate.ownerClause] : []),
+      ...(gate.rowClauses ?? []),
       ...where,
     ];
     const related = await collectRelatedTargets(projectId, collection, effectiveWhere, "delivery");
@@ -247,10 +247,10 @@ export async function GET(
             })
           ).rows
         : await queryEntries(collection, { limit, offset, where: effectiveWhere, orderBy, related });
-    if (expand) await expandRelations(projectId, collection, rows, expand, "public");
-    const resolved = await resolveRefsForRead(projectId, collection, rows);
+    if (expand) await expandRelations(projectId, collection, rows, expand, "public", gate.user);
+    const resolved = await resolveRefsForRead(projectId, collection, rows, gate.user);
     const reverse = includeSpecs
-      ? await includeReverse(projectId, collection, resolved.map((r) => r.id), includeSpecs, "public")
+      ? await includeReverse(projectId, collection, resolved.map((r) => r.id), includeSpecs, "public", gate.user)
       : undefined;
     const data = resolved.map((e) => {
       const view = toPublicView(collection, e);
@@ -304,13 +304,24 @@ export async function POST(
     return deliveryError(400, "invalid JSON body");
   }
 
+  // Field-level write gates (F4): reject writableBy fields the caller can't write.
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const blocked = checkFieldWrites(collection, gate.user, body as Record<string, unknown>);
+    if (blocked.length > 0) {
+      return deliveryError(
+        403,
+        `fields [${blocked.join(", ")}] are not writable via the delivery API here — remove them or sign in with the required role`,
+      );
+    }
+  }
+
   try {
     // Authenticated creates get ownerField stamped from the verified JWT —
     // a user can never forge ownership. Events (webhook/email) fire from the
     // entries layer's single emit point.
     const data =
       body && typeof body === "object" && !Array.isArray(body)
-        ? stampOwner(collection, gate.user, body as Record<string, unknown>)
+        ? stampIdentity(collection, gate.user, body as Record<string, unknown>)
         : body;
     const entry = await createEntry(projectId, collection, data, {
       actor: { type: "delivery", userSub: gate.user?.id },

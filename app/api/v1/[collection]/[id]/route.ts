@@ -14,7 +14,8 @@ import {
 } from "@/lib/entries";
 import type { ConstraintIssue } from "@/lib/validation";
 import { matchesClauses } from "@/lib/query";
-import { gateRead, gateMutate } from "@/lib/access-rules";
+import { gateRead, gateMutate, stampedIdentityFields, checkFieldWrites } from "@/lib/access-rules";
+import { rateLimit } from "@/lib/ratelimit";
 import { CORS_HEADERS, preflight } from "@/lib/cors";
 import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
 
@@ -33,6 +34,20 @@ async function resolve(req: NextRequest, name: string) {
   const collection = await getCollection(projectId, name);
   if (!collection) return { error: err(404, "not found") };
   return { projectId, collection };
+}
+
+/** Per-project/per-IP throttle for the mutating handlers — F1 lets a claim-write
+ * role mutate ANY row (with webhook/email fan-out), so PATCH/DELETE need the same
+ * window POST/search already enforce. Returns a 429 Response when over budget. */
+async function throttle(req: NextRequest, projectId: string) {
+  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const rl = await rateLimit(`${projectId}:${ip}`);
+  if (!rl.allowed) {
+    return err(429, "too many requests — try again shortly", {
+      headers: { "retry-after": String(rl.retryAfterSec) },
+    });
+  }
+  return null;
 }
 
 type Params = { params: Promise<{ collection: string; id: string }> };
@@ -54,8 +69,9 @@ export async function GET(req: NextRequest, { params }: Params) {
   const entry = await getEntry(collection, id);
   if (!entry) return err(404, "not found");
 
-  // Row gates: owner match + publicFilter, both as 404 (never confirm existence).
-  if (gate.ownerClause && entry.data[gate.ownerClause.field] !== gate.ownerClause.value) {
+  // Row gates: identity clauses (owner + org) and publicFilter — all as 404
+  // (never confirm existence to someone the row is scoped away from).
+  if (!matchesClauses(collection.fields, gate.rowClauses ?? [], entry.data)) {
     return err(404, "not found");
   }
   if (!matchesClauses(collection.fields, collection.publicFilter ?? [], entry.data)) {
@@ -77,10 +93,10 @@ export async function GET(req: NextRequest, { params }: Params) {
         return err(422, `cannot expand "${nm}" — target "${f.targetCollection}" is not publicly readable`);
       }
     }
-    await expandRelations(projectId, collection, [entry], expand, "public");
+    await expandRelations(projectId, collection, [entry], expand, "public", gate.user);
   }
 
-  const [resolved] = await resolveRefsForRead(projectId, collection, [entry]);
+  const [resolved] = await resolveRefsForRead(projectId, collection, [entry], gate.user);
   const view = toPublicView(collection, resolved) as Record<string, unknown>;
 
   const includeParam = new URL(req.url).searchParams.get("include");
@@ -100,7 +116,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       }
       specs.push({ collection: childName, field: relField });
     }
-    const reverse = await includeReverse(projectId, collection, [resolved.id], specs, "public");
+    const reverse = await includeReverse(projectId, collection, [resolved.id], specs, "public", gate.user);
     const rel = reverse.get(resolved.id);
     if (rel) view.related = rel;
   }
@@ -121,6 +137,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const gate = await gateMutate(projectId, collection, req.headers.get("x-user-token"), entry.data);
   if (!gate.ok) return err(gate.status, gate.error);
 
+  const limited = await throttle(req, projectId);
+  if (limited) return limited;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -128,10 +147,20 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return err(400, "invalid JSON body");
   }
 
-  // Ownership is immutable through this endpoint.
-  const ownerField = collection.access?.ownerField;
-  if (body && typeof body === "object" && ownerField && ownerField in (body as object)) {
-    delete (body as Record<string, unknown>)[ownerField];
+  // Server-set identity fields (owner + org) are immutable through this endpoint —
+  // strip them so a row owner can't re-assign ownership or move a row's org.
+  if (body && typeof body === "object") {
+    for (const f of stampedIdentityFields(collection)) {
+      delete (body as Record<string, unknown>)[f];
+    }
+    // Field-level write gates (F4), after the identity strip.
+    const blocked = checkFieldWrites(collection, gate.user, body as Record<string, unknown>);
+    if (blocked.length > 0) {
+      return err(
+        403,
+        `fields [${blocked.join(", ")}] are not writable via the delivery API here — remove them or sign in with the required role`,
+      );
+    }
   }
 
   try {
@@ -139,7 +168,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       type: "delivery",
       userSub: gate.user?.id,
     });
-    const [resolved] = await resolveRefsForRead(projectId, collection, [updated]);
+    const [resolved] = await resolveRefsForRead(projectId, collection, [updated], gate.user);
     return corsJson({ data: toPublicView(collection, resolved) });
   } catch (e) {
     if (e instanceof ValidationError) return err(422, e.message, undefined, e.issues);
@@ -159,6 +188,9 @@ export async function DELETE(req: NextRequest, { params }: Params) {
 
   const gate = await gateMutate(projectId, collection, req.headers.get("x-user-token"), entry.data);
   if (!gate.ok) return err(gate.status, gate.error);
+
+  const limited = await throttle(req, projectId);
+  if (limited) return limited;
 
   await deleteEntry(collection, id, { type: "delivery", userSub: gate.user?.id });
   return new Response(null, { status: 204, headers: CORS_HEADERS });

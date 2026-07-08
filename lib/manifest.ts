@@ -2,7 +2,8 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { db } from "@/db";
-import { projects, type Branding } from "@/db/schema";
+import { projects, type Branding, type Collection } from "@/db/schema";
+import { accessSchema } from "./access-rules";
 import { getProject } from "./admin";
 import {
   listCollections,
@@ -29,7 +30,7 @@ export interface ProjectManifest {
     publicWrite: boolean;
     webhookUrl: string | null;
     publicFilter: WhereItem[] | null;
-    access: { read?: "public" | "authenticated" | "owner"; write?: "none" | "authenticated" | "owner"; ownerField?: string } | null;
+    access: Collection["access"] | null;
     events: Record<string, unknown> | null;
     fields: FieldDef[];
   }[];
@@ -68,12 +69,7 @@ const manifestSchema = z.object({
         )
         .nullable()
         .default(null),
-      access: z
-        .object({
-          read: z.enum(["public", "authenticated", "owner"]).optional(),
-          write: z.enum(["none", "authenticated", "owner"]).optional(),
-          ownerField: z.string().optional(),
-        })
+      access: accessSchema
         .nullable()
         .default(null),
       events: z.record(z.unknown()).nullable().default(null),

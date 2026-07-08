@@ -222,14 +222,31 @@ The delivery-facing features a real site actually consumes. All read-path, no mi
 Parameterized **presets, not expressions**: one new shape
 `ClaimRule = {claim, equals}` + array composition, all fail-closed.
 
-- [ ] 12.1 `F1` (M) — claim-based presets: `read`/`write: {claim, equals}` from
-      verified BYO-Clerk JWT custom claims.
-- [ ] 12.2 `F2` (S) — any-of arrays: `write: ["owner", {claim:"role", equals:"moderator"}]`.
-- [ ] 12.3 `F3` (M) — org/team row scoping `access.org {claim, field}` — fail-closed,
+- [x] 12.1 `F1` (M) — claim-based presets: `read`/`write: {claim, equals}` from
+      verified BYO-Clerk JWT custom claims. Fail-closed (absent/non-string never
+      match); claim-write is staff write (mutate any row); precise 403 distinguishing
+      absent vs wrong value. Shared `accessSchema` zod for define + manifest.
+      ✅ 2026-07-07, authz smoke
+- [x] 12.2 `F2` (S) — any-of arrays: `write: ["owner", {claim:"role", equals:"moderator"}]`
+      — normalized preset-list eval, owner as the fallback rung. ✅ 2026-07-07 (with F1)
+- [x] 12.3 `F3` (M) — org/team row scoping `access.org {claim, field}` — fail-closed,
       org field server-stamped on create AND stripped on PATCH (tamper-proof),
-      enforced as rowClauses on every operation including F1/F2 claim roles.
-- [ ] 12.4 `F4` (M) — field-level write rules: `writableBy: "none" | ClaimRule`
-      on FieldDef (delivery surface; admin/MCP unaffected).
+      enforced as `rowClauses` (Gate contract change ownerClause→rowClauses[]) on
+      every operation including F1/F2 claim roles. Define-time bars org+public and
+      org+anonymous-write. ✅ 2026-07-07, authz smoke
+- [x] 12.4 `F4` (M) — field-level write rules: `writableBy: "none" | ClaimRule`
+      on FieldDef (delivery POST + PATCH; admin/MCP unaffected; identity fields
+      exempt). ✅ 2026-07-07, authz smoke
+- **Adversarial review** (4 lenses × verify) caught 3 real access-control holes,
+  all fixed + regression-tested (21 authz smoke):
+  - **A** anonymous `publicWrite` could forge `ownerField` (the owner twin of the
+    org-injection bar) — closed at define time (symmetric owner bar) AND at runtime
+    (`stampIdentity` strips stamped identity fields on the null-user path).
+  - **B** relation `{id,label}` resolution leaked an org-scoped target's `labelField`
+    cross-org (a non-org parent can point at an org target) — `resolveRelations` now
+    gates the label by the viewer's org, fail-closed; MCP/admin pass `"trusted"`.
+  - **C** PATCH/DELETE were unthrottled while claim-write grants any-row mutation —
+    same rate-limit window as POST/search now applied.
 - **Coordination contract:** F updates D2/D4's target-read gates to the
   preset-union shape; Phases 15/17 (K, H) are implemented against post-F shapes.
 - Deferred: `F5` per-row sharing ACL — `entry_shares` side-table design recorded
