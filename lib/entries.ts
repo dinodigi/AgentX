@@ -603,9 +603,15 @@ async function updateEntryIfCore(
   ];
 
   // G4: a workflow move on the CAS path. `to` is validated for the actor before
-  // SQL; the field must currently be an allowed `from` (or already `to` — an
-  // idempotent no-op) or the CAS 0-rows as a conflict. `from` is recovered from
-  // the advisory pre-read below, like `previous`.
+  // SQL; the field must currently be an allowed `from` or the CAS 0-rows as a
+  // conflict. The guard is ONLY allowedFroms (NOT ∪ {to}): that makes the
+  // single-fire guarantee rest on the target-row WHERE (which Postgres
+  // re-evaluates reliably under contention), so N concurrent identical
+  // transitions produce exactly one winner and N-1 conflicts — never a
+  // double-fire. (Including `to` for idempotency let losers no-op-succeed, and
+  // whether they fired then hinged on the racy pre-image. Idempotent B→B now
+  // conflicts; use an `if` condition for CAS retries.) The winner's exact `from`
+  // is recovered via the self-join UPDATE below.
   const wf = collection.workflow;
   const wfField = wf && wf.field in patch ? wf.field : null;
   let wfTo: string | null = null;
@@ -616,7 +622,7 @@ async function updateEntryIfCore(
     }
     const check = checkTransition(collection, actorType, patch)!;
     wfTo = check.to;
-    const guardVals = [...new Set([...check.allowedFroms, check.to])];
+    const guardVals = [...new Set(check.allowedFroms)];
     conditions.push(
       sql`(${entries.data}->>${wf.field}) = ANY(${sql`ARRAY[${sql.join(
         guardVals.map((v) => sql`${v}`),
@@ -655,39 +661,68 @@ async function updateEntryIfCore(
     dataExpr = sql`jsonb_set(${dataExpr}, ${`{${field}}`}, to_jsonb(${oldValue} + ${by}))`;
   }
 
-  // Pre-read on the SAME executor gives the success event its `previous`.
-  const [preRead] = await dbc
-    .select()
-    .from(entries)
-    .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
-    .limit(1);
-
   let row: Entry | undefined;
-  try {
-    [row] = await dbc
-      .update(entries)
-      .set({ data: dataExpr as unknown as Record<string, unknown>, updatedAt: new Date() })
-      .where(and(...conditions))
-      .returning();
-  } catch (e) {
-    rethrowUnique(e);
+  // The success event/version want `previous`. For a workflow move `previous`
+  // must be the EXACT pre-image (it decides WHICH transition fired), so that
+  // path uses a self-join UPDATE returning old.data — an advisory pre-read can
+  // misreport `from` when a concurrent writer moves the row mid-CAS, firing the
+  // wrong transition or double-firing. Non-workflow CAS keeps the cheaper
+  // advisory pre-read (its `previous` is already documented-advisory).
+  let previous: Record<string, unknown> | undefined;
+  if (wfField) {
+    const whereSql = and(...conditions)!;
+    try {
+      const result = await dbc.execute(sql`
+        UPDATE ${entries}
+        SET data = ${dataExpr}, updated_at = now()
+        FROM ${entries} old
+        WHERE ${entries.id} = old.id AND ${whereSql}
+        RETURNING ${entries.id} AS id, ${entries.data} AS data, old.data AS previous_data`);
+      const rows = ((result as { rows?: unknown[] }).rows ?? (result as unknown as unknown[])) as {
+        id: string;
+        data: Record<string, unknown>;
+        previous_data: Record<string, unknown>;
+      }[];
+      if (rows[0]) {
+        row = { id: rows[0].id, data: rows[0].data } as Entry;
+        previous = rows[0].previous_data;
+      }
+    } catch (e) {
+      rethrowUnique(e);
+    }
+  } else {
+    const [preRead] = await dbc
+      .select()
+      .from(entries)
+      .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
+      .limit(1);
+    previous = preRead?.data;
+    try {
+      [row] = await dbc
+        .update(entries)
+        .set({ data: dataExpr as unknown as Record<string, unknown>, updatedAt: new Date() })
+        .where(and(...conditions))
+        .returning();
+    } catch (e) {
+      rethrowUnique(e);
+    }
   }
 
   if (!row) {
     const diagnosis = await diagnoseCasFailure(dbc, collection, id, opts, incField, raceFree);
     return { ok: false, diagnosis };
   }
-  // Recover the transition `from` from the advisory pre-read (hedged on
-  // neon-http, race-free inside a tx) — only when it actually moved.
+  // `from` is now the EXACT pre-image on the workflow path — fire only on a real
+  // move (from !== to), so a racer landing on an already-`to` row fires nothing.
   let transition: EmitDescriptor["transition"];
   if (wfField && wfTo !== null) {
-    const from = preRead?.data[wfField];
+    const from = previous?.[wfField];
     if (typeof from === "string" && from !== wfTo) transition = { field: wfField, from, to: wfTo };
   }
   return {
     ok: true,
     entry: row,
-    emit: { event: "updated", entry: { id: row.id, data: row.data }, previous: preRead?.data, transition },
+    emit: { event: "updated", entry: { id: row.id, data: row.data }, previous, transition },
     changedFields: [...Object.keys(patch), ...(opts.increment ? [opts.increment.field] : [])],
   };
 }

@@ -300,15 +300,25 @@ backfill, C's sweep, H's prune, K's reconciliation all name it as their runner).
       {field, initial, transitions[{from, to, actors, actions}]}; `applyWorkflowOnCreate`
       on **all** create paths (single + bulk + transact); transitions actor-gated
       (delivery excluded by default); `checkTransition` guards update + update_if
-      (CAS `from`-guard, `from` from the advisory pre-read); matched transition fires
+      (CAS `from`-guard; exact `from` via the G4b self-join); matched transition fires
       `entry.transitioned` actions. Define-time bars non-enum field, out-of-option
       states, overlapping (from,to), and `after` on transition actions. Adversarial
       review (4 lenses) confirmed 1 real hole — `restore_entry_version` was a third
       ungated `db.update(entries)` site that could reverse a transition; fixed by
       pinning the workflow field to live (restore = content-only). Transact-create
       spoof closed mid-review. ✅ 2026-07-08, 26-workflow smoke (9)
-- [ ] 13.5 `G4b` (S) — CAS-transition proof: racing-transitions smoke isolating the
-      self-join pre-image claims before anything composes on them.
+- [x] 13.5 `G4b` (S) — CAS-transition proof. Exposed a real race in G4's own CAS
+      path (`to` in the guard + advisory `from` → double-fire/wrong-fire under
+      concurrency) AND disproved a first fix (self-join alone still double-fired
+      under full-suite load — FROM-clause `old` reads a stale pre-image via
+      EvalPlanQual). Real fix: single-fire rests on the TARGET-ROW guard (guard =
+      allowedFroms only, NOT ∪ {to}) — Postgres reliably re-evaluates it under
+      contention, so N racers → 1 winner + N-1 conflicts (same mechanism as
+      book-a-seat). The winner's exact `from` still comes from the self-join
+      (no longer load-bearing for single-fire). Idempotent B→B now conflicts
+      (use `if` for retries). Smoke: exact-from with disjoint froms→same-to,
+      `if`+workflow guard in one statement, 5 concurrent → EXACTLY once.
+      ✅ 2026-07-08, 27-cas-transition smoke (4)
 - [ ] 13.6 `G5` (S) — `cancel_job`, admin Automation section, transition-aware entry form.
 
 ## Phase 14 — Semantic + hybrid search (spec: design-search E4–E6) — evidence-gated
