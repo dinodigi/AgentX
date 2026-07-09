@@ -197,6 +197,49 @@ export async function startWebhookReceiver() {
   };
 }
 
+/** Local before-write hook endpoint (I1a). Captures each request's headers +
+ * parsed body for signature/envelope assertions; the response is switchable:
+ * approve (default) → {ok:true}, reject → {ok:false,error}, malformed → non-JSON,
+ * hang → never responds (fires the client's AbortSignal.timeout). */
+export async function startHookReceiver() {
+  const received = [];
+  let mode = "approve";
+  let rejectError = "nope";
+  const server = http.createServer((req, res) => {
+    let data = "";
+    req.on("data", (c) => (data += c));
+    req.on("end", () => {
+      let json = null;
+      try {
+        json = JSON.parse(data || "{}");
+      } catch {
+        /* raw only */
+      }
+      received.push({ headers: req.headers, body: data, json });
+      if (mode === "hang") return; // no response → client times out
+      if (mode === "malformed") {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end("not json {{{");
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(mode === "reject" ? { ok: false, error: rejectError } : { ok: true }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    url: `http://127.0.0.1:${server.address().port}/hook`,
+    received,
+    approve: () => (mode = "approve"),
+    reject: (err = "nope") => {
+      mode = "reject";
+      rejectError = err;
+    },
+    malformed: () => (mode = "malformed"),
+    hang: () => (mode = "hang"),
+    close: () => new Promise((r) => server.close(r)),
+  };
+}
+
 /** Poll until fn() is truthy or timeout. */
 export async function waitFor(fn, { timeoutMs = 8000, stepMs = 250 } = {}) {
   const end = Date.now() + timeoutMs;

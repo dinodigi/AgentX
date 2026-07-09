@@ -26,6 +26,10 @@ export const ERROR_CODES = {
     "a required server env var is missing or too weak — the message names the exact var and constraint (operator-fixed, not agent-repairable)",
   E_UPSTREAM:
     "an external provider (e.g. Stripe) rejected the request — the message carries the provider's own reason; fix the referenced config or retry",
+  E_HOOK_REJECTED:
+    "the collection's before-write hook rejected this write — the message carries the hook's reason; fix the data or ask the operator about the hook",
+  E_HOOK_FAILED:
+    "the before-write hook endpoint could not be reached or answered malformed — check get_deliveries for the attempt; the operator can set onError:'allow' or disable the hook",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

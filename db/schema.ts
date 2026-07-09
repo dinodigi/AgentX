@@ -86,6 +86,27 @@ export interface CheckoutConfig {
 }
 
 /**
+ * I1: a signed synchronous before-write hook to BYO compute — custom
+ * validation/transformation without AgentX ever hosting tenant code. At most one
+ * per lifecycle stage. `mode:'validate'` only gates the write (I1a); `transform`
+ * (I1b) may rewrite the candidate. `onError` decides fail-closed ('reject',
+ * default) vs fail-open ('allow') when the endpoint is unreachable/malformed.
+ * `when` gates the call by the candidate snapshot (same semantics as events).
+ */
+export interface WriteHook {
+  url: string;
+  mode: "validate" | "transform";
+  onError?: "reject" | "allow";
+  timeoutMs?: number; // 500–5000, default 3000
+  when?: WhereItem[];
+  disabled?: boolean;
+}
+export interface HooksConfig {
+  beforeCreate?: WriteHook;
+  beforeUpdate?: WriteHook;
+}
+
+/**
  * Identity presets for the delivery API — parameterized, never an expression
  * language. A ClaimRule matches when a verified JWT custom claim equals one of
  * the given values. A preset ARRAY means any-of (F2). owner/ClaimRule/authenticated
@@ -182,6 +203,8 @@ export const collections = pgTable(
     /** K2a/K4: declarative Stripe checkout (priceField + success/cancel URLs,
      * optional order-entry mapping). Sellable collections must be public. */
     checkout: jsonb("checkout").$type<CheckoutConfig>(),
+    /** I1: signed before-write hooks to BYO compute (at most one per stage). */
+    hooks: jsonb("hooks").$type<HooksConfig>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

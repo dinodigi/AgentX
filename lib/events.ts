@@ -273,6 +273,13 @@ export async function refireDelivery(
       "inbound Stripe event logs are not refireable — redeliver from the Stripe dashboard instead",
     );
   }
+  // I1a: before-write hook consults (event `hook.*`) gate a live write — there
+  // is nothing to replay without a fresh write, so they are not refireable.
+  if (row.event.startsWith("hook.")) {
+    throw new ValidationError(
+      "before-write hook consults cannot be replayed — re-attempt the write instead",
+    );
+  }
 
   if (row.url.startsWith("email:")) {
     const rendered = (row.payload as { email?: Partial<RenderedEmail> }).email;

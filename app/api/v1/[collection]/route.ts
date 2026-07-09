@@ -329,6 +329,11 @@ export async function POST(
     return corsJson({ id: entry.id }, { status: 201 });
   } catch (e) {
     if (e instanceof ValidationError) {
+      // I1a: a before-write hook rejection is 422 E_HOOK_REJECTED; an
+      // unreachable/malformed hook (fail-closed) is 502 E_HOOK_FAILED — distinct
+      // from a plain E_VALIDATION so delivery clients branch correctly.
+      if (e.code === "E_HOOK_FAILED") return deliveryError(502, e.message, undefined, undefined, "E_HOOK_FAILED");
+      if (e.code === "E_HOOK_REJECTED") return deliveryError(422, e.message, undefined, undefined, "E_HOOK_REJECTED");
       return deliveryError(422, e.message, undefined, e.issues);
     }
     return deliveryError(500, "internal error");

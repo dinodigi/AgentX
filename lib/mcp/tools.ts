@@ -60,7 +60,9 @@ const BOUNDARIES =
   "Boundaries: this system defines DATA STRUCTURE + CRUD (plus atomic batches via " +
   "transact, recoverable deletes via trash/restore, delayed/scheduled actions, and " +
   "declarative field-transition workflows — actor-gated state machines with " +
-  "webhook/email actions, no arbitrary code and no multi-entry orchestration). It " +
+  "webhook/email actions, no arbitrary code and no multi-entry orchestration). " +
+  "Custom validation runs on YOUR endpoint via collection before-write hooks (define " +
+  "hooks.beforeCreate) — AgentX signs and calls it, never hosts code. It " +
   "does NOT do authorization/row-level rules beyond presets (those live in the app " +
   "layer) or i18n. Public-read visibility is per-field (set publicRead on each field). " +
   "Public-write is per-collection.";
@@ -303,6 +305,34 @@ export const TOOL_DEFS: ToolDef[] = [
           required: ["priceField", "successUrl", "cancelUrl"],
           additionalProperties: false,
         },
+        hooks: {
+          type: "object",
+          description:
+            "signed before-write hooks to YOUR compute — custom validation without AgentX hosting " +
+            "code. I1a: only beforeCreate in mode 'validate'. Each POST to your `url` is HMAC-signed " +
+            "with the project's webhook signing secret (set it in project settings first) and carries " +
+            "{event, collection, candidate:{data}}; answer {ok:true} to allow or {ok:false, error} to " +
+            "reject (→ E_HOOK_REJECTED). onError:'reject' (default) fails the write closed when your " +
+            "endpoint is unreachable; 'allow' fails open. Runs on create_entry AND transact creates — " +
+            "NOT bulk_create_entries (refused) or update_entry_if (single-statement CAS). `when` gates " +
+            "by the candidate snapshot.",
+          properties: {
+            beforeCreate: {
+              type: "object",
+              properties: {
+                url: { type: "string", description: "http(s) endpoint AgentX POSTs the candidate to" },
+                mode: { type: "string", enum: ["validate"], description: "validate-only in I1a" },
+                onError: { type: "string", enum: ["reject", "allow"], description: "fail-closed (default) or open" },
+                timeoutMs: { type: "number", description: "500–5000, default 3000" },
+                when: { type: "array", description: "only consult when these clauses match the candidate" },
+                disabled: { type: "boolean" },
+              },
+              required: ["url", "mode"],
+              additionalProperties: false,
+            },
+          },
+          additionalProperties: false,
+        },
         renames: {
           type: "array",
           description:
@@ -403,7 +433,9 @@ export const TOOL_DEFS: ToolDef[] = [
       "incrementing). A no-op returns a diagnosed failure: E_NOT_FOUND (no such entry), or " +
       "E_CONFLICT whose message names the cause — an if-clause that didn't hold, the increment " +
       "field being unset, or the increment breaching min/max. Re-read and retry. Book-a-seat: " +
-      '{if:[{field:"seats",op:"gt",value:0}], increment:{field:"seats",by:-1}}.',
+      '{if:[{field:"seats",op:"gt",value:0}], increment:{field:"seats",by:-1}}. ' +
+      "Does NOT run before-write hooks — its value is a single atomic statement with no pre-read, " +
+      "which a synchronous external consult would defeat.",
     inputSchema: {
       type: "object",
       properties: {
@@ -750,7 +782,9 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "bulk_create_entries",
     description:
       "Create up to 100 entries in one call (use for seeding). Each item is validated like " +
-      "create_entry; returns per-item results so you can fix only the failures.",
+      "create_entry; returns per-item results so you can fix only the failures. Refused " +
+      "(E_VALIDATION) on a collection with an enabled beforeCreate hook — a per-item synchronous " +
+      "consult would blow the batch budget; use create_entry per item or disable the hook.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1042,6 +1076,15 @@ const eventActionSchema = z.union([
   z.object({ type: z.literal("email"), to: z.string(), subject: z.string(), ...eventActionBase }),
 ]);
 
+const writeHookSchema = z.object({
+  url: z.string(),
+  mode: z.enum(["validate", "transform"]),
+  onError: z.enum(["reject", "allow"]).optional(),
+  timeoutMs: z.number().optional(),
+  when: z.array(whereItemSchema).optional(),
+  disabled: z.boolean().optional(),
+});
+
 const defineArgs = z.object({
   name: z.string(),
   displayName: z.string().optional(),
@@ -1092,6 +1135,13 @@ const defineArgs = z.object({
           }),
         })
         .optional(),
+    })
+    .nullable()
+    .optional(),
+  hooks: z
+    .object({
+      beforeCreate: writeHookSchema.optional(),
+      beforeUpdate: writeHookSchema.optional(),
     })
     .nullable()
     .optional(),
@@ -1300,6 +1350,7 @@ export async function callTool(
           events: a.events,
           workflow: a.workflow as never,
           checkout: a.checkout as never,
+          hooks: a.hooks as never,
           renames: a.renames,
           confirm: a.confirm,
         });
@@ -1345,6 +1396,7 @@ export async function callTool(
           events: c.events ?? null,
           workflow: c.workflow ?? null,
           checkout: c.checkout ?? null,
+          hooks: c.hooks ?? null,
           fields: c.fields,
         });
       }

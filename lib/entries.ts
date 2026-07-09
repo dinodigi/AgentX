@@ -32,6 +32,7 @@ import {
   type RelatedContextMap,
 } from "./query";
 import { emitEntryEvent, runEventAction, type EntryEvent } from "./events";
+import { callWriteHook } from "./hooks";
 import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workflow";
 import { recordChange, recordChanges, type ChangeInput } from "./changes";
 import type { WorkflowActor } from "@/db/schema";
@@ -231,9 +232,11 @@ function fireTransition(collection: Collection, emit: EmitDescriptor): void {
 
 /**
  * The write choke point for creates. Runs on any executor (`db` or a tx), does
- * the insert only (caller validates + verifyRefs first), returns the row plus
- * an emit descriptor. Later phases (hooks, workflow enforcement) hang off the
- * cores so every write path — single op AND transact — inherits them.
+ * the insert ONLY — the caller must have validated, verifyRefs'd, AND consulted
+ * the before-create hook first. Both create paths do so before reaching here:
+ * createEntry (single op) and transact's prep pass (batch). The hook is
+ * deliberately NOT inside the core — it makes an external HTTP call, which must
+ * never run inside transact's open interactive transaction.
  */
 async function createEntryCore(
   dbc: DbExecutor,
@@ -273,6 +276,39 @@ async function createEntryCore(
   return { entry: existing, emit: null };
 }
 
+/**
+ * I1a: consult the collection's before-create hook. Throws E_HOOK_REJECTED when
+ * the tenant endpoint rejects the write, or E_HOOK_FAILED when it is
+ * unreachable/malformed AND onError is 'reject' (fail-closed, the default). A
+ * disabled hook, a non-matching `when`, or onError:'allow' on an outage all let
+ * the write proceed (the consult is still logged to webhook_deliveries).
+ */
+async function runBeforeCreateHook(
+  projectId: string,
+  collection: Collection,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const hook = collection.hooks?.beforeCreate;
+  if (!hook || hook.disabled) return;
+  if (hook.when?.length && !matchesClauses(collection.fields, hook.when, data)) return;
+  const outcome = await callWriteHook(projectId, collection, hook, {
+    event: "entry.before_create",
+    collection: collection.name,
+    candidate: { data },
+  });
+  if (outcome.kind === "reject") {
+    // The machine code is ALWAYS E_HOOK_REJECTED (stable for clients); the
+    // hook's own message is the human reason. A hook cannot mint arbitrary codes.
+    throw new ValidationError(outcome.error, "E_HOOK_REJECTED");
+  }
+  if (outcome.kind === "unavailable" && (hook.onError ?? "reject") === "reject") {
+    throw new ValidationError(
+      `before-write hook could not be consulted: ${outcome.reason}`,
+      "E_HOOK_FAILED",
+    );
+  }
+}
+
 export async function createEntry(
   projectId: string,
   collection: Collection,
@@ -283,6 +319,10 @@ export async function createEntry(
   applyWorkflowOnCreate(collection, clean); // default/enforce the initial state
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
+
+  // I1a: consult the before-create hook AFTER cheap local validation, BEFORE the
+  // write — a rejection or a fail-closed outage stops the insert entirely.
+  await runBeforeCreateHook(projectId, collection, clean);
 
   const { entry, emit } = await createEntryCore(db, projectId, collection, clean, {
     idempotencyKey: opts.idempotencyKey,
@@ -1135,6 +1175,11 @@ export async function transact(
         applyWorkflowOnCreate(collection, clean); // initial-state rule on the transact create path too
         const { refChecks } = buildEntrySchema(collection.fields);
         await verifyRefs(projectId, clean, refChecks, assumeExisting);
+        // The before-create hook gates transact creates too — consulted HERE in
+        // the prep pass, BEFORE withTransaction opens, so the synchronous
+        // external call never holds the pooled connection and a rejection aborts
+        // the whole batch cleanly (nothing has been written yet).
+        await runBeforeCreateHook(projectId, collection, clean);
         prepared.push({ kind: "create", collection, id: createIds[i]!, clean, changedFields: Object.keys(clean) });
       } else if (op.op === "update") {
         if (!id) throw new ValidationError("update op requires an id");
@@ -1375,6 +1420,13 @@ export async function bulkCreateEntries(
   actor: AuditActor = UNKNOWN_ACTOR,
 ): Promise<BulkItemResult[]> {
   if (items.length > 100) throw new ValidationError("max 100 entries per bulk call");
+  // I1a: bulk does NOT run before-create hooks (a synchronous per-item consult
+  // would blow the host budget). Refuse rather than silently skip the hook.
+  if (collection.hooks?.beforeCreate && !collection.hooks.beforeCreate.disabled) {
+    throw new ValidationError(
+      `"${collection.name}" has a beforeCreate hook — use create_entry per item, or set hooks.beforeCreate.disabled to bulk-insert`,
+    );
+  }
   const { refChecks } = buildEntrySchema(collection.fields);
 
   const results: BulkItemResult[] = [];

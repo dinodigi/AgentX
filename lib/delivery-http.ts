@@ -37,8 +37,11 @@ export function deliveryError(
   message: string,
   init?: ResponseInit,
   issues?: ConstraintIssue[],
+  /** Override the status→code default — e.g. a hook rejection is 422 but must
+   *  read E_HOOK_REJECTED, not the generic E_VALIDATION, so clients branch. */
+  codeOverride?: ErrorCode,
 ): Response {
-  const code = CODE_BY_STATUS[status] ?? "E_INTERNAL";
+  const code = codeOverride ?? CODE_BY_STATUS[status] ?? "E_INTERNAL";
   return corsJson(
     { error: message, code, ...(issues && issues.length > 0 ? { issues: issues.slice(0, 20) } : {}) },
     { ...init, status },

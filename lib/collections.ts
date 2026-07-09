@@ -1,7 +1,7 @@
 import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
-import { collections, entries, entriesTrash, type Collection, type EventAction } from "@/db/schema";
+import { collections, entries, entriesTrash, projects, type Collection, type EventAction } from "@/db/schema";
 import { getConnector } from "./connectors";
 import { parseAfter } from "./events";
 import { validateWorkflow } from "./workflow";
@@ -90,6 +90,8 @@ export interface DefineCollectionInput {
   workflow?: Collection["workflow"] | null;
   /** K2a: declarative Stripe checkout (priceField + success/cancel URLs). */
   checkout?: Collection["checkout"] | null;
+  /** I1: signed before-write hooks to BYO compute (I1a: beforeCreate/validate). */
+  hooks?: Collection["hooks"] | null;
   /** Required when redefinition drops or retypes fields (destructive). */
   confirm?: boolean;
 }
@@ -341,6 +343,56 @@ function assertOrdersMapping(orders: OrdersMapping, targetFields: FieldDef[], ta
   if (blocking) {
     throw new ValidationError(
       `"${targetName}.${blocking.name}" is required, but a pending order is created before payment with only ${[...preFilled].join(" + ")} — make ${blocking.name} optional`,
+    );
+  }
+}
+
+/**
+ * I1a: validate a before-write hook config. Only `beforeCreate` in `validate`
+ * mode is available now (transform + beforeUpdate land in I1b, rejected here so
+ * nothing is silently ignored). Requires the project's webhook signing secret —
+ * the consult is HMAC-signed so the tenant endpoint can authenticate AgentX.
+ */
+async function validateHooks(
+  projectId: string,
+  hooks: NonNullable<DefineCollectionInput["hooks"]>,
+  fields: FieldDef[],
+): Promise<void> {
+  if (hooks.beforeUpdate) {
+    throw new ValidationError("hooks.beforeUpdate lands in a later increment (I1b) — only beforeCreate is available now");
+  }
+  const hook = hooks.beforeCreate;
+  if (!hook) return;
+  if (hook.mode !== "validate") {
+    throw new ValidationError('hooks.beforeCreate.mode must be "validate" — transform mode lands in a later increment (I1b)');
+  }
+  let u: URL;
+  try {
+    u = new URL(hook.url);
+  } catch {
+    throw new ValidationError("hooks.beforeCreate.url must be an absolute http(s) URL");
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") {
+    throw new ValidationError("hooks.beforeCreate.url must use http or https");
+  }
+  if (hook.onError !== undefined && hook.onError !== "reject" && hook.onError !== "allow") {
+    throw new ValidationError('hooks.beforeCreate.onError must be "reject" (fail-closed, default) or "allow"');
+  }
+  if (
+    hook.timeoutMs !== undefined &&
+    (typeof hook.timeoutMs !== "number" || hook.timeoutMs < 500 || hook.timeoutMs > 5000)
+  ) {
+    throw new ValidationError("hooks.beforeCreate.timeoutMs must be a number between 500 and 5000");
+  }
+  if (hook.when?.length) buildWhere(fields, hook.when); // throws a field-named hint on a bad clause
+  const [proj] = await db
+    .select({ secret: projects.webhookSigningSecret })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!proj?.secret) {
+    throw new ValidationError(
+      "a before-write hook needs the project's webhook signing secret — generate it in project settings first",
     );
   }
 }
@@ -733,6 +785,9 @@ export async function defineCollection(
   if (input.checkout) {
     await validateCheckout(projectId, input.checkout, fields, input.access);
   }
+  if (input.hooks) {
+    await validateHooks(projectId, input.hooks, fields);
+  }
 
   // Relation targets must resolve to a real collection in this project.
   const existing = await listCollections(projectId);
@@ -808,6 +863,7 @@ export async function defineCollection(
     events: input.events ?? null,
     workflow: input.workflow ?? null,
     checkout: input.checkout ?? null,
+    hooks: input.hooks ?? null,
     updatedAt: new Date(),
   };
 
@@ -826,6 +882,7 @@ export async function defineCollection(
         events: values.events,
         workflow: values.workflow,
         checkout: values.checkout,
+        hooks: values.hooks,
         updatedAt: values.updatedAt,
       },
     })
