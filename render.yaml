@@ -70,6 +70,12 @@ services:
   # Every minute, POST /api/jobs/drain with the shared CRON_SECRET. Uses node's
   # global fetch (no curl/image dep); a non-2xx exits non-zero so Render surfaces
   # a failing tick. The endpoint is fail-closed (503 until CRON_SECRET is set).
+  #
+  # Talks to the web service over Render's PRIVATE network: WEB_HOST is the
+  # internal host:port (fromService property: hostport), reached over plain
+  # HTTP. NOT https/443 — internal services serve HTTP on their own port; the
+  # 443 TLS listener only exists on the public .onrender.com edge, so an
+  # internal https://…:443 call is refused (ECONNREFUSED).
   - type: cron
     name: agentx-jobs-drain
     runtime: node
@@ -79,13 +85,13 @@ services:
     schedule: "* * * * *"
     buildCommand: "echo 'no build — drain is a one-line fetch'"
     startCommand: >
-      node -e "fetch('https://'+process.env.WEB_HOST+'/api/jobs/drain',{method:'POST',headers:{authorization:'Bearer '+process.env.CRON_SECRET}}).then(r=>{console.log('drain',r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e);process.exit(1)})"
+      node -e "fetch('http://'+process.env.WEB_HOST+'/api/jobs/drain',{method:'POST',headers:{authorization:'Bearer '+process.env.CRON_SECRET}}).then(r=>{console.log('drain',r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e);process.exit(1)})"
     envVars:
       - fromGroup: agentx-shared # same CRON_SECRET as the web service
       - key: NODE_VERSION
         value: "22"
-      - key: WEB_HOST # the web service's hostname (e.g. agentx.onrender.com)
+      - key: WEB_HOST # internal host:port for private networking (e.g. agentx:10000)
         fromService:
           type: web
           name: agentx
-          property: host
+          property: hostport
