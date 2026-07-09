@@ -357,9 +357,11 @@ the durable queue — no hard G dependency, but land after G3 for clean logging.
       https URLs, Stripe connected, **access.read must be public** — sellable⇒public,
       re-checked on EVERY write so a later redefine can't privatize it); `checkout`
       reserved; MCP define/describe + manifest round-trip. ✅ 2026-07-08, 34-checkout-config smoke (6)
-- [ ] 15.3 `K2b` (M) — `POST /v1/checkout`: server-side price lookup (never trust
-      client amounts), order entry created *before* the session (id in metadata),
-      stripe-mock smoke harness.
+- [x] 15.3 `K2b` (M) — `POST /v1/checkout`: server-side price lookup (never trust
+      client amounts), stripe-mock smoke harness. (Order-entry-before-session +
+      metadata.orderEntryId ride with K4's orders mapping, per the split design.)
+      ✅ 2026-07-08, 35-checkout smoke (12); adversarial review 4 findings fixed
+      (non-uuid 500, hidden-collection oracle, unreadable-2xx→201, 503 code)
 - [ ] 15.4 `K3` (M) — signed webhook ingestion `/api/stripe/webhook/{projectId}`
       (whsec signature is the only auth; project identity from the verified path,
       never metadata). Migration: `project_connectors.secretsEnc` slot map.

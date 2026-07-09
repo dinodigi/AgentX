@@ -3,7 +3,7 @@
 // data is never touched and parallel files can't collide.
 import { neon } from "@neondatabase/serverless";
 import { generateKeyPair, exportJWK, SignJWT } from "jose";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID, createCipheriv } from "node:crypto";
 import http from "node:http";
 
 /** Override with SMOKE_BASE to run the suite against a deployment (prod smoke). */
@@ -146,6 +146,25 @@ export async function connectClerk(projectId, issuer, extraConfig = {}) {
   await sql`INSERT INTO project_connectors (project_id, type, config)
     VALUES (${projectId}, 'clerk', ${JSON.stringify(config)}::jsonb)
     ON CONFLICT (project_id, type) DO UPDATE SET config = EXCLUDED.config`;
+}
+
+/** Mirror of lib/crypto.ts encryptSecret (AES-256-GCM, iv.tag.ct base64url) so
+ * the harness can seed a decryptable connector secret the server will read. */
+function encryptSecret(plaintext) {
+  const key = Buffer.from(process.env.CONNECTOR_MASTER_KEY, "base64");
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const enc = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [iv, tag, enc].map((b) => b.toString("base64url")).join(".");
+}
+
+/** Attach a connected stripe connector with a decryptable secret key (direct SQL). */
+export async function connectStripe(projectId, { sk = "sk_test_smoke", pk = "pk_test_smoke" } = {}) {
+  await sql`INSERT INTO project_connectors (project_id, type, config, secret_enc, status)
+    VALUES (${projectId}, 'stripe', ${JSON.stringify({ publishableKey: pk })}::jsonb, ${encryptSecret(sk)}, 'connected')
+    ON CONFLICT (project_id, type) DO UPDATE SET
+      config = EXCLUDED.config, secret_enc = EXCLUDED.secret_enc, status = 'connected'`;
 }
 
 /** Local webhook receiver capturing POST bodies + headers — deterministic, no httpbin.

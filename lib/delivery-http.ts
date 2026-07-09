@@ -26,6 +26,10 @@ const CODE_BY_STATUS: Record<number, ErrorCode> = {
   422: "E_VALIDATION",
   429: "E_RATE_LIMITED",
   500: "E_INTERNAL",
+  502: "E_UPSTREAM",
+  // Both delivery 503s are "a required connector is not connected" (Stripe at
+  // checkout, Clerk issuer at the auth gate) — operator-fixed, not retryable.
+  503: "E_CONNECTOR_REQUIRED",
 };
 
 export function deliveryError(

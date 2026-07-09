@@ -24,6 +24,8 @@ export const ERROR_CODES = {
   E_INTERNAL: "unexpected server error — not agent-repairable; retry or report",
   E_UNCONFIGURED:
     "a required server env var is missing or too weak — the message names the exact var and constraint (operator-fixed, not agent-repairable)",
+  E_UPSTREAM:
+    "an external provider (e.g. Stripe) rejected the request — the message carries the provider's own reason; fix the referenced config or retry",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;
