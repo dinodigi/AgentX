@@ -114,6 +114,21 @@ export interface CheckoutLineItem {
 }
 
 /**
+ * Stripe amounts are in the smallest currency unit. Zero-decimal currencies
+ * (JPY, KRW, …) are already whole units — dividing by 100 would understate by
+ * 100x (openMinor #8). We don't store currency, so convert to the human amount
+ * here using Stripe's own zero-decimal set; everything else is 2-decimal.
+ */
+const ZERO_DECIMAL = new Set([
+  "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw", "mga", "pyg", "rwf",
+  "ugx", "vnd", "vuv", "xaf", "xof", "xpf",
+]);
+
+export function stripeAmountToMajor(amount: number, currency: string): number {
+  return ZERO_DECIMAL.has(currency.toLowerCase()) ? amount : amount / 100;
+}
+
+/**
  * Create a payment-mode Checkout Session. Amounts come ONLY from the server-side
  * Price ids — the client never sends money values. metadata/client_reference_id
  * carry the correlation keys the inbound webhook re-derives against the path

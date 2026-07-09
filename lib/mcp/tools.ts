@@ -265,11 +265,40 @@ export const TOOL_DEFS: ToolDef[] = [
             "absent) — owner/authenticated collections cannot be sold; do member-only pricing in your " +
             "app layer via events. BOUNDARIES: payment-mode Checkout Sessions only; no subscriptions, " +
             "invoicing, or refunds (those live in your Stripe dashboard / app layer). Order status " +
-            "'expired' covers both session expiry and async-payment failure in v1.",
+            "'expired' covers both session expiry and async-payment failure in v1. FULFILLMENT: " +
+            "declare events.updated with when:{field:<status>, equals:'paid'} on the ORDERS " +
+            "collection to fire your webhook/email — it fires only when payment actually clears.",
           properties: {
             priceField: { type: "string" },
             successUrl: { type: "string", description: "https redirect after payment" },
             cancelUrl: { type: "string", description: "https redirect if the buyer cancels" },
+            orders: {
+              type: "object",
+              description:
+                "optional (K4): turn paid sessions into order-entry writes. `collection` is another " +
+                "collection in THIS project; each `fields` value names a field on it. On payment the " +
+                "webhook flips status pending→paid (and expired on failure/expiry). status MUST be an " +
+                "enum with options pending, paid, expired; sessionId text; total number; customerEmail " +
+                "text; items text/richtext. A pending order row is written at checkout time (before the " +
+                "Stripe redirect) so nothing is lost if the buyer abandons.",
+              properties: {
+                collection: { type: "string" },
+                fields: {
+                  type: "object",
+                  properties: {
+                    status: { type: "string", description: "enum field (pending|paid|expired)" },
+                    sessionId: { type: "string", description: "text field" },
+                    total: { type: "string", description: "optional number field (human amount)" },
+                    customerEmail: { type: "string", description: "optional text field" },
+                    items: { type: "string", description: "optional text/richtext field — cart JSON snapshot" },
+                  },
+                  required: ["status", "sessionId"],
+                  additionalProperties: false,
+                },
+              },
+              required: ["collection", "fields"],
+              additionalProperties: false,
+            },
           },
           required: ["priceField", "successUrl", "cancelUrl"],
           additionalProperties: false,
@@ -1051,6 +1080,18 @@ const defineArgs = z.object({
       priceField: z.string(),
       successUrl: z.string(),
       cancelUrl: z.string(),
+      orders: z
+        .object({
+          collection: z.string(),
+          fields: z.object({
+            status: z.string(),
+            sessionId: z.string(),
+            total: z.string().optional(),
+            customerEmail: z.string().optional(),
+            items: z.string().optional(),
+          }),
+        })
+        .optional(),
     })
     .nullable()
     .optional(),

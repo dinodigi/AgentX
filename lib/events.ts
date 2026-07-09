@@ -74,8 +74,24 @@ export async function emitEntryEvent(
   const actions = declared.filter((a) => {
     if (a.disabled) return false;
     if (!a.when || a.when.length === 0) return true;
-    // `when` evaluates against the entry AS IT NOW IS (post-change snapshot).
-    return entry.data ? matchesClauses(collection.fields, a.when, entry.data) : false;
+    if (!entry.data || !matchesClauses(collection.fields, a.when, entry.data)) return false;
+    // On an UPDATE, a conditional action fires when the condition BECOMES true —
+    // a field the `when` watches actually changed on this write — not on every
+    // later re-save that still happens to match. Without this an order already
+    // at status=paid would re-fire its fulfillment on any unrelated edit (K4
+    // duplicate-shipment bug). `created`/restores have no previous ⇒ always fire.
+    if (previous) {
+      const watched = new Set<string>();
+      for (const c of a.when) {
+        if ("anyOf" in c) c.anyOf.forEach((sub) => watched.add(sub.field));
+        else watched.add(c.field);
+      }
+      const changed = [...watched].some(
+        (name) => JSON.stringify(previous[name]) !== JSON.stringify(entry.data![name]),
+      );
+      if (!changed) return false;
+    }
+    return true;
   });
   if (actions.length === 0) return;
 
@@ -248,6 +264,15 @@ export async function refireDelivery(
     .where(and(eq(webhookDeliveries.id, deliveryId), eq(webhookDeliveries.projectId, projectId)))
     .limit(1);
   if (!row) throw new ValidationError(`delivery ${deliveryId} not found`, "E_NOT_FOUND");
+
+  // Inbound Stripe event logs (K4) use a `stripe:<type>` pseudo-url — they are
+  // NOT outbound deliveries; re-POSTing that string would log garbage failures
+  // (openMinor #7). Stripe redelivers from its own dashboard.
+  if (row.url.startsWith("stripe:")) {
+    throw new ValidationError(
+      "inbound Stripe event logs are not refireable — redeliver from the Stripe dashboard instead",
+    );
+  }
 
   if (row.url.startsWith("email:")) {
     const rendered = (row.payload as { email?: Partial<RenderedEmail> }).email;

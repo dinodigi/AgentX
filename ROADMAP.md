@@ -369,9 +369,13 @@ the durable queue — no hard G dependency, but land after G3 for clean logging.
       Clerk-exempt matcher. ✅ 2026-07-08, 36-stripe-webhook smoke (10); adversarial
       review fixed 1 high (unbounded body DoS → connector-check-first + 1 MiB cap/413).
       NOTE: secrets_enc column applied by hand — `db:push` broken vs Neon PG18 (task_eb626419).
-- [ ] 15.5 `K4` (M) — order lifecycle: paid/expired CAS flips gated on
+- [x] 15.5 `K4` (M) — order lifecycle: paid/expired CAS flips gated on
       `payment_status === 'paid'` (async methods mapped), declarative fulfillment
-      via existing events; unmapped/probing events logged (rides G3's nullable column).
+      via existing events; unmapped/probing events logged. Pending-order-first;
+      path-only project identity + collectionId-scoped flip (cross-tenant no-op);
+      folds #5/#7/#8 (currency). ✅ 2026-07-09, 37-stripe-orders smoke (11);
+      adversarial review fixed 6 (permanent-failure→200-not-500-storm, orders
+      constraint hardening, enum-narrow re-validation, when-fires-on-transition).
 - [ ] 15.6 `K5` (S) — one-click webhook provisioning from the admin card.
 - [ ] 15.7 `K6` (S) — checkout snippet in `get_client_code` + publishable-key exposure.
 

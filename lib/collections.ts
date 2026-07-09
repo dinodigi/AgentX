@@ -235,6 +235,114 @@ async function validateCheckout(
       "E_CONNECTOR_REQUIRED",
     );
   }
+  if (checkout.orders) await validateCheckoutOrders(projectId, checkout.orders);
+}
+
+/**
+ * K4: validate the orders mapping — the target collection must exist in THIS
+ * project, and each mapped field must exist with the type the webhook writes.
+ * status must be an enum whose options cover the three lifecycle states the
+ * webhook drives it through. Fix-hints name the exact field/type to add.
+ */
+type OrdersMapping = NonNullable<NonNullable<DefineCollectionInput["checkout"]>["orders"]>;
+
+async function validateCheckoutOrders(projectId: string, orders: OrdersMapping): Promise<void> {
+  const target = await getCollection(projectId, orders.collection);
+  if (!target) {
+    throw new ValidationError(
+      `checkout.orders.collection "${orders.collection}" does not exist — define the orders collection first`,
+    );
+  }
+  assertOrdersMapping(orders, target.fields, orders.collection);
+}
+
+/**
+ * The pure field-shape checks for an orders mapping, against a SPECIFIC set of
+ * target fields. Split out so a redefine of the orders collection itself can be
+ * validated against its PROPOSED fields (not the stored ones) — narrowing the
+ * status enum or adding a required field out from under live orders is rejected
+ * at define time, per invariant #8.
+ */
+function assertOrdersMapping(orders: OrdersMapping, targetFields: FieldDef[], targetName: string): void {
+  const field = (name: string) => targetFields.find((f) => f.name === name);
+  const require = (role: string, name: string | undefined): FieldDef => {
+    if (!name) throw new ValidationError(`checkout.orders.fields.${role} is required`);
+    const f = field(name);
+    if (!f) {
+      throw new ValidationError(
+        `checkout.orders.fields.${role} names "${name}", which is not a field on "${targetName}"`,
+      );
+    }
+    return f;
+  };
+
+  const status = require("status", orders.fields.status);
+  if (status.type !== "enum") {
+    throw new ValidationError(
+      `checkout.orders.fields.status "${status.name}" must be an enum field (with options pending, paid, expired)`,
+    );
+  }
+  const opts = new Set(status.options ?? []);
+  const missing = ["pending", "paid", "expired"].filter((s) => !opts.has(s));
+  if (missing.length) {
+    throw new ValidationError(
+      `checkout.orders.fields.status enum "${status.name}" is missing required option(s): ${missing.join(", ")} — the order lifecycle needs pending, paid, expired`,
+    );
+  }
+
+  const sessionId = require("sessionId", orders.fields.sessionId);
+  if (sessionId.type !== "text") {
+    throw new ValidationError(`checkout.orders.fields.sessionId "${sessionId.name}" must be a text field`);
+  }
+  // Optional fields — validated only when mapped. Constraints that the
+  // server-written value could violate are rejected here, not discovered as a
+  // failed order flip weeks later: the webhook writes an arbitrary decimal
+  // total from Stripe and a repeat buyer's email more than once.
+  let itemsField: FieldDef | undefined;
+  if (orders.fields.total !== undefined) {
+    const total = require("total", orders.fields.total);
+    if (total.type !== "number") {
+      throw new ValidationError(`checkout.orders.fields.total "${total.name}" must be a number field`);
+    }
+    if (fieldInteger(total) || fieldMin(total) !== undefined || fieldMax(total) !== undefined) {
+      throw new ValidationError(
+        `checkout.orders.fields.total "${total.name}" must not be integer/min/max — Stripe amounts are arbitrary decimals (e.g. 24.99) and a bound would reject real orders`,
+      );
+    }
+  }
+  if (orders.fields.customerEmail !== undefined) {
+    const email = require("customerEmail", orders.fields.customerEmail);
+    if (email.type !== "text") {
+      throw new ValidationError(`checkout.orders.fields.customerEmail "${email.name}" must be a text field`);
+    }
+    if ("unique" in email && email.unique) {
+      throw new ValidationError(
+        `checkout.orders.fields.customerEmail "${email.name}" must not be unique — a repeat buyer's second order would collide`,
+      );
+    }
+  }
+  if (orders.fields.items !== undefined) {
+    itemsField = require("items", orders.fields.items);
+    if (itemsField.type !== "text" && itemsField.type !== "richtext") {
+      throw new ValidationError(`checkout.orders.fields.items "${itemsField.name}" must be a text or richtext field`);
+    }
+    if (("unique" in itemsField && itemsField.unique) || fieldMax(itemsField) !== undefined || fieldPattern(itemsField)) {
+      throw new ValidationError(
+        `checkout.orders.fields.items "${itemsField.name}" must not be unique/max/pattern — it holds a cart-JSON snapshot the server writes`,
+      );
+    }
+  }
+
+  // The pending order is written at checkout time with ONLY status (+ items if
+  // mapped); everything else arrives on the paid flip. So no OTHER field may be
+  // required, or /v1/checkout's createEntry would reject every order.
+  const preFilled = new Set([status.name, ...(itemsField ? [itemsField.name] : [])]);
+  const blocking = targetFields.find((fld) => fld.required && !preFilled.has(fld.name));
+  if (blocking) {
+    throw new ValidationError(
+      `"${targetName}.${blocking.name}" is required, but a pending order is created before payment with only ${[...preFilled].join(" + ")} — make ${blocking.name} optional`,
+    );
+  }
 }
 
 export interface SchemaDiff {
@@ -634,6 +742,19 @@ export async function defineCollection(
       throw new Error(
         `relation field "${f.name}" targets unknown collection "${f.targetCollection}"`,
       );
+    }
+  }
+
+  // K4 invariant #8: if THIS collection is the orders target of a sellable
+  // collection, re-validate that mapping against the PROPOSED fields — so
+  // narrowing the status enum or adding a required field can't silently break
+  // live orders (the mapping lives on the OTHER collection, so its own
+  // validateCheckout above never re-checks it on this write).
+  for (const other of existing) {
+    if (other.name === name) continue;
+    const mapping = other.checkout?.orders;
+    if (mapping?.collection === name) {
+      assertOrdersMapping(mapping, fields, name);
     }
   }
 

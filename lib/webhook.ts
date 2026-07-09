@@ -87,6 +87,34 @@ export async function listDeliveries(
     .offset(f.offset);
 }
 
+/**
+ * Log an INBOUND event outcome (K4 Stripe webhooks). The url is a
+ * `stripe:<eventType>` pseudo-target, never a real endpoint — refireDelivery
+ * refuses to re-POST it (openMinor #7). Logging is best-effort; a real DB
+ * failure on the order flip is surfaced separately so Stripe retries.
+ */
+export async function recordInboundDelivery(opts: {
+  projectId: string;
+  collectionId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+  status: "success" | "failed";
+  note?: string | null;
+}): Promise<void> {
+  await log(
+    {
+      projectId: opts.projectId,
+      collectionId: opts.collectionId,
+      url: `stripe:${opts.eventType}`,
+      event: `stripe.${opts.eventType}`,
+      payload: opts.payload,
+    },
+    opts.status,
+    1,
+    opts.note ?? null,
+  );
+}
+
 async function log(
   opts: { projectId: string; collectionId: string | null; url: string; event: string; payload: Record<string, unknown> },
   status: "success" | "failed",

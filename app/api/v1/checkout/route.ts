@@ -7,7 +7,7 @@ import { bearerFrom, resolveProjectId } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
 import { connectorSecret } from "@/lib/connectors";
 import { createCheckoutSession, StripeError, type CheckoutLineItem } from "@/lib/stripe";
-import { publicFields } from "@/lib/entries";
+import { createEntry, publicFields } from "@/lib/entries";
 import { matchesClauses } from "@/lib/query";
 import type { WhereItem } from "@/lib/query";
 import { rateLimit } from "@/lib/ratelimit";
@@ -112,12 +112,42 @@ export async function POST(req: NextRequest) {
   const sk = await connectorSecret(projectId, "stripe");
   if (!sk) return deliveryError(503, "Stripe connector is not configured for this project");
 
+  // K4: when orders is declared, record a pending order BEFORE creating the
+  // session, so its id can travel as the correlation key the webhook re-derives.
+  // If session creation then fails, the pending row simply never pays (visible
+  // in admin, harmless) — better than a paid session with no order to flip.
+  const metadata: Record<string, string> = { collection: body.collection };
+  let clientReferenceId: string | undefined;
+  if (checkout.orders) {
+    const ordersColl = await getCollection(projectId, checkout.orders.collection);
+    if (!ordersColl) {
+      // The mapping was validated at define time; a missing target now is an
+      // operator error, not a buyer-repairable one.
+      return deliveryError(500, "orders collection is misconfigured");
+    }
+    const f = checkout.orders.fields;
+    // Only fields the pending order can actually fill: status + the cart items.
+    // sessionId/total/customerEmail arrive on the paid flip — leaving sessionId
+    // ABSENT (NULL) rather than "" so a unique index on it never collides across
+    // pending rows. validateCheckoutOrders guarantees these are not required.
+    const orderData: Record<string, unknown> = { [f.status]: "pending" };
+    if (f.items) orderData[f.items] = JSON.stringify(body.items);
+    try {
+      const order = await createEntry(projectId, ordersColl, orderData, { actor: { type: "delivery" } });
+      metadata.orderEntryId = order.id;
+      clientReferenceId = order.id;
+    } catch {
+      return deliveryError(500, "could not open an order for this checkout");
+    }
+  }
+
   try {
     const session = await createCheckoutSession(sk, {
       lineItems,
       successUrl,
       cancelUrl,
-      metadata: { collection: body.collection }, // K4 adds orderEntryId
+      metadata,
+      clientReferenceId,
     });
     return corsJson({ url: session.url, sessionId: session.id }, { status: 201 });
   } catch (e) {
