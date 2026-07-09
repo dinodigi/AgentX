@@ -163,3 +163,51 @@ export async function createCheckoutSession(
   }
   return { id: session.id, url: session.url };
 }
+
+/** The four order-lifecycle events the webhook translates (K3/K4). */
+export const WEBHOOK_EVENTS = [
+  "checkout.session.completed",
+  "checkout.session.expired",
+  "checkout.session.async_payment_succeeded",
+  "checkout.session.async_payment_failed",
+] as const;
+
+/**
+ * Register a webhook endpoint (K5) — one-click provisioning so the operator
+ * never copy-pastes a whsec. Stripe returns the signing secret ONLY here, at
+ * creation, so the caller must persist `secret` immediately.
+ */
+export async function createWebhookEndpoint(
+  sk: string,
+  url: string,
+): Promise<{ id: string; secret: string }> {
+  const params: Record<string, string> = { url };
+  WEBHOOK_EVENTS.forEach((e, i) => (params[`enabled_events[${i}]`] = e));
+  const ep = await stripeRequest(sk, "POST", "/v1/webhook_endpoints", params);
+  if (typeof ep.id !== "string" || typeof ep.secret !== "string") {
+    throw new StripeError("webhook endpoint response is missing id/secret", 0);
+  }
+  return { id: ep.id, secret: ep.secret };
+}
+
+/** Read a webhook endpoint's status (K5 health) — 'enabled' | 'disabled', or null if gone. */
+export async function getWebhookEndpoint(sk: string, id: string): Promise<{ status: string } | null> {
+  try {
+    const ep = await stripeRequest(sk, "GET", `/v1/webhook_endpoints/${id}`);
+    return { status: typeof ep.status === "string" ? ep.status : "unknown" };
+  } catch (e) {
+    // A deleted endpoint is a 404 → report "missing", not an error.
+    if (e instanceof StripeError && e.status === 404) return null;
+    throw e;
+  }
+}
+
+/** Best-effort delete on disconnect (K5) — a 404 (already gone) is success. */
+export async function deleteWebhookEndpoint(sk: string, id: string): Promise<void> {
+  try {
+    await stripeRequest(sk, "DELETE", `/v1/webhook_endpoints/${id}`);
+  } catch (e) {
+    if (e instanceof StripeError && e.status === 404) return;
+    throw e;
+  }
+}

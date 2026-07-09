@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { bearerFrom, resolveToken } from "@/lib/tokens";
 import { TOOL_DEFS, callTool } from "@/lib/mcp/tools";
 import { ERROR_CODES } from "@/lib/error-codes";
+import { originFromHeaders } from "@/lib/origin";
 
 /**
  * MCP endpoint (Streamable HTTP, JSON responses). ONE server for all projects —
@@ -25,14 +26,10 @@ const PROTOCOL_VERSION = "2025-06-18";
  * raw request origin for local dev.
  */
 function publicOrigin(req: NextRequest): string {
-  const override = process.env.APP_URL?.trim().replace(/\/+$/, "");
-  if (override) return override;
-  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
-  if (host) {
-    const proto = req.headers.get("x-forwarded-proto") ?? new URL(req.url).protocol.replace(":", "");
-    return `${proto}://${host}`;
-  }
-  return new URL(req.url).origin;
+  const reqOrigin = new URL(req.url).origin;
+  return (
+    originFromHeaders((n) => req.headers.get(n), new URL(req.url).protocol.replace(":", "")) ?? reqOrigin
+  );
 }
 
 interface JsonRpcRequest {

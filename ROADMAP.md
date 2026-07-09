@@ -376,8 +376,14 @@ the durable queue — no hard G dependency, but land after G3 for clean logging.
       folds #5/#7/#8 (currency). ✅ 2026-07-09, 37-stripe-orders smoke (11);
       adversarial review fixed 6 (permanent-failure→200-not-500-storm, orders
       constraint hardening, enum-narrow re-validation, when-fires-on-transition).
-- [ ] 15.6 `K5` (S) — one-click webhook provisioning from the admin card.
-- [ ] 15.7 `K6` (S) — checkout snippet in `get_client_code` + publishable-key exposure.
+- [x] 15.6 `K5` (S) — one-click webhook provisioning from the admin card
+      (createWebhookEndpoint with the sk → stores endpoint id + whsec slot; sk
+      kept, slots merged; health reports endpoint state; disconnect best-effort
+      deletes; get_project_info.stripe.webhookProvisioned). ✅ 2026-07-09,
+      38-stripe-provisioning smoke + tsx helper check.
+- [x] 15.7 `K6` (S) — checkout snippet in `get_client_code` (typed POST /checkout
+      wrapper, --strict compile-verified) + get_project_info.stripe.publishableKey.
+      ✅ 2026-07-09, 38-stripe-provisioning smoke (4).
 
 ## Phase 16 — BYO-compute hooks + computed fields (spec: design-compute + corrections)
 

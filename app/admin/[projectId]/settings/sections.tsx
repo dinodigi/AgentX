@@ -14,6 +14,7 @@ import {
   disconnectConnector,
   testConnector,
   rotateConnectorSecretAction,
+  provisionStripeWebhook,
 } from "./actions";
 
 const inputClass = "field-input";
@@ -393,6 +394,25 @@ export function ConnectorCard(p: ConnectorCardProps) {
                 }}
               >
                 Rotate key
+              </button>
+            )}
+            {p.type === "stripe" && p.hasSecret && (
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setNote(null);
+                  setError(null);
+                  const res = await provisionStripeWebhook(p.projectId);
+                  setBusy(false);
+                  setError(res.error ?? null);
+                  if (!res.error) setNote(res.ok ? `OK — ${res.detail}` : `Failed — ${res.detail}`);
+                }}
+                title="Register this project's webhook endpoint with Stripe and store the signing secret automatically"
+              >
+                {p.config.webhookEndpointId ? "Re-provision webhook" : "Provision webhook"}
               </button>
             )}
             <button

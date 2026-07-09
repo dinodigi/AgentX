@@ -193,6 +193,29 @@ export function generateClientCode(opts: {
   const included = plans.filter((p) => p.canRead || p.canCreate);
   const skipped = plans.filter((p) => !p.canRead && !p.canCreate).map((p) => p.slug);
 
+  // K6: a checkout helper appears when any collection is sellable. Prices are
+  // server-side; the client only sends entry ids + quantities.
+  const sellable = opts.collections.filter((c) => c.checkout).map((c) => c.name);
+  const checkoutBlock = sellable.length
+    ? `
+    /**
+     * Start a Stripe Checkout for a cart of entry ids + quantities (sellable
+     * collections: ${sellable.join(", ")}). Prices are SERVER-SIDE — never sent
+     * here. Redirect the buyer to the returned url. FULFILLMENT: the order
+     * is "paid" only once payment actually CLEARS (async methods like OXXO/SEPA
+     * can take days) — watch it via the orders collection (poll or the
+     * events.updated webhook), never by assuming success on redirect.
+     */
+    async checkout(
+      collection: string,
+      items: { id: string; quantity: number }[],
+      opts: { successUrl?: string; cancelUrl?: string } = {},
+    ): Promise<{ url: string; sessionId: string }> {
+      return request("POST", "/checkout", undefined, { collection, items, ...opts });
+    },
+`
+    : "";
+
   const header = `/**
  * AgentX delivery-API client for "${opts.projectName}" — GENERATED CODE.
  * Regenerate with the get_client_code MCP tool after any schema change;
@@ -355,7 +378,7 @@ export interface ChangeEvent {
         };
       },
     },
-${included.map(accessorBlock).join("\n")}
+${checkoutBlock}${included.map(accessorBlock).join("\n")}
   };
 }`;
 

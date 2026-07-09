@@ -3,7 +3,13 @@ import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
 import { projectConnectors, type ProjectConnector } from "@/db/schema";
 import { encryptSecret, decryptSecret } from "./crypto";
-import { STRIPE_API_BASE, STRIPE_VERSION } from "./stripe";
+import {
+  STRIPE_API_BASE,
+  STRIPE_VERSION,
+  createWebhookEndpoint,
+  getWebhookEndpoint,
+  deleteWebhookEndpoint,
+} from "./stripe";
 
 /**
  * BYO-infra connectors. Config (non-secret) + optionally one encrypted secret
@@ -138,7 +144,11 @@ export async function upsertConnector(
     .onConflictDoUpdate({
       target: [projectConnectors.projectId, projectConnectors.type],
       set: {
-        config: values.config,
+        // MERGE, don't replace: the connector form rewrites every field it owns
+        // (empty ones become ""), so a merge only preserves NON-form keys — e.g.
+        // stripe's webhookEndpointId, set by provisioning. Replacing would drop
+        // it on any Save, silently unmonitoring + orphaning the webhook endpoint.
+        config: sql`coalesce(${projectConnectors.config}, '{}'::jsonb) || ${JSON.stringify(values.config)}::jsonb`,
         // Keep the existing secret(s) when the form is saved without new ones —
         // slots merge via || so an omitted slot is never dropped.
         ...(secret ? { secretEnc: values.secretEnc } : {}),
@@ -297,6 +307,19 @@ export async function checkConnectorHealth(
       });
       ok = res.ok;
       detail = ok ? "secret key valid" : `Stripe returned HTTP ${res.status}`;
+      // K5: if a webhook endpoint was provisioned, report whether it still fires
+      // (a disabled/deleted one silently strands paid orders as pending).
+      if (ok) {
+        const epId = (await getConnector(projectId, "stripe"))?.config.webhookEndpointId;
+        if (epId) {
+          const ep = await getWebhookEndpoint(key, epId);
+          detail = !ep
+            ? "secret key valid, but the webhook endpoint is missing — re-provision"
+            : ep.status !== "enabled"
+              ? `secret key valid, but the webhook endpoint is ${ep.status} — re-provision`
+              : "secret key valid, webhook endpoint enabled";
+        }
+      }
     }
   } catch (e) {
     detail = e instanceof Error ? e.message : String(e);
@@ -307,4 +330,60 @@ export async function checkConnectorHealth(
     .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, type)));
   revalidateTag(tag(projectId));
   return { ok, detail };
+}
+
+/**
+ * K5: one-click webhook provisioning. Registers the project's webhook URL with
+ * Stripe using the stored sk and persists BOTH the returned endpoint id (config,
+ * non-secret) and the returned signing secret (secretsEnc.webhookSigning) —
+ * Stripe returns the whsec only at creation, so the operator never copy-pastes
+ * it. Re-provisioning deletes the previous endpoint first so it isn't orphaned.
+ */
+export async function provisionStripeWebhook(
+  projectId: string,
+  webhookUrl: string,
+): Promise<{ ok: boolean; detail: string }> {
+  const sk = await connectorSecret(projectId, "stripe");
+  if (!sk) return { ok: false, detail: "connect the Stripe secret key first" };
+  const existing = await getConnector(projectId, "stripe");
+  if (!existing) return { ok: false, detail: "Stripe connector is not connected" };
+  // Re-provision: drop the prior endpoint before making a new one (best-effort,
+  // so a stale/deleted id can't block re-provisioning).
+  const priorId = existing.config.webhookEndpointId;
+  if (priorId) {
+    try {
+      await deleteWebhookEndpoint(sk, priorId);
+    } catch {
+      /* leftover endpoint is harmless — its deliveries fail signature */
+    }
+  }
+  try {
+    const { id, secret } = await createWebhookEndpoint(sk, webhookUrl);
+    await upsertConnector(
+      projectId,
+      "stripe",
+      { ...existing.config, webhookEndpointId: id },
+      undefined, // keep the existing sk
+      { webhookSigning: secret },
+    );
+    return { ok: true, detail: "webhook provisioned — signing secret stored automatically" };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, detail: `Stripe rejected the request (${msg})` };
+  }
+}
+
+/** K5: best-effort delete of the provisioned endpoint (called before disconnect). */
+export async function deprovisionStripeWebhook(projectId: string): Promise<void> {
+  const existing = await getConnector(projectId, "stripe");
+  const id = existing?.config.webhookEndpointId;
+  if (!id) return;
+  const sk = await connectorSecret(projectId, "stripe");
+  if (!sk) return;
+  try {
+    await deleteWebhookEndpoint(sk, id);
+  } catch {
+    // Best-effort: a leftover endpoint in Stripe is harmless (it just 401s on
+    // delivery once the connector's secret is gone) and the operator can prune it.
+  }
 }

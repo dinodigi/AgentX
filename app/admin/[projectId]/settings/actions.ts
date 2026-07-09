@@ -225,10 +225,34 @@ export async function disconnectConnector(
 ): Promise<{ error?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
-  const { removeConnector } = await import("@/lib/connectors");
+  const { removeConnector, deprovisionStripeWebhook } = await import("@/lib/connectors");
+  // Best-effort: delete the Stripe webhook endpoint we provisioned before we
+  // drop the secret that would let us delete it.
+  if (type === "stripe") await deprovisionStripeWebhook(projectId);
   await removeConnector(projectId, type);
   revalidatePath(`/admin/${projectId}/connectors`);
   return {};
+}
+
+/**
+ * K5: register the project's Stripe webhook endpoint in one click. The webhook
+ * URL is built from the app's PUBLIC origin (proxy-aware, APP_URL override),
+ * NOT the request bind — the URL is handed to Stripe, which must reach it.
+ */
+export async function provisionStripeWebhook(
+  projectId: string,
+): Promise<{ error?: string; ok?: boolean; detail?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const { headers } = await import("next/headers");
+  const { originFromHeaders } = await import("@/lib/origin");
+  const h = await headers();
+  const origin = originFromHeaders((n) => h.get(n));
+  if (!origin) return { error: "could not determine the app URL — set APP_URL in the environment" };
+  const { provisionStripeWebhook: provision } = await import("@/lib/connectors");
+  const result = await provision(projectId, `${origin}/api/stripe/webhook/${projectId}`);
+  revalidatePath(`/admin/${projectId}/connectors`);
+  return result;
 }
 
 export async function testConnector(

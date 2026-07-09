@@ -160,11 +160,13 @@ function encryptSecret(plaintext) {
 }
 
 /** Attach a connected stripe connector with decryptable secrets (direct SQL).
- * whsec seeds the webhookSigning slot in secrets_enc (inbound webhook auth). */
-export async function connectStripe(projectId, { sk = "sk_test_smoke", pk = "pk_test_smoke", whsec } = {}) {
+ * whsec seeds the webhookSigning slot in secrets_enc (inbound webhook auth);
+ * webhookEndpointId marks the connector as one-click-provisioned (K5). */
+export async function connectStripe(projectId, { sk = "sk_test_smoke", pk = "pk_test_smoke", whsec, webhookEndpointId } = {}) {
   const slots = whsec ? { webhookSigning: encryptSecret(whsec) } : null;
+  const config = { publishableKey: pk, ...(webhookEndpointId ? { webhookEndpointId } : {}) };
   await sql`INSERT INTO project_connectors (project_id, type, config, secret_enc, secrets_enc, status)
-    VALUES (${projectId}, 'stripe', ${JSON.stringify({ publishableKey: pk })}::jsonb, ${encryptSecret(sk)},
+    VALUES (${projectId}, 'stripe', ${JSON.stringify(config)}::jsonb, ${encryptSecret(sk)},
             ${slots ? JSON.stringify(slots) : null}::jsonb, 'connected')
     ON CONFLICT (project_id, type) DO UPDATE SET
       config = EXCLUDED.config, secret_enc = EXCLUDED.secret_enc,

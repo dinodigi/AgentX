@@ -1195,12 +1195,28 @@ export async function callTool(
             changesStream: `${ctx.baseUrl}/api/v1/changes/stream`,
             stripeWebhook: `${ctx.baseUrl}/api/stripe/webhook/${projectId}`,
           },
+          stripe: (() => {
+            const s = connectorRows.find((c) => c.type === "stripe");
+            return {
+              // configured = the sk is connected → /v1/checkout can create sessions.
+              configured: Boolean(s),
+              // Non-secret publishable key — site builders embed it in the storefront (K6).
+              publishableKey: s?.config.publishableKey ?? null,
+              // K5: true when a signing secret is stored (one-click provisioned OR
+              // manually pasted) — the real "paid orders will flip" signal. Keyed
+              // on the whsec slot, not the endpoint id, so it can't read true while
+              // the webhook still 503s for lack of a secret.
+              webhookProvisioned: Boolean(s?.secretsEnc?.webhookSigning),
+            };
+          })(),
           stripeWebhookHint:
-            "Register urls.stripeWebhook as a Stripe webhook endpoint (operator does this in the " +
-            "Stripe dashboard) listening to checkout.session.completed, checkout.session.expired, " +
-            "checkout.session.async_payment_succeeded, checkout.session.async_payment_failed; then " +
-            "save the endpoint's whsec_… signing secret on the Stripe connector card. The signature " +
-            "is the endpoint's only auth — without the secret it answers 503.",
+            "For paid orders to flip, the webhook must be registered. EASIEST: the operator clicks " +
+            "'Provision webhook' on the Stripe connector card — it registers urls.stripeWebhook and " +
+            "stores the whsec_ signing secret automatically (stripe.webhookProvisioned then true). " +
+            "MANUAL alternative: register urls.stripeWebhook in the Stripe dashboard for " +
+            "checkout.session.{completed,expired,async_payment_succeeded,async_payment_failed} and " +
+            "paste its whsec_ secret on the card. The signature is the endpoint's only auth — without " +
+            "it the webhook answers 503.",
           deliveryApi: {
             auth: "Authorization: Bearer <project token> on every request",
             read:

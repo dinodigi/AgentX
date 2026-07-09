@@ -41,6 +41,25 @@ export async function startStripeMock(port = STRIPE_MOCK_PORT) {
       if (req.method === "GET" && req.url.startsWith("/v1/account")) {
         return send(200, { id: "acct_test", object: "account" });
       }
+      // Webhook-endpoint provisioning (K5). Create returns the signing secret
+      // ONCE (as real Stripe does); get reports status; delete acks.
+      if (req.method === "POST" && req.url === "/v1/webhook_endpoints") {
+        const id = "we_test_" + randomBytes(8).toString("hex");
+        return send(200, {
+          id,
+          object: "webhook_endpoint",
+          url: form.url,
+          status: "enabled",
+          secret: "whsec_" + randomBytes(16).toString("hex"),
+        });
+      }
+      const epMatch = /^\/v1\/webhook_endpoints\/(we_[a-z0-9_]+)$/.exec(req.url);
+      if (epMatch && req.method === "GET") {
+        return send(200, { id: epMatch[1], object: "webhook_endpoint", status: "enabled" });
+      }
+      if (epMatch && req.method === "DELETE") {
+        return send(200, { id: epMatch[1], object: "webhook_endpoint", deleted: true });
+      }
       // Anything else: mimic Stripe's error envelope.
       send(404, { error: { message: `mock: no route for ${req.method} ${req.url}` } });
     });
