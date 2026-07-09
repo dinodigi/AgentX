@@ -199,7 +199,22 @@ export async function saveConnector(
   if (type === "stripe" && secret && !/^(sk|rk)_(test|live)_/.test(secret)) {
     return { error: "Secret key should start with sk_test_ or sk_live_ (or a restricted rk_ key)" };
   }
-  await upsertConnector(projectId, type, config, secret || undefined);
+  // Named secret slots (e.g. stripe webhookSigning) — blank keeps the stored one.
+  const extraSecrets: Record<string, string> = {};
+  for (const extra of spec.extraSecrets ?? []) {
+    const v = String(formData.get(`secret:${extra.slot}`) ?? "").trim();
+    if (v) extraSecrets[extra.slot] = v;
+  }
+  if (extraSecrets.webhookSigning && !/^whsec_/.test(extraSecrets.webhookSigning)) {
+    return { error: "Webhook signing secret should start with whsec_" };
+  }
+  await upsertConnector(
+    projectId,
+    type,
+    config,
+    secret || undefined,
+    Object.keys(extraSecrets).length ? extraSecrets : undefined,
+  );
   revalidatePath(`/admin/${projectId}/connectors`);
   return {};
 }

@@ -362,9 +362,13 @@ the durable queue — no hard G dependency, but land after G3 for clean logging.
       metadata.orderEntryId ride with K4's orders mapping, per the split design.)
       ✅ 2026-07-08, 35-checkout smoke (12); adversarial review 4 findings fixed
       (non-uuid 500, hidden-collection oracle, unreadable-2xx→201, 503 code)
-- [ ] 15.4 `K3` (M) — signed webhook ingestion `/api/stripe/webhook/{projectId}`
+- [x] 15.4 `K3` (M) — signed webhook ingestion `/api/stripe/webhook/{projectId}`
       (whsec signature is the only auth; project identity from the verified path,
-      never metadata). Migration: `project_connectors.secretsEnc` slot map.
+      never metadata). `secretsEnc` slot map; `connectorSecret(…, slot)` no-fallback;
+      multi-v1 rotation + length-checked timingSafeEqual + 300s replay bound;
+      Clerk-exempt matcher. ✅ 2026-07-08, 36-stripe-webhook smoke (10); adversarial
+      review fixed 1 high (unbounded body DoS → connector-check-first + 1 MiB cap/413).
+      NOTE: secrets_enc column applied by hand — `db:push` broken vs Neon PG18 (task_eb626419).
 - [ ] 15.5 `K4` (M) — order lifecycle: paid/expired CAS flips gated on
       `payment_status === 'paid'` (async methods mapped), declarative fulfillment
       via existing events; unmapped/probing events logged (rides G3's nullable column).

@@ -1152,7 +1152,14 @@ export async function callTool(
             mcp: `${ctx.baseUrl}/api/mcp`,
             changes: `${ctx.baseUrl}/api/v1/changes`,
             changesStream: `${ctx.baseUrl}/api/v1/changes/stream`,
+            stripeWebhook: `${ctx.baseUrl}/api/stripe/webhook/${projectId}`,
           },
+          stripeWebhookHint:
+            "Register urls.stripeWebhook as a Stripe webhook endpoint (operator does this in the " +
+            "Stripe dashboard) listening to checkout.session.completed, checkout.session.expired, " +
+            "checkout.session.async_payment_succeeded, checkout.session.async_payment_failed; then " +
+            "save the endpoint's whsec_… signing secret on the Stripe connector card. The signature " +
+            "is the endpoint's only auth — without the secret it answers 503.",
           deliveryApi: {
             auth: "Authorization: Bearer <project token> on every request",
             read:

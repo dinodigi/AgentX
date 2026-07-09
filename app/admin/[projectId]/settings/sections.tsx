@@ -286,6 +286,10 @@ export interface ConnectorCardProps {
   label: string;
   configFields: { key: string; label: string; placeholder: string }[];
   secretLabel: string | null;
+  /** Named secret slots beyond the primary (e.g. stripe webhookSigning). */
+  extraSecrets?: { slot: string; label: string }[];
+  /** Slots that already hold a stored secret (names only — never values). */
+  storedSlots?: string[];
   connected: boolean;
   hasSecret: boolean;
   status: string;
@@ -340,6 +344,23 @@ export function ConnectorCard(p: ConnectorCardProps) {
           <input name="secret" type="password" placeholder={p.hasSecret ? "••••••••" : ""} className={inputClass} />
         </div>
       )}
+      {(p.extraSecrets ?? []).map((extra) => {
+        const stored = (p.storedSlots ?? []).includes(extra.slot);
+        return (
+          <div key={extra.slot} className="mb-3">
+            <label className="mb-1 block text-xs text-[--color-ink-mute]">
+              {extra.label}
+              {stored ? " (stored — leave blank to keep)" : ""}
+            </label>
+            <input
+              name={`secret:${extra.slot}`}
+              type="password"
+              placeholder={stored ? "••••••••" : ""}
+              className={inputClass}
+            />
+          </div>
+        );
+      })}
 
       <div className="flex items-center gap-2">
         <button type="submit" disabled={busy} className={buttonClass}>

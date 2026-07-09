@@ -13,7 +13,8 @@ export default clerkMiddleware(async (auth, req) => {
 
 export const config = {
   matcher: [
-    // Run on everything except static assets and the token-authed API routes.
-    "/((?!_next|api/mcp|api/v1|api/jobs|.*\\.(?:ico|png|jpg|jpeg|svg|css|js)$).*)",
+    // Run on everything except static assets and the token-authed API routes
+    // (api/stripe authenticates by webhook signature — Clerk must not gate it).
+    "/((?!_next|api/mcp|api/v1|api/jobs|api/stripe|.*\\.(?:ico|png|jpg|jpeg|svg|css|js)$).*)",
   ],
 };

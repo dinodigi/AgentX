@@ -22,8 +22,8 @@ export default async function ConnectorsPage({
       <h1 className="display mb-1 text-xl font-semibold">Connectors</h1>
       <p className="mb-6 max-w-md text-sm text-[--color-ink-mute]">
         Bring your own infrastructure. Clerk powers end-user sign-in and access
-        rules; Resend powers email actions. Secrets are encrypted at rest and
-        never exposed to agents.
+        rules; Resend powers email actions; Stripe powers checkout. Secrets are
+        encrypted at rest and never exposed to agents.
       </p>
       <div className="space-y-4">
         {(Object.keys(CONNECTOR_SPECS) as ConnectorType[]).map((type) => {
@@ -37,6 +37,8 @@ export default async function ConnectorsPage({
               label={spec.label}
               configFields={spec.configFields}
               secretLabel={spec.secretLabel}
+              extraSecrets={spec.extraSecrets}
+              storedSlots={Object.keys(row?.secretsEnc ?? {})}
               connected={Boolean(row)}
               hasSecret={Boolean(row?.secretEnc)}
               status={row?.status ?? "disconnected"}

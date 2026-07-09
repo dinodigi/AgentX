@@ -6,6 +6,8 @@
  * verification is added in K3.
  */
 
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 export const STRIPE_API_BASE = process.env.STRIPE_API_BASE || "https://api.stripe.com";
 
 /** Pinned so a Stripe API change can't silently alter response shapes. */
@@ -65,6 +67,45 @@ export async function stripeRequest(
   // upstream fault — NOT a success with empty fields.
   if (json === null) throw new StripeError("unreadable response body", res.status);
   return json as Record<string, unknown>;
+}
+
+/**
+ * Verify a Stripe-Signature header against the raw request bytes (K3) — the
+ * inbound mirror of the outbound scheme in lib/webhook.ts:
+ *   Stripe-Signature: t=<unix>,v1=<hex hmac of `${t}.${rawBody}`>[,v1=…]
+ * Multiple v1 entries appear during signing-secret rotation — ANY match
+ * verifies. Comparisons are length-checked timingSafeEqual (it throws on
+ * unequal lengths, and a length oracle is itself a leak).
+ */
+export function verifyStripeSignature(
+  rawBody: string,
+  sigHeader: string | null,
+  secret: string,
+  toleranceSec = 300,
+): boolean {
+  if (!sigHeader) return false;
+  let t: number | null = null;
+  const v1s: string[] = [];
+  for (const part of sigHeader.split(",")) {
+    const i = part.indexOf("=");
+    if (i < 0) continue;
+    const k = part.slice(0, i).trim();
+    const v = part.slice(i + 1).trim();
+    if (k === "t" && /^\d+$/.test(v)) t = Number(v);
+    else if (k === "v1" && v) v1s.push(v);
+  }
+  if (t === null || v1s.length === 0) return false;
+  // Freshness bound: a replayed capture outside the window fails even with a
+  // valid signature (the timestamp is inside the signed payload).
+  if (Math.abs(Math.floor(Date.now() / 1000) - t) > toleranceSec) return false;
+  const expected = Buffer.from(
+    createHmac("sha256", secret).update(`${t}.${rawBody}`).digest("hex"),
+    "utf8",
+  );
+  return v1s.some((v) => {
+    const candidate = Buffer.from(v, "utf8");
+    return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+  });
 }
 
 export interface CheckoutLineItem {

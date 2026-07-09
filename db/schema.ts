@@ -251,6 +251,9 @@ export const projectConnectors = pgTable(
     type: text("type").notNull(), // 'clerk' | 'resend'
     config: jsonb("config").$type<Record<string, string>>().notNull().default({}),
     secretEnc: text("secret_enc"),
+    // Named secret slots beyond the primary (e.g. stripe webhookSigning):
+    // slot → AES-GCM ciphertext. Upserts merge slots, never drop them.
+    secretsEnc: jsonb("secrets_enc").$type<Record<string, string>>(),
     status: text("status").notNull().default("connected"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),

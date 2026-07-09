@@ -159,12 +159,16 @@ function encryptSecret(plaintext) {
   return [iv, tag, enc].map((b) => b.toString("base64url")).join(".");
 }
 
-/** Attach a connected stripe connector with a decryptable secret key (direct SQL). */
-export async function connectStripe(projectId, { sk = "sk_test_smoke", pk = "pk_test_smoke" } = {}) {
-  await sql`INSERT INTO project_connectors (project_id, type, config, secret_enc, status)
-    VALUES (${projectId}, 'stripe', ${JSON.stringify({ publishableKey: pk })}::jsonb, ${encryptSecret(sk)}, 'connected')
+/** Attach a connected stripe connector with decryptable secrets (direct SQL).
+ * whsec seeds the webhookSigning slot in secrets_enc (inbound webhook auth). */
+export async function connectStripe(projectId, { sk = "sk_test_smoke", pk = "pk_test_smoke", whsec } = {}) {
+  const slots = whsec ? { webhookSigning: encryptSecret(whsec) } : null;
+  await sql`INSERT INTO project_connectors (project_id, type, config, secret_enc, secrets_enc, status)
+    VALUES (${projectId}, 'stripe', ${JSON.stringify({ publishableKey: pk })}::jsonb, ${encryptSecret(sk)},
+            ${slots ? JSON.stringify(slots) : null}::jsonb, 'connected')
     ON CONFLICT (project_id, type) DO UPDATE SET
-      config = EXCLUDED.config, secret_enc = EXCLUDED.secret_enc, status = 'connected'`;
+      config = EXCLUDED.config, secret_enc = EXCLUDED.secret_enc,
+      secrets_enc = EXCLUDED.secrets_enc, status = 'connected'`;
 }
 
 /** Local webhook receiver capturing POST bodies + headers — deterministic, no httpbin.

@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
 import { projectConnectors, type ProjectConnector } from "@/db/schema";
@@ -15,7 +15,13 @@ export type ConnectorType = "clerk" | "resend" | "stripe";
 
 export const CONNECTOR_SPECS: Record<
   ConnectorType,
-  { label: string; configFields: { key: string; label: string; placeholder: string }[]; secretLabel: string | null }
+  {
+    label: string;
+    configFields: { key: string; label: string; placeholder: string }[];
+    secretLabel: string | null;
+    /** Named secret slots beyond the primary (stored in secretsEnc[slot]). */
+    extraSecrets?: { slot: string; label: string }[];
+  }
 > = {
   clerk: {
     label: "Clerk (end-user auth)",
@@ -56,6 +62,9 @@ export const CONNECTOR_SPECS: Record<
       { key: "publishableKey", label: "Publishable key (pk_…) — public, embeddable in your storefront", placeholder: "pk_test_…" },
     ],
     secretLabel: "Secret key (sk_…)",
+    extraSecrets: [
+      { slot: "webhookSigning", label: "Webhook signing secret (whsec_…) — from the endpoint you register" },
+    ],
   },
 };
 
@@ -108,12 +117,18 @@ export async function upsertConnector(
   type: ConnectorType,
   config: Record<string, string>,
   secret?: string,
+  /** Named slots (e.g. webhookSigning) — merged into secretsEnc, existing slots kept. */
+  extraSecrets?: Record<string, string>,
 ): Promise<void> {
+  const extraEnc = extraSecrets
+    ? Object.fromEntries(Object.entries(extraSecrets).map(([k, v]) => [k, encryptSecret(v)]))
+    : null;
   const values = {
     projectId,
     type,
     config,
     secretEnc: secret ? encryptSecret(secret) : null,
+    secretsEnc: extraEnc,
     status: "connected",
     updatedAt: new Date(),
   };
@@ -124,8 +139,14 @@ export async function upsertConnector(
       target: [projectConnectors.projectId, projectConnectors.type],
       set: {
         config: values.config,
-        // Keep the existing secret when the form is saved without a new one.
+        // Keep the existing secret(s) when the form is saved without new ones —
+        // slots merge via || so an omitted slot is never dropped.
         ...(secret ? { secretEnc: values.secretEnc } : {}),
+        ...(extraEnc
+          ? {
+              secretsEnc: sql`coalesce(${projectConnectors.secretsEnc}, '{}'::jsonb) || ${JSON.stringify(extraEnc)}::jsonb`,
+            }
+          : {}),
         status: "connected",
         updatedAt: values.updatedAt,
       },
@@ -144,9 +165,19 @@ export async function removeConnector(projectId: string, type: ConnectorType): P
 export async function connectorSecret(
   projectId: string,
   type: ConnectorType,
+  slot?: string,
 ): Promise<string | null> {
   const c = await getConnector(projectId, type);
-  if (!c?.secretEnc) return null;
+  if (!c) return null;
+  if (slot) {
+    // Named slots NEVER fall back to the primary secret: a signature check
+    // that silently verified against the API key would reject every genuine
+    // event — or accept a forged one if that key ever leaked. Absent slot =
+    // unconfigured, full stop.
+    const enc = c.secretsEnc?.[slot];
+    return enc ? decryptSecret(enc) : null;
+  }
+  if (!c.secretEnc) return null;
   return decryptSecret(c.secretEnc);
 }
 
