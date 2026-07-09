@@ -3,6 +3,7 @@ import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
 import { projectConnectors, type ProjectConnector } from "@/db/schema";
 import { encryptSecret, decryptSecret } from "./crypto";
+import { STRIPE_API_BASE, STRIPE_VERSION } from "./stripe";
 
 /**
  * BYO-infra connectors. Config (non-secret) + optionally one encrypted secret
@@ -10,7 +11,7 @@ import { encryptSecret, decryptSecret } from "./crypto";
  * they don't need, never secrets.
  */
 
-export type ConnectorType = "clerk" | "resend";
+export type ConnectorType = "clerk" | "resend" | "stripe";
 
 export const CONNECTOR_SPECS: Record<
   ConnectorType,
@@ -48,6 +49,13 @@ export const CONNECTOR_SPECS: Record<
       { key: "fromEmail", label: "From address", placeholder: "notifications@yourdomain.com" },
     ],
     secretLabel: "API key",
+  },
+  stripe: {
+    label: "Stripe (payments)",
+    configFields: [
+      { key: "publishableKey", label: "Publishable key (pk_…) — public, embeddable in your storefront", placeholder: "pk_test_…" },
+    ],
+    secretLabel: "Secret key (sk_…)",
   },
 };
 
@@ -202,6 +210,19 @@ export async function rotateConnectorSecret(
       const msg = e instanceof Error ? e.message : String(e);
       return { ok: false, detail: `could not validate the new key (${msg}) — old key kept` };
     }
+  } else if (type === "stripe") {
+    try {
+      const res = await fetch(`${STRIPE_API_BASE}/v1/account`, {
+        headers: { Authorization: `Bearer ${newSecret.trim()}`, "Stripe-Version": STRIPE_VERSION },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) {
+        return { ok: false, detail: `Stripe rejected the new key (HTTP ${res.status}) — old key kept` };
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { ok: false, detail: `could not validate the new key (${msg}) — old key kept` };
+    }
   }
 
   await db
@@ -226,7 +247,7 @@ export async function checkConnectorHealth(
       const res = await fetch(auth.jwksUrl, { signal: AbortSignal.timeout(8000) });
       ok = res.ok;
       detail = ok ? "JWKS reachable" : `JWKS returned HTTP ${res.status}`;
-    } else {
+    } else if (type === "resend") {
       const key = await connectorSecret(projectId, "resend");
       if (!key) return { ok: false, detail: "no API key stored" };
       const res = await fetch("https://api.resend.com/domains", {
@@ -235,6 +256,16 @@ export async function checkConnectorHealth(
       });
       ok = res.ok;
       detail = ok ? "API key valid" : `Resend returned HTTP ${res.status}`;
+    } else {
+      // stripe: the secret key is valid iff GET /v1/account succeeds.
+      const key = await connectorSecret(projectId, "stripe");
+      if (!key) return { ok: false, detail: "no secret key stored" };
+      const res = await fetch(`${STRIPE_API_BASE}/v1/account`, {
+        headers: { Authorization: `Bearer ${key}`, "Stripe-Version": STRIPE_VERSION },
+        signal: AbortSignal.timeout(8000),
+      });
+      ok = res.ok;
+      detail = ok ? "secret key valid" : `Stripe returned HTTP ${res.status}`;
     }
   } catch (e) {
     detail = e instanceof Error ? e.message : String(e);

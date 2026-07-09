@@ -33,6 +33,7 @@ export interface ProjectManifest {
     access: Collection["access"] | null;
     events: Record<string, unknown> | null;
     workflow: Collection["workflow"] | null;
+    checkout: Collection["checkout"] | null;
     fields: FieldDef[];
   }[];
 }
@@ -82,6 +83,15 @@ const manifestSchema = z.object({
         })
         .nullable()
         .default(null),
+      checkout: z
+        .object({
+          priceField: z.string(),
+          successUrl: z.string(),
+          cancelUrl: z.string(),
+          orders: z.record(z.unknown()).optional(),
+        })
+        .nullable()
+        .default(null),
       fields: z.array(z.any()),
     }),
   ),
@@ -106,6 +116,7 @@ export async function exportProject(projectId: string): Promise<ProjectManifest>
       access: c.access ?? null,
       events: c.events ?? null,
       workflow: c.workflow ?? null,
+      checkout: c.checkout ?? null,
       fields: c.fields,
     })),
   };
@@ -187,6 +198,7 @@ export async function importProject(
       access: col.access,
       events: col.events as never,
       workflow: col.workflow as never,
+      checkout: col.checkout as never,
       confirm,
     });
     if (result.applied) applied.push(col.name);

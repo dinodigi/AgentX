@@ -88,6 +88,8 @@ export interface DefineCollectionInput {
   /** G4: a state machine over one enum field — initial enforced on create,
    * actor-gated transitions the only way it moves. */
   workflow?: Collection["workflow"] | null;
+  /** K2a: declarative Stripe checkout (priceField + success/cancel URLs). */
+  checkout?: Collection["checkout"] | null;
   /** Required when redefinition drops or retypes fields (destructive). */
   confirm?: boolean;
 }
@@ -192,6 +194,46 @@ async function validateAccessAndEvents(
         "E_CONNECTOR_REQUIRED",
       );
     }
+  }
+}
+
+/**
+ * K2a: validate declarative Stripe checkout. priceField must be text; URLs
+ * https; the collection must be publicly readable (owner/authenticated
+ * collections cannot be sold — with read pinned to public, publicFilter is the
+ * complete row gate, so the checkout trust boundary equals a public delivery
+ * read); the Stripe connector must be connected. K4 extends this with the
+ * `orders` mapping validation.
+ */
+async function validateCheckout(
+  projectId: string,
+  checkout: NonNullable<DefineCollectionInput["checkout"]>,
+  fields: FieldDef[],
+  access: DefineCollectionInput["access"],
+): Promise<void> {
+  const priceField = fields.find((f) => f.name === checkout.priceField);
+  if (!priceField || priceField.type !== "text") {
+    throw new ValidationError(
+      `checkout.priceField "${checkout.priceField}" must name an existing text field holding a Stripe Price id (price_…)`,
+    );
+  }
+  for (const key of ["successUrl", "cancelUrl"] as const) {
+    if (!checkout[key] || !/^https:\/\//.test(checkout[key])) {
+      throw new ValidationError(`checkout.${key} must be an https URL`);
+    }
+  }
+  // Sellable ⇒ publicly readable. Strictly `public` or absent (not an array/claim/owner).
+  const read = access?.read;
+  if (read !== undefined && read !== "public") {
+    throw new ValidationError(
+      'checkout requires access.read: "public" (or absent) — owner/authenticated collections cannot be sold; model member-only pricing in your app layer via events',
+    );
+  }
+  if (!(await getConnector(projectId, "stripe"))) {
+    throw new ValidationError(
+      "checkout needs the Stripe connector — connect it in project settings first",
+      "E_CONNECTOR_REQUIRED",
+    );
   }
 }
 
@@ -578,6 +620,12 @@ export async function defineCollection(
     }
   }
 
+  // K2a: declarative Stripe checkout. Validated on EVERY definition write, so a
+  // later redefine can't flip a sellable collection to a private access.read.
+  if (input.checkout) {
+    await validateCheckout(projectId, input.checkout, fields, input.access);
+  }
+
   // Relation targets must resolve to a real collection in this project.
   const existing = await listCollections(projectId);
   const known = new Set(existing.map((c) => c.name).concat(name));
@@ -638,6 +686,7 @@ export async function defineCollection(
     access: input.access ?? null,
     events: input.events ?? null,
     workflow: input.workflow ?? null,
+    checkout: input.checkout ?? null,
     updatedAt: new Date(),
   };
 
@@ -655,6 +704,7 @@ export async function defineCollection(
         access: values.access,
         events: values.events,
         workflow: values.workflow,
+        checkout: values.checkout,
         updatedAt: values.updatedAt,
       },
     })

@@ -282,7 +282,7 @@ export function WebhookForm({
 
 export interface ConnectorCardProps {
   projectId: string;
-  type: "clerk" | "resend";
+  type: "clerk" | "resend" | "stripe";
   label: string;
   configFields: { key: string; label: string; placeholder: string }[];
   secretLabel: string | null;

@@ -19,7 +19,7 @@ async function requireOperator(projectId: string): Promise<string | null> {
 /** Rotate a connector secret — the new key is validated BEFORE the old one is replaced. */
 export async function rotateConnectorSecretAction(
   projectId: string,
-  type: "clerk" | "resend",
+  type: "clerk" | "resend" | "stripe",
   newSecret: string,
 ): Promise<{ ok: boolean; detail: string; error?: string }> {
   const denied = await requireOperator(projectId);
@@ -148,7 +148,7 @@ export async function addMember(
 
 export async function saveConnector(
   projectId: string,
-  type: "clerk" | "resend",
+  type: "clerk" | "resend" | "stripe",
   formData: FormData,
 ): Promise<{ error?: string }> {
   const denied = await requireOperator(projectId);
@@ -187,11 +187,17 @@ export async function saveConnector(
       return { error: "Couldn't reach that Clerk instance — check the key/issuer and try again" };
     }
   }
+  if (type === "stripe" && config.publishableKey && !/^pk_(test|live)_/.test(config.publishableKey)) {
+    return { error: "Publishable key should start with pk_test_ or pk_live_" };
+  }
   const secret = String(formData.get("secret") ?? "").trim();
   if (spec.secretLabel && !secret) {
     const { getConnector } = await import("@/lib/connectors");
     const existing = await getConnector(projectId, type);
     if (!existing?.secretEnc) return { error: `${spec.secretLabel} is required` };
+  }
+  if (type === "stripe" && secret && !/^(sk|rk)_(test|live)_/.test(secret)) {
+    return { error: "Secret key should start with sk_test_ or sk_live_ (or a restricted rk_ key)" };
   }
   await upsertConnector(projectId, type, config, secret || undefined);
   revalidatePath(`/admin/${projectId}/connectors`);
@@ -200,7 +206,7 @@ export async function saveConnector(
 
 export async function disconnectConnector(
   projectId: string,
-  type: "clerk" | "resend",
+  type: "clerk" | "resend" | "stripe",
 ): Promise<{ error?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
@@ -212,7 +218,7 @@ export async function disconnectConnector(
 
 export async function testConnector(
   projectId: string,
-  type: "clerk" | "resend",
+  type: "clerk" | "resend" | "stripe",
 ): Promise<{ error?: string; ok?: boolean; detail?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };

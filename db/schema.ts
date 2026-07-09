@@ -60,6 +60,31 @@ export interface WorkflowConfig {
   transitions: WorkflowTransition[];
 }
 
+/** K4: maps a paid Checkout Session onto an order entry in another collection. */
+export interface CheckoutOrdersConfig {
+  collection: string;
+  fields: {
+    status: string; // enum with pending|paid|expired
+    sessionId: string; // text
+    total?: string; // number (smallest currency unit)
+    customerEmail?: string; // text
+    items?: string; // text/richtext — JSON snapshot of the cart
+  };
+}
+
+/**
+ * K2a/K4: declarative Stripe checkout on a collection. `priceField` names a text
+ * field holding a Stripe Price id — what is sellable + at what price is
+ * server-side content. Sellable collections must be publicly readable (enforced
+ * at define time). `orders` (K4) turns paid sessions into order-entry writes.
+ */
+export interface CheckoutConfig {
+  priceField: string;
+  successUrl: string;
+  cancelUrl: string;
+  orders?: CheckoutOrdersConfig;
+}
+
 /**
  * Identity presets for the delivery API — parameterized, never an expression
  * language. A ClaimRule matches when a verified JWT custom claim equals one of
@@ -154,6 +179,9 @@ export const collections = pgTable(
     /** G4: a state machine over one enum field — initial enforced on create,
      * actor-gated transitions the only way it moves. */
     workflow: jsonb("workflow").$type<WorkflowConfig>(),
+    /** K2a/K4: declarative Stripe checkout (priceField + success/cancel URLs,
+     * optional order-entry mapping). Sellable collections must be public. */
+    checkout: jsonb("checkout").$type<CheckoutConfig>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

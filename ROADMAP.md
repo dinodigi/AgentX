@@ -348,11 +348,15 @@ dependency-free and can slip into any idle slot earlier.)
 Highest concrete tenant value of the remaining gaps. Stripe's own retry loop is
 the durable queue — no hard G dependency, but land after G3 for clean logging.
 
-- [ ] 15.1 `K1` (S) — Stripe connector (plain fetch, no SDK; pinned Stripe-Version;
-      health = GET /v1/account).
-- [ ] 15.2 `K2a` (M) — declarative checkout config on collections
-      ({priceField, successUrl, cancelUrl}); `checkout` becomes a reserved name
-      (**verify no production collection uses it first**).
+- [x] 15.1 `K1` (S) — Stripe connector (third BYO-infra type; plain fetch, no SDK;
+      pinned Stripe-Version; health/rotate = GET /v1/account; `STRIPE_API_BASE` for
+      harness mockability). pk_/sk_ prefix validation; secret AES-GCM in secretEnc,
+      never exposed via MCP. ✅ 2026-07-08, 33-stripe-connector smoke (2)
+- [x] 15.2 `K2a` (M) — declarative `collections.checkout` JSONB
+      ({priceField, successUrl, cancelUrl}); define-time validation (priceField=text,
+      https URLs, Stripe connected, **access.read must be public** — sellable⇒public,
+      re-checked on EVERY write so a later redefine can't privatize it); `checkout`
+      reserved; MCP define/describe + manifest round-trip. ✅ 2026-07-08, 34-checkout-config smoke (6)
 - [ ] 15.3 `K2b` (M) — `POST /v1/checkout`: server-side price lookup (never trust
       client amounts), order entry created *before* the session (id in metadata),
       stripe-mock smoke harness.

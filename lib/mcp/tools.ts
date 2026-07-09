@@ -116,9 +116,9 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "list_connectors",
     description:
       "Status of the project's BYO-infra connectors (clerk = end-user auth, resend = email " +
-      "actions). Returns type, status, and non-secret config (issuer, publishable key, from " +
-      "address). Secrets NEVER appear here — connecting/rotating them is done by the operator " +
-      "in project settings, not over MCP.",
+      "actions, stripe = payments). Returns type, status, and non-secret config (issuer, " +
+      "publishable key, from address). Secrets (sk_/whsec_ keys) NEVER appear here — connecting/" +
+      "rotating them is done by the operator in project settings, not over MCP.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -253,6 +253,25 @@ export const TOOL_DEFS: ToolDef[] = [
             },
           },
           required: ["field", "initial", "transitions"],
+          additionalProperties: false,
+        },
+        checkout: {
+          type: "object",
+          description:
+            "declarative Stripe checkout: {priceField, successUrl, cancelUrl}. priceField names an " +
+            "existing TEXT field holding a Stripe Price id (price_…) — what is sellable and at what " +
+            "price is server-side content, never sent by the client (clients POST only entry ids + " +
+            "quantities to /v1/checkout). Requires the Stripe connector and access.read:'public' (or " +
+            "absent) — owner/authenticated collections cannot be sold; do member-only pricing in your " +
+            "app layer via events. BOUNDARIES: payment-mode Checkout Sessions only; no subscriptions, " +
+            "invoicing, or refunds (those live in your Stripe dashboard / app layer). Order status " +
+            "'expired' covers both session expiry and async-payment failure in v1.",
+          properties: {
+            priceField: { type: "string" },
+            successUrl: { type: "string", description: "https redirect after payment" },
+            cancelUrl: { type: "string", description: "https redirect if the buyer cancels" },
+          },
+          required: ["priceField", "successUrl", "cancelUrl"],
           additionalProperties: false,
         },
         renames: {
@@ -1027,6 +1046,14 @@ const defineArgs = z.object({
     })
     .nullable()
     .optional(),
+  checkout: z
+    .object({
+      priceField: z.string(),
+      successUrl: z.string(),
+      cancelUrl: z.string(),
+    })
+    .nullable()
+    .optional(),
   confirm: z.boolean().optional(),
 });
 const nameArg = z.object({ name: z.string() });
@@ -1149,6 +1176,16 @@ export async function callTool(
               "POST {deliveryBase}/{collection}/uploads — multipart/form-data 'file' part; " +
               "same gates as write plus the collection needs an asset field; returns {id,url} " +
               "to reference in the submission. 10 MB / image, pdf, text, csv, json only.",
+            checkout:
+              "POST {deliveryBase}/checkout — turn a cart into a Stripe Checkout Session for a " +
+              "collection with checkout config. Body {collection, items:[{id, quantity 1..100}], " +
+              "successUrl?, cancelUrl?} — the client sends ONLY entry ids + quantities; Price ids/" +
+              "amounts are server-side (the collection's priceField). Returns 201 {url, sessionId} — " +
+              "redirect the buyer to url. Same read gate as a public GET (a missing/hidden item and an " +
+              "absent one give one indistinguishable 422). URL overrides must share the configured " +
+              "origin. Stripe rejection → 502 {code:E_UPSTREAM} with Stripe's reason. Payment-mode " +
+              "only. Fulfillment: declare events.updated when status=paid (K4) — it fires only when " +
+              "payment actually clears.",
             images:
               "GET {deliveryBase}/assets/{id}/image?w=&h=&fit=&format= — on-demand resize of a " +
               "raster image asset, 302 to a 1-year-immutable R2 URL (NO auth header — directly " +
@@ -1198,6 +1235,7 @@ export async function callTool(
           access: a.access,
           events: a.events,
           workflow: a.workflow as never,
+          checkout: a.checkout as never,
           renames: a.renames,
           confirm: a.confirm,
         });
@@ -1242,6 +1280,7 @@ export async function callTool(
           access: c.access ?? null,
           events: c.events ?? null,
           workflow: c.workflow ?? null,
+          checkout: c.checkout ?? null,
           fields: c.fields,
         });
       }
