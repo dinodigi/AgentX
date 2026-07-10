@@ -1,5 +1,9 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { ensureServer, createEphemeralProject, startHookReceiver, mcp, waitFor, queryDeliveries } from "./helpers.mjs";
 
 // I2: test_hook dry-runs a collection's hook against sample data WITHOUT writing.
@@ -87,6 +91,27 @@ describe("test_hook dry-run (I2)", () => {
     // Still no write: the doc is unchanged.
     const g = await mcp(p.mcpToken, "get_entry", { collection: "docs", id: c.value.id });
     assert.equal(g.value.data.title, "Orig", "test_hook did not apply the update");
+  });
+
+  it("I6: get_project_info documents the compute story; get_client_code emits a hook-endpoint stub", async () => {
+    const info = await mcp(p.mcpToken, "get_project_info", {});
+    assert.ok(info.value.compute, "compute section present");
+    assert.match(info.value.compute.summary, /YOUR infrastructure|never hosts/);
+    assert.ok(info.value.compute.beforeWriteHooks && info.value.compute.events && info.value.compute.writeBack);
+    const code = await mcp(p.mcpToken, "get_client_code", {});
+    assert.ok(code.ok, code.errorText);
+    assert.match(code.value.code, /Before-write hook endpoint/, "hook stub present (project has hooks)");
+    assert.match(code.value.code, /x-agentx-signature|timingSafeEqual/, "stub shows signature verification");
+    // The stub is a trailing comment — the client must still compile under --strict
+    // (a stray */ would break it).
+    const tmp = mkdtempSync(path.join(tmpdir(), "agentx-i6-"));
+    try {
+      writeFileSync(path.join(tmp, "agentx.ts"), code.value.code);
+      const tscBin = path.resolve("node_modules", "typescript", "bin", "tsc");
+      execFileSync(process.execPath, [tscBin, "--strict", "--target", "es2022", "--module", "commonjs", "--lib", "es2022,dom", "--noEmit", "agentx.ts"], { cwd: tmp, stdio: "pipe" });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("beforeUpdate without entryId, and a stage with no hook, are rejected", async () => {

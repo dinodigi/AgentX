@@ -382,6 +382,41 @@ ${checkoutBlock}${included.map(accessorBlock).join("\n")}
   };
 }`;
 
-  const code = [header, included.map(typeBlock).join("\n\n"), factory].join("\n\n") + "\n";
+  // I6: when this project has before-write hooks, append a ready-to-run stub for
+  // the hook ENDPOINT the tenant implements on their own server (full reference:
+  // docs/hooks.md). It is a trailing comment — not part of the delivery client.
+  const hasHooks = opts.collections.some((c) => c.hooks?.beforeCreate || c.hooks?.beforeUpdate);
+  const hookStub = hasHooks
+    ? `
+
+/*
+ * ── Before-write hook endpoint ────────────────────────────────────────────────
+ * This project has hooks configured: AgentX POSTs the candidate to your endpoint
+ * (signed) BEFORE a write commits, and the write is gated on your reply. Implement
+ * this on YOUR server (this is the SERVER side, not the delivery client above).
+ * Full reference: docs/hooks.md.
+ *
+ *   import { createHmac, timingSafeEqual } from "node:crypto";
+ *   const SECRET = process.env.AGENTX_WEBHOOK_SECRET; // the project signing secret
+ *
+ *   // Express: read the RAW body (signature covers the exact bytes).
+ *   app.post("/agentx/hook", express.raw({ type: "application/json" }), (req, res) => {
+ *     const raw = req.body.toString("utf8");
+ *     const p = Object.fromEntries((req.get("x-agentx-signature") || "").split(",").map((s) => s.split("=")));
+ *     const t = Number(p.t);
+ *     const expected = createHmac("sha256", SECRET).update(t + "." + raw).digest("hex");
+ *     const a = Buffer.from(p.v1 || "", "utf8"), b = Buffer.from(expected, "utf8");
+ *     const good = a.length === b.length && timingSafeEqual(a, b) && Math.abs(Date.now() / 1000 - t) <= 300;
+ *     if (!good) return res.status(400).json({ error: "bad signature" });
+ *
+ *     const { event, collection, candidate } = JSON.parse(raw); // + current on update
+ *     // validate mode:  res.json({ ok: true })            // or { ok: false, error: "why" } → E_HOOK_REJECTED
+ *     // transform mode: res.json({ ok: true, data: {...} }) // the FULL new entry (ownership/computed always re-stamped)
+ *     res.json({ ok: true });
+ *   });
+ */`
+    : "";
+
+  const code = [header, included.map(typeBlock).join("\n\n"), factory].join("\n\n") + hookStub + "\n";
   return { code, collections: included.map((p) => p.slug), skipped };
 }

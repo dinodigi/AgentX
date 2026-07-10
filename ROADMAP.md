@@ -434,8 +434,11 @@ the spec file where they disagree.*
       E_HOOK_REJECTED/E_HOOK_FAILED per-item, passing items still insert; batch capped so
       ceil(n/5)×timeout fits the ~8s host budget (over-cap → E_VALIDATION "split the batch").
       ✅ 2026-07-09, 43-bulk-hooks smoke (3) + 39 updated.
-- [ ] 16.7 `I6` (S) — composition guide in get_project_info/get_client_code:
-      hooks (sync) + events (async) + transact + jobs = business logic on YOUR infra.
+- [x] 16.7 `I6` (S) — composition guide: get_project_info `compute` section (hooks=sync
+      gate/transform, events=async, computed=derived, write-back via idempotencyKey/CAS,
+      "AgentX never hosts code"); docs/hooks.md (envelope + Node signature-verify snippet +
+      response contract + loop avoidance); get_client_code emits a hook-endpoint stub when
+      hooks are configured (compiles under --strict). ✅ 2026-07-09, 41-test-hook (7).
 
 ## Phase 17 — Realtime change feed + SSE (spec: design-realtime)
 

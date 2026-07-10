@@ -1300,6 +1300,28 @@ export async function callTool(
             "checkout.session.{completed,expired,async_payment_succeeded,async_payment_failed} and " +
             "paste its whsec_ secret on the card. The signature is the endpoint's only auth — without " +
             "it the webhook answers 503.",
+          compute: {
+            summary:
+              "Custom business logic runs on YOUR infrastructure — AgentX never hosts or evaluates " +
+              "tenant code (no expression language, no read-path hooks, no synchronous call may exceed 5s).",
+            beforeWriteHooks:
+              "SYNC + gating: define hooks.beforeCreate/beforeUpdate on a collection — a signed POST to " +
+              "your endpoint that VALIDATES (mode:'validate', {ok:true}|{ok:false,error}) or TRANSFORMS " +
+              "(mode:'transform', {ok:true,data:<full entry>}) the write before it commits. onError " +
+              "reject (default, fail-closed) or allow (fail-open). Dry-run with test_hook first.",
+            events:
+              "ASYNC + fire-and-forget: declare events.created/updated/deleted (optionally when:[clauses], " +
+              "after:<delay>) — webhooks/emails that orchestrate side-effects AFTER the write; they never " +
+              "gate it. Delivery outcomes are in get_deliveries.",
+            computedFields:
+              "declare a field's computed:{fn} (slugify|template|now|uuid) to derive its value server-side " +
+              "from the closed vocabulary — no endpoint, no round-trip.",
+            writeBack:
+              "your endpoint writes results back through the delivery API or MCP — use idempotencyKey " +
+              "(create/transact) or update_entry_if (CAS) so a retried consult/callback never double-applies. " +
+              "Every hook request carries `x-agentx-hook: 1`; a loop-safe endpoint refuses to re-enter on it.",
+            docs: "get_client_code emits a ready-to-run signature-verification + envelope stub for your hook endpoint whenever this project has hooks configured (full reference: docs/hooks.md in the AgentX repo).",
+          },
           deliveryApi: {
             auth: "Authorization: Bearer <project token> on every request",
             read:
