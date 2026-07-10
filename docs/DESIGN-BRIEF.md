@@ -81,21 +81,26 @@ platform company, not a single-page side project** — top-nav silos, hub pages,
 and leaf pages, so the site scales as the platform opens up (multi-tenancy and
 plugins are on the roadmap).
 
-### Brand architecture (design for a rename)
+### Brand architecture (design for a rename, and for MULTIPLE products)
 
 - **Company: "Pluggie" (WORKING NAME — explicitly not settled).**
-- **Product: "AgentX"** — the flagship (today, only) product under the company.
-- Design consequence: treat both names as swappable tokens everywhere — logo
-  lockups (company mark, product wordmark, combined lockup), nav, footer,
-  legal lines. Nothing may bake a name into artwork that can't be re-cut in
-  minutes. Deliver the company/product lockup system explicitly (how the
-  product sits under the company: "AgentX *by Pluggie*" vs siblings-to-come).
+- **Product 1: "AgentX"** — the flagship, shipping product (this codebase).
+- **Product 2: "Hostile Agent"** — COMING SOON, not built (see §3.5). Its
+  existence is why the company/product split is real, not premature: Pluggie
+  is a multi-product company, AgentX and Hostile Agent are siblings under it.
+- Design consequence: treat names as swappable tokens everywhere — logo
+  lockups (company mark, per-product wordmarks, combined lockups), nav,
+  footer, legal lines. Nothing may bake a name into artwork that can't be
+  re-cut in minutes. Deliver the lockup system explicitly, and it must
+  accommodate a **product family** (a nav/products menu, consistent
+  "<Product> by Pluggie" treatment), not just one product.
 
 ### Sitemap / silo structure
 
 ```
-/                         Landing (company-level: the platform pitch)
-/product                  Product hub — AgentX overview, how-it-works in 3 beats
+/                         Landing (company-level: Pluggie, the product family)
+/products                 Products index — AgentX (live) + Hostile Agent (soon)
+/product                  AgentX hub — overview, how-it-works in 3 beats
   /product/data-modeling      schema registry, 8 primitives, branded admin
   /product/delivery-api       per-field public reads, query power, search, i18n
   /product/authorization      identity presets, BYO Clerk, org scoping
@@ -111,12 +116,18 @@ plugins are on the roadmap).
   /solutions/content-sites    editorial/content delivery (i18n, media, search)
   /solutions/membership       gated content, member auth, owner rows
   /solutions/commerce         sellable collections, checkout, fulfillment
+/hostile-agent            Hostile Agent — COMING SOON teaser page (§3.5)
 /developers               Docs hub — MCP tool surface, generated TS client,
                           API conventions (E_* errors, ETags), hooks guide
 /pricing                  Placeholder register ("early access" tier language —
                           no real pricing exists yet; design the pattern)
 /company                  About (Currents Studio origin), contact
 ```
+
+Note: the landing shifts to a COMPANY-level pitch (Pluggie makes tools for the
+agent era) with AgentX as the lead product and Hostile Agent as the "what's
+next" — because there are now two products, the top level can't be
+AgentX-only. Design the products menu / family framing accordingly.
 
 Leaf pages may launch as well-designed stubs — the SILOS and nav must be real
 from day one; depth can fill in. Every capability claim must map to
@@ -136,6 +147,33 @@ cases the platform genuinely serves today.
   "AgentX never hosts your code" is a FEATURE, market it as one).
 - **/solutions/agencies** doubles as the "for your clients" page — what the
   handed-off branded admin looks like.
+
+### 3.5 Hostile Agent — COMING SOON (teaser only, NOT built)
+
+Second product under Pluggie. **Do not design a full product site — one
+teaser/waitlist page + presence in the products menu.** It is not built and
+won't be soon; the goal is to establish it as a real part of the family and
+capture interest.
+
+**What it is (for copy):** an autonomous **security-testing** agent you point
+at your OWN application, API, or MCP server. It actively tries to do what it
+shouldn't — bypass permissions, break business rules, chain tools dangerously,
+exploit authorization gaps, exfiltrate data, trigger destructive actions, abuse
+retries — and reports the vulnerabilities it finds. Red-teaming for the agent
+era: the natural companion to AgentX (you build a backend with AgentX, then
+prove it holds up with Hostile Agent).
+
+**FRAMING GUARDRAIL (non-negotiable — brief the design session on this):** this
+is a DEFENSIVE, authorized-testing tool. All copy and imagery must anchor on
+"test YOUR systems / find gaps before attackers do / authorized security
+assessment." It must never read as an attack-for-hire or a tool aimed at
+systems you don't own. Think Burp Suite / pentest-platform positioning, not
+"hacking as a service." Tone can be edgy (the name is deliberately sharp) but
+the legitimacy frame is load-bearing — get it wrong and it's a liability.
+
+Page contents: name + one-line definition, the threat classes it probes (the
+list above, as a grid), the "authorized use only" frame, an email waitlist
+CTA. No pricing, no fake screenshots, no dashboards — it doesn't exist yet.
 
 Constraints:
 - Lives in the same Next app under a `(marketing)` route group (default
@@ -217,10 +255,9 @@ every spec names the file it applies to.
 
 1. Marketing CTA reality: "request access" vs "book a call" vs just a repo
    link — owner call (platform is not self-serve until Phase 20).
-2. Naming: company working name is "Pluggie" (NOT settled), product is
-   "AgentX". Design everything rename-tolerant (see brand architecture, §3);
-   surface a recommendation if the company/product split feels wrong for a
-   single-product platform at this stage.
+2. Naming: company working name is "Pluggie" (NOT settled), products are
+   "AgentX" (live) and "Hostile Agent" (coming soon). Design rename-tolerant
+   for the company name and for a growing product family (see §3, §3.5).
 3. Same-app `(marketing)` route group vs separate site (default: same app).
 4. Screenshots of the current admin for workstream B: the admin is auth-gated;
    ask the owner for a walkthrough/screens, or design from the component
