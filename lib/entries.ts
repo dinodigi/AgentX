@@ -33,6 +33,7 @@ import {
 } from "./query";
 import { emitEntryEvent, runEventAction, type EntryEvent } from "./events";
 import { callWriteHook, type HookEnvelope } from "./hooks";
+import { evaluateComputed } from "./computed";
 import { stampIdentity, stampedIdentityFields } from "./access-rules";
 import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workflow";
 import { recordChange, recordChanges, type ChangeInput } from "./changes";
@@ -159,8 +160,9 @@ function validate(
   fields: FieldDef[],
   data: unknown,
   partial: boolean,
+  mode: "input" | "storage" = "input",
 ): Record<string, unknown> {
-  const { schema } = buildEntrySchema(fields, partial);
+  const { schema } = buildEntrySchema(fields, partial, mode);
   try {
     return schema.parse(data);
   } catch (e) {
@@ -351,7 +353,14 @@ export async function createEntry(
   // returns the (re-validated, re-stamped) data to write instead.
   const finalData = await runBeforeCreateHook(projectId, collection, clean, opts.identity);
 
-  const { entry, emit } = await createEntryCore(db, projectId, collection, finalData, {
+  // I3: stamp computed fields AFTER the candidate (+ any transform) is validated,
+  // then re-validate in STORAGE mode so the derived output still obeys min/max
+  // (unique surfaces at insert via the partial index). No-op without computed fields.
+  const toWrite = collection.fields.some((f) => f.computed)
+    ? validate(collection.fields, evaluateComputed(collection.fields, finalData), false, "storage")
+    : finalData;
+
+  const { entry, emit } = await createEntryCore(db, projectId, collection, toWrite, {
     idempotencyKey: opts.idempotencyKey,
   });
   if (emit) {
@@ -365,7 +374,7 @@ export async function createEntry(
       entryId: entry.id,
       action: "create",
       actor: opts.actor ?? UNKNOWN_ACTOR,
-      changedFields: Object.keys(finalData),
+      changedFields: Object.keys(toWrite),
     });
   }
   return entry;
@@ -515,12 +524,20 @@ async function runBeforeUpdateHook(
     return patch; // fail-open
   }
   if (outcome.kind === "replace") {
-    const full = validate(collection.fields, outcome.data, false);
-    // Re-strip: identity fields keep the EXISTING row's values (ownership is
-    // immutable via a hook). Dropped ⇒ absent (buildReplacePatch nulls them).
-    for (const f of stampedIdentityFields(collection)) {
+    // Server-derived fields are frozen w.r.t. a hook on update: identity
+    // (ownership immutable) AND computed (I3 freezes computed on update). Strip
+    // them from the transform output BEFORE validation — the candidate the hook
+    // saw echoes their current values, which INPUT mode would reject — then
+    // restore the CURRENT values so the hook can't move them.
+    const frozen = [
+      ...stampedIdentityFields(collection),
+      ...collection.fields.filter((f) => f.computed).map((f) => f.name),
+    ];
+    const raw = { ...(outcome.data as Record<string, unknown>) };
+    for (const f of frozen) delete raw[f];
+    const full = validate(collection.fields, raw, false);
+    for (const f of frozen) {
       if (f in current.data) full[f] = current.data[f];
-      else delete full[f];
     }
     const { refChecks } = buildEntrySchema(collection.fields);
     await verifyRefs(projectId, full, refChecks);
@@ -629,9 +646,23 @@ export async function dryRunHook(
     return { verdict: "unavailable", hookResponse: { error: outcome.reason } };
   }
   if (outcome.kind === "replace") {
+    // Mirror the real write path so the dry-run's verdict matches it: on update,
+    // identity + computed fields are frozen (stripped then restored), and the
+    // merged candidate the hook echoed carries their current values — which INPUT
+    // mode would reject. Validate the SAME shape the write path validates.
+    let toValidate = outcome.data;
+    if (stage === "beforeUpdate") {
+      const frozen = [
+        ...stampedIdentityFields(collection),
+        ...collection.fields.filter((f) => f.computed).map((f) => f.name),
+      ];
+      const stripped = { ...(outcome.data as Record<string, unknown>) };
+      for (const f of frozen) delete stripped[f];
+      toValidate = stripped;
+    }
     let validationOfFinalData: { ok: boolean; error?: string };
     try {
-      validate(collection.fields, outcome.data, false);
+      validate(collection.fields, toValidate, false);
       validationOfFinalData = { ok: true };
     } catch (e) {
       validationOfFinalData = { ok: false, error: e instanceof ValidationError ? e.message : String(e) };
@@ -1036,7 +1067,10 @@ export async function restoreEntryVersion(
     throw new ValidationError(`no version ${versionId} for entry ${entryId}`, "E_NOT_FOUND");
   }
 
-  const clean = validate(collection.fields, version.data, false);
+  // STORAGE mode: a version snapshot legitimately CONTAINS its computed values;
+  // a restore reverts to the exact prior state (old slug/uuid/timestamp kept),
+  // so those keys are valid input here, not client-supplied ones to reject.
+  const clean = validate(collection.fields, version.data, false, "storage");
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
 
@@ -1355,7 +1389,10 @@ export async function transact(
         // full-trust (MCP), so no identity re-stamp applies; pass assumeExisting
         // so a transform's re-verifyRefs accepts same-batch $refs.
         const hooked = await runBeforeCreateHook(projectId, collection, clean, undefined, assumeExisting);
-        prepared.push({ kind: "create", collection, id: createIds[i]!, clean: hooked, changedFields: Object.keys(hooked) });
+        const toWrite = collection.fields.some((f) => f.computed)
+          ? validate(collection.fields, evaluateComputed(collection.fields, hooked), false, "storage")
+          : hooked;
+        prepared.push({ kind: "create", collection, id: createIds[i]!, clean: toWrite, changedFields: Object.keys(toWrite) });
       } else if (op.op === "update") {
         if (!id) throw new ValidationError("update op requires an id");
         const clean = validate(collection.fields, data, true);
@@ -1603,6 +1640,7 @@ export async function bulkCreateEntries(
     );
   }
   const { refChecks } = buildEntrySchema(collection.fields);
+  const hasComputed = collection.fields.some((f) => f.computed);
 
   const results: BulkItemResult[] = [];
   const valid: { index: number; clean: Record<string, unknown> }[] = [];
@@ -1612,7 +1650,11 @@ export async function bulkCreateEntries(
         const clean = validate(collection.fields, item, false);
         applyWorkflowOnCreate(collection, clean); // same initial-state rule as createEntry
         await verifyRefs(projectId, clean, refChecks);
-        valid.push({ index, clean });
+        // I3: stamp computed per item (distinct now/uuid each), then STORAGE-validate.
+        const toStore = hasComputed
+          ? validate(collection.fields, evaluateComputed(collection.fields, clean), false, "storage")
+          : clean;
+        valid.push({ index, clean: toStore });
       } catch (e) {
         results.push({
           index,

@@ -112,6 +112,7 @@ export type ConstraintKind =
   | "pattern"
   | "enum"
   | "unique"
+  | "computed"
   | "unknown_field"
   | "ref_missing";
 
@@ -235,9 +236,32 @@ const fieldDefSchema = z
     options: z.array(z.string().min(1)).optional(),
     targetCollection: z.string().regex(NAME_RE).optional(),
     labelField: z.string().regex(NAME_RE).optional(),
+    computed: z
+      .union([
+        z.object({ fn: z.literal("slugify"), from: z.string().min(1) }).strict(),
+        z.object({ fn: z.literal("template"), template: z.string().min(1) }).strict(),
+        z.object({ fn: z.literal("now"), on: z.enum(["create", "always"]).optional() }).strict(),
+        z.object({ fn: z.literal("uuid") }).strict(),
+      ])
+      .optional(),
   })
   .strict()
   .superRefine((f, ctx) => {
+    if (f.computed) {
+      const fn = f.computed.fn;
+      if ((fn === "slugify" || fn === "template" || fn === "uuid") && f.type !== "text") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `computed ${fn} is only valid on a text field` });
+      }
+      if (fn === "now" && f.type !== "date") {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "computed now is only valid on a date field" });
+      }
+      if (f.required || f.requiredIf) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "a computed field can't be required/requiredIf — its value is always derived server-side",
+        });
+      }
+    }
     if (f.type === "enum" && (!f.options || f.options.length === 0)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "enum fields require a non-empty options[]" });
     }
@@ -382,6 +406,30 @@ export const fieldsSchema = z
         });
       }
     }
+    // I3: computed slugify.from / template {{fields}} must name existing NON-computed
+    // siblings — no chains (a computed reading another computed) and no self-reference,
+    // which also rules out cycles.
+    const byName = new Map(fields.map((f) => [f.name, f]));
+    for (const f of fields) {
+      if (!f.computed) continue;
+      const refs =
+        f.computed.fn === "slugify"
+          ? [f.computed.from]
+          : f.computed.fn === "template"
+            ? [...f.computed.template.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1])
+            : [];
+      for (const r of refs) {
+        const sib = byName.get(r);
+        if (!sib || r === f.name) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${f.name}.computed references "${r}", which is not a sibling field` });
+        } else if (sib.computed) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${f.name}.computed references computed field "${r}" — computed fields can't chain; reference a plain field`,
+          });
+        }
+      }
+    }
   });
 
 /** Slugs that collide with admin routes or feel ambiguous in URLs. */
@@ -500,18 +548,31 @@ export interface RefCheck {
  * @param partial when true (updates), all keys are optional but still typed —
  *        required-ness is only enforced on create.
  */
-export function buildEntrySchema(fields: FieldDef[], partial = false): CompiledSchema {
+export function buildEntrySchema(
+  fields: FieldDef[],
+  partial = false,
+  /** I3: 'input' (default) REJECTS a client-supplied computed key; 'storage'
+   *  validates the post-stamp data where computed keys are legitimately present. */
+  mode: "input" | "storage" = "input",
+): CompiledSchema {
   const shape: Record<string, z.ZodTypeAny> = {};
   const refChecks: RefCheck[] = [];
 
   for (const field of fields) {
-    let v = valueSchemaFor(field);
-    if (partial) {
-      // Updates: null = explicit unset. Required fields reject null below —
-      // with a dedicated hint — so shapes stay uniform here.
-      v = v.nullable().optional();
-    } else if (!field.required) {
-      v = v.optional();
+    let v: z.ZodTypeAny;
+    if (field.computed && mode === "input") {
+      // Any PRESENT value is caught by the superRefine below with a clear
+      // "computed" message; absence is fine.
+      v = z.unknown().optional();
+    } else {
+      v = valueSchemaFor(field);
+      if (partial) {
+        // Updates: null = explicit unset. Required fields reject null below —
+        // with a dedicated hint — so shapes stay uniform here.
+        v = v.nullable().optional();
+      } else if (!field.required) {
+        v = v.optional();
+      }
     }
     shape[field.name] = v;
 
@@ -524,6 +585,27 @@ export function buildEntrySchema(fields: FieldDef[], partial = false): CompiledS
 
   // .strict() => unknown keys are rejected, so an AI can't stash arbitrary data.
   let schema: z.ZodTypeAny = z.object(shape).strict();
+
+  // I3 INPUT mode: a client (or a hook transform) may NOT supply a computed
+  // field — its value is derived server-side. STORAGE mode skips this (the
+  // stamped value is legitimately present).
+  if (mode === "input") {
+    const computed = fields.filter((f) => f.computed);
+    if (computed.length > 0) {
+      schema = schema.superRefine((data: Record<string, unknown>, ctx) => {
+        for (const f of computed) {
+          if (data[f.name] !== undefined) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: [f.name],
+              message: `field "${f.name}" is computed (${f.computed!.fn}) — the value is derived server-side, omit it`,
+              params: { constraint: "computed" },
+            });
+          }
+        }
+      });
+    }
+  }
 
   // Updates: `required` means "can never be unset" — null is rejected with a
   // dedicated hint (create-time required-ness is handled by the shapes above).

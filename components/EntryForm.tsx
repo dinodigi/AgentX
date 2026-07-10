@@ -116,6 +116,20 @@ function FieldInput({
   choices: RelationChoice[];
   enumOverride?: string[];
 }) {
+  // I3: computed fields are derived server-side — show the value read-only, with
+  // NO `name`, so the form never submits them (which the API would reject).
+  if (field.computed) {
+    return (
+      <div className="mb-4">
+        <Label field={field} />
+        <div className={`${inputClass} bg-[--color-paper] text-[--color-ink-mute]`}>
+          {value != null && value !== "" ? str(value) : (
+            <span className="italic">computed on save ({field.computed.fn})</span>
+          )}
+        </div>
+      </div>
+    );
+  }
   switch (field.type) {
     case "text":
       return (

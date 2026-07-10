@@ -415,10 +415,15 @@ the spec file where they disagree.*
       against sample data WITHOUT writing (side-effect-free on AgentX; DOES call the
       tenant endpoint, logged 'hook.test'); returns verdict + finalData +
       validationOfFinalData. ✅ 2026-07-09, 41-test-hook smoke (6).
-- [ ] 16.4 `I3` (M) — computed fields, closed vocabulary (slugify | template | now | uuid):
-      **two explicit schema modes** — INPUT (rejects computed keys, applied to all
-      untrusted input) vs STORAGE (post-stamp) — stamped in createEntry core
-      **and bulkCreateEntries**; end-to-end create smoke.
+- [x] 16.4 `I3` (M) — computed fields, closed vocabulary (slugify | template | now | uuid):
+      two schema modes — INPUT (rejects a client/hook-supplied computed key) vs STORAGE
+      (post-stamp) — stamped in createEntry, transact creates, AND bulkCreateEntries;
+      frozen on update (also stripped/restored on a beforeUpdate transform); define-time
+      rules (type match, not-required, plain-sibling refs, no chains/cycles); admin renders
+      read-only. ✅ 2026-07-09, 42-computed smoke (9). Fixes: restore_entry_version STORAGE-
+      validates (was rejecting a snapshot's own computed values); test_hook beforeUpdate dry-
+      run mirrors the write-path frozen-strip. Adversarial review (3 lenses) confirmed only
+      the test_hook one; injection + cycles lenses clean.
 - [ ] 16.5 `I4` (S) — computed recompute on update (source-field-triggered;
       `now on:'always'` restamps; CAS path documented as skipping).
 - [ ] 16.6 `I5` (S) — hooks on bulk_create_entries **bounded to the host budget**:

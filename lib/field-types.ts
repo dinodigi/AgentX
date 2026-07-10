@@ -45,7 +45,20 @@ interface FieldBase {
    * matching verified user. Server-stamped identity fields are exempt.
    */
   writableBy?: "none" | { claim: string; equals: string | string[] };
+  /**
+   * I3: the value is DERIVED server-side from a closed vocabulary — the client
+   * never supplies it (a supplied value is rejected). slugify/template/uuid on
+   * text, now on date. Computed fields can't be required/requiredIf.
+   */
+  computed?: ComputedSpec;
 }
+
+/** Closed computed-field vocabulary (I3). No expression language, ever. */
+export type ComputedSpec =
+  | { fn: "slugify"; from: string } // lowercase ascii slug of a sibling text field
+  | { fn: "template"; template: string } // {{field}} interpolation of siblings
+  | { fn: "now"; on?: "create" | "always" } // ISO timestamp (I4 adds on:'always')
+  | { fn: "uuid" }; // crypto.randomUUID at create
 
 export interface TextField extends FieldBase {
   type: "text";
@@ -120,6 +133,7 @@ export const fieldMin = (f: FieldDef): number | string | undefined => ("min" in 
 export const fieldMax = (f: FieldDef): number | string | undefined => ("max" in f ? f.max : undefined);
 export const fieldPattern = (f: FieldDef): string | undefined => (f.type === "text" ? f.pattern : undefined);
 export const fieldInteger = (f: FieldDef): boolean | undefined => (f.type === "number" ? f.integer : undefined);
+export const fieldComputed = (f: FieldDef): ComputedSpec | undefined => f.computed;
 
 /**
  * Terse, machine-readable description of each primitive and its config knobs.
@@ -175,4 +189,8 @@ export const COMMON_FIELD_CONFIG = [
   "publicRead?: boolean (delivery visibility)",
   'writableBy?: "none" | {claim, equals} — delivery-only write gate (admin/MCP unaffected)',
   "in update calls, set a field to null to unset it (optional fields only)",
+  "computed?: {fn} — value DERIVED server-side, never client-supplied (a supplied value is " +
+    "rejected). fn: {slugify, from:<sibling text field>} | {template, template:'{{a}}-{{b}}'} | " +
+    "{now} (date) | {uuid}. slugify/template/uuid on text, now on date; can't be required; " +
+    "references must be plain (non-computed) siblings. Stamped at create; frozen on update (I4 adds recompute).",
 ];
