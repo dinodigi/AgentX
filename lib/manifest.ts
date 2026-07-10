@@ -2,9 +2,10 @@ import { z } from "zod";
 import { eq } from "drizzle-orm";
 import { revalidateTag } from "next/cache";
 import { db } from "@/db";
-import { projects, type Branding, type Collection } from "@/db/schema";
+import { projects, type Branding, type Collection, type ProjectLocales } from "@/db/schema";
 import { accessSchema } from "./access-rules";
 import { getProject } from "./admin";
+import { setLocales, type LocalesPlan } from "./locales";
 import {
   listCollections,
   defineCollection,
@@ -23,7 +24,7 @@ import { ValidationError } from "./validation";
 
 export interface ProjectManifest {
   version: 1;
-  project: { name: string; branding: Branding };
+  project: { name: string; branding: Branding; locales?: ProjectLocales | null };
   collections: {
     name: string;
     displayName: string;
@@ -56,6 +57,11 @@ const manifestSchema = z.object({
         primaryColor: z.string().optional(),
       })
       .default({}),
+    // Optional since J3 — version stays 1; older manifests simply lack it.
+    locales: z
+      .object({ default: z.string(), supported: z.array(z.string()).min(1) })
+      .nullable()
+      .optional(),
   }),
   collections: z.array(
     z.object({
@@ -114,7 +120,11 @@ export async function exportProject(projectId: string): Promise<ProjectManifest>
 
   return {
     version: 1,
-    project: { name: project.name, branding: project.branding },
+    project: {
+      name: project.name,
+      branding: project.branding,
+      ...(project.locales ? { locales: project.locales } : {}),
+    },
     collections: collections.map((c) => ({
       name: c.name,
       displayName: c.displayName,
@@ -167,6 +177,8 @@ export interface ImportResult {
   applied: string[];
   /** Collections whose destructive changes need confirm: true. */
   pendingPlans: { collection: string; plan: SchemaDiff }[];
+  /** A locales change the import could not apply without confirm: true. */
+  localesPlan?: { plan: LocalesPlan; hint: string };
   brandingUpdated: boolean;
   /** Non-fatal downgrades applied during import (e.g. hooks disabled). */
   warnings: string[];
@@ -198,6 +210,16 @@ export async function importProject(
   const applied: string[] = [];
   const pendingPlans: ImportResult["pendingPlans"] = [];
   const warnings: string[] = [];
+
+  // Locales apply BEFORE the collection loop: locale config gates localized
+  // fields, so a manifest must never define collections against config that
+  // hasn't landed yet. A destructive locale change (dropping populated
+  // variants in the target) surfaces as a plan like any collection diff.
+  let localesPlan: ImportResult["localesPlan"];
+  if (manifest.project.locales) {
+    const r = await setLocales(projectId, manifest.project.locales, confirm);
+    if (!r.applied) localesPlan = { plan: r.plan, hint: r.hint };
+  }
 
   // A before-write hook needs the project's signing secret. Rather than hard-fail
   // an otherwise-valid import, downgrade any hooked collection to disabled + warn
@@ -240,5 +262,11 @@ export async function importProject(
     else pendingPlans.push({ collection: col.name, plan: result.diff });
   }
 
-  return { applied, pendingPlans, brandingUpdated: true, warnings };
+  return {
+    applied,
+    pendingPlans,
+    ...(localesPlan ? { localesPlan } : {}),
+    brandingUpdated: true,
+    warnings,
+  };
 }

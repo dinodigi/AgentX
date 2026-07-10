@@ -131,6 +131,8 @@ export const projects = pgTable("projects", {
   name: text("name").notNull(),
   /** Branding handed to the client: { displayName, logoUrl, primaryColor, ... } */
   branding: jsonb("branding").$type<Branding>().notNull().default({}),
+  /** i18n locale registry {default, supported}; null = localized fields unavailable (J3). */
+  locales: jsonb("locales").$type<ProjectLocales>(),
   /** Signs outgoing webhooks (X-AgentX-Signature); revealed to operators in settings. */
   webhookSigningSecret: text("webhook_signing_secret"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -579,6 +581,15 @@ export interface Branding {
   displayName?: string;
   logoUrl?: string;
   primaryColor?: string;
+}
+
+/**
+ * Project-wide locale registry. `default` is the delivery fallback target and
+ * must be in `supported`. Tags are stored normalized lowercase ("en", "pt-br").
+ */
+export interface ProjectLocales {
+  default: string;
+  supported: string[];
 }
 
 export type Project = InferSelectModel<typeof projects>;

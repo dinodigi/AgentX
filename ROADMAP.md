@@ -512,7 +512,13 @@ site needs srcsets.
       resolved assets (+ generated-client asset type + list_assets desc). Review
       caught the two additive-shape fallouts (a strict smoke assertion + the client
       readType); both fixed. ✅ 2026-07-08, 32-image-transform + 16-delivery-web
-- [ ] 18.3 `J3` (M) — project locales config + `set_locales` tool + manifest round-trip.
+- [x] 18.3 `J3` (M) — project locales config + `set_locales` tool + manifest round-trip
+      (nullable `projects.locales`; import applies locales BEFORE the collection loop).
+      Design openMinor fixes folded: default-locale change is plan+confirm like removal
+      (#2); confirmed removal purges the dropped variants from entries + trash (#3);
+      the confirm-gate smoke honestly deferred to J5 when variants can exist (#6).
+      ✅ 2026-07-09, 44-locales smoke (7), full suite 373/373. *(locales column applied
+      by hand — db:push still broken vs Neon PG18.)*
 - [ ] 18.4 `J4` (M) — read-side localization plumbing, shipped inert (variant-map-safe
       delivery/admin/query before any localized field can exist).
 - [ ] 18.5 `J5` (M) — `localized: true` goes live: strict per-locale validation,

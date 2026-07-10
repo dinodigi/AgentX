@@ -47,6 +47,7 @@ import { generateClientCode } from "@/lib/mcp/client-code";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
 import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
+import { setLocales } from "@/lib/locales";
 import { exportEntries } from "@/lib/export";
 import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
 import type { ErrorCode } from "@/lib/error-codes";
@@ -145,6 +146,35 @@ export const TOOL_DEFS: ToolDef[] = [
       "number, boolean, date, enum, asset, relation) and each one's config. You must " +
       `only use these types. ${BOUNDARIES}`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "set_locales",
+    description:
+      "Set the project's locale registry: {default, supported:[tags]} — BCP-47-style tags " +
+      'like "en", "de", "pt-br", stored normalized lowercase (max 16). Project-wide config; ' +
+      "`default` must be in `supported` and is the fallback target. This is the prerequisite " +
+      "for localized fields. Removing a supported locale that holds stored translations, or " +
+      "changing the default while translations exist, returns a counted plan with code " +
+      "E_CONFIRM_REQUIRED — re-run with confirm:true; a confirmed removal permanently PURGES " +
+      "the dropped locales' variants from stored entries (trash included).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        default: { type: "string", description: "fallback locale tag; must be in supported" },
+        supported: {
+          type: "array",
+          items: { type: "string" },
+          minItems: 1,
+          description: "every locale content may hold, including the default",
+        },
+        confirm: {
+          type: "boolean",
+          description: "acknowledge a destructive plan (locale removal / default change)",
+        },
+      },
+      required: ["default", "supported"],
+      additionalProperties: false,
+    },
   },
   {
     name: "define_collection",
@@ -1212,6 +1242,11 @@ const uploadArgs = z.object({
   contentType: z.string(),
   dataBase64: z.string(),
 });
+const localesArgs = z.object({
+  default: z.string(),
+  supported: z.array(z.string()).min(1),
+  confirm: z.boolean().optional(),
+});
 
 export interface ToolResult {
   content: { type: "text"; text: string }[];
@@ -1270,6 +1305,10 @@ export async function callTool(
             name: project.name,
             branding: project.branding,
           },
+          locales: project.locales ?? null,
+          ...(project.locales
+            ? {}
+            : { localesHint: "no locales configured — set_locales registers {default, supported}" }),
           urls: {
             deliveryBase: `${ctx.baseUrl}/api/v1`,
             admin: `${ctx.baseUrl}/admin/${projectId}`,
@@ -1391,6 +1430,28 @@ export async function callTool(
       }
       case "list_field_types":
         return ok({ commonConfig: COMMON_FIELD_CONFIG, types: FIELD_TYPE_SPECS });
+
+      case "set_locales": {
+        const a = localesArgs.parse(rawArgs);
+        const r = await setLocales(
+          projectId,
+          { default: a.default, supported: a.supported },
+          a.confirm ?? false,
+        );
+        if (!r.applied) {
+          return ok({
+            requiresConfirmation: true,
+            code: "E_CONFIRM_REQUIRED",
+            plan: r.plan,
+            hint: r.hint,
+          });
+        }
+        return ok({
+          ok: true,
+          locales: r.locales,
+          ...(r.purgedVariants.length > 0 ? { purgedVariants: r.purgedVariants } : {}),
+        });
+      }
 
       case "define_collection": {
         const a = defineArgs.parse(rawArgs);
@@ -1863,7 +1924,7 @@ export async function callTool(
           .object({ manifest: z.record(z.unknown()), confirm: z.boolean().optional() })
           .parse(rawArgs);
         const result = await importProject(projectId, a.manifest, a.confirm ?? false);
-        if (result.pendingPlans.length > 0) {
+        if (result.pendingPlans.length > 0 || result.localesPlan) {
           return ok({ ...result, code: "E_CONFIRM_REQUIRED" });
         }
         return ok(result);
