@@ -74,20 +74,68 @@ Two hard invariants that survive the rebrand:
   appears and how it stays legible on the new (likely dark) surfaces.
 - **Stack**: Next.js App Router + Tailwind v4, server components by default.
 
-## 3. Workstream A — marketing pages (net-new)
+## 3. Workstream A — marketing site (net-new)
 
-Nothing exists today. Proposed minimum set (adjust if you see a better shape):
+Nothing exists today. **Build it with the information architecture of a real
+platform company, not a single-page side project** — top-nav silos, hub pages,
+and leaf pages, so the site scales as the platform opens up (multi-tenancy and
+plugins are on the roadmap).
 
-1. **Landing** — hero (what AgentX is in one sentence), how-it-works in 3 beats
-   (agent defines schema → branded admin appears → site consumes the API),
-   capability grid drawn from CAPABILITIES.md, an honest "built for agents"
-   section (MCP tools, self-describing errors, plan+confirm), CTA (today:
-   "request access" — the platform isn't self-serve yet; no pricing exists).
-2. **Product / capabilities** — deeper page per pillar: data modeling & admin,
-   delivery API, automation, payments, compute boundary (hooks), realtime,
-   i18n/media. Diagrams welcome (original artwork only).
-3. **For clients** — a short page an agency can send THEIR client: "this is
-   the admin you'll get" (screens of the branded admin).
+### Brand architecture (design for a rename)
+
+- **Company: "Pluggie" (WORKING NAME — explicitly not settled).**
+- **Product: "AgentX"** — the flagship (today, only) product under the company.
+- Design consequence: treat both names as swappable tokens everywhere — logo
+  lockups (company mark, product wordmark, combined lockup), nav, footer,
+  legal lines. Nothing may bake a name into artwork that can't be re-cut in
+  minutes. Deliver the company/product lockup system explicitly (how the
+  product sits under the company: "AgentX *by Pluggie*" vs siblings-to-come).
+
+### Sitemap / silo structure
+
+```
+/                         Landing (company-level: the platform pitch)
+/product                  Product hub — AgentX overview, how-it-works in 3 beats
+  /product/data-modeling      schema registry, 8 primitives, branded admin
+  /product/delivery-api       per-field public reads, query power, search, i18n
+  /product/authorization      identity presets, BYO Clerk, org scoping
+  /product/automation         events, schedules, declarative workflows
+  /product/payments           Stripe checkout, order lifecycle
+  /product/compute            before-write hooks, computed fields — "your code
+                              on your infra; we never host it"
+  /product/realtime           change feed + SSE
+  /product/trust              trash/restore, versions, audit, plan+confirm
+/solutions                Solutions hub — by use case, not by feature
+  /solutions/agencies         hand-off-ready branded admins per client
+  /solutions/ai-builders      agents build the backend over MCP end-to-end
+  /solutions/content-sites    editorial/content delivery (i18n, media, search)
+  /solutions/membership       gated content, member auth, owner rows
+  /solutions/commerce         sellable collections, checkout, fulfillment
+/developers               Docs hub — MCP tool surface, generated TS client,
+                          API conventions (E_* errors, ETags), hooks guide
+/pricing                  Placeholder register ("early access" tier language —
+                          no real pricing exists yet; design the pattern)
+/company                  About (Currents Studio origin), contact
+```
+
+Leaf pages may launch as well-designed stubs — the SILOS and nav must be real
+from day one; depth can fill in. Every capability claim must map to
+[docs/CAPABILITIES.md](CAPABILITIES.md) — this structure makes us look
+established, it must not make us look dishonest. Solutions pages describe use
+cases the platform genuinely serves today.
+
+### Page-level notes
+
+- **Landing** — company-level hero (the platform pitch in one sentence),
+  how-it-works in 3 beats (agent defines schema → branded admin appears →
+  site consumes the API), capability grid, "built for agents" proof section
+  (real tool-call transcript, self-describing errors, plan+confirm), CTA
+  (request access — not self-serve until Phase 20).
+- **Product leaves** — each: one crisp value statement, one real mechanic
+  rendered as a visual (per §2), boundaries stated honestly (e.g. compute:
+  "AgentX never hosts your code" is a FEATURE, market it as one).
+- **/solutions/agencies** doubles as the "for your clients" page — what the
+  handed-off branded admin looks like.
 
 Constraints:
 - Lives in the same Next app under a `(marketing)` route group (default
@@ -169,9 +217,10 @@ every spec names the file it applies to.
 
 1. Marketing CTA reality: "request access" vs "book a call" vs just a repo
    link — owner call (platform is not self-serve until Phase 20).
-2. Product name/logo: "AgentX" is the working name — is it the shipping name?
-   Marketing pages make this decision real; the rebrand is the moment to
-   settle it.
+2. Naming: company working name is "Pluggie" (NOT settled), product is
+   "AgentX". Design everything rename-tolerant (see brand architecture, §3);
+   surface a recommendation if the company/product split feels wrong for a
+   single-product platform at this stage.
 3. Same-app `(marketing)` route group vs separate site (default: same app).
 4. Screenshots of the current admin for workstream B: the admin is auth-gated;
    ask the owner for a walkthrough/screens, or design from the component
