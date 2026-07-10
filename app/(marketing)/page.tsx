@@ -2,6 +2,8 @@ import Link from "next/link";
 import { C, Eyebrow, CTA, SectionHead, StatusBadge } from "@/components/marketing/atoms";
 import { Reveal } from "@/components/marketing/Reveal";
 import { Transcript } from "@/components/marketing/Transcript";
+import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
+import { CountUp } from "@/components/marketing/CountUp";
 
 export const metadata = {
   title: "Pluggie — tools for the agent era",
@@ -29,22 +31,25 @@ export default function Landing() {
     <>
       {/* HERO */}
       <section className="relative overflow-hidden border-b" style={{ borderColor: C.line }}>
-        <div className="grid-backdrop pointer-events-none absolute inset-0" />
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{ background: "radial-gradient(ellipse 60% 50% at 70% 40%, rgba(67,222,131,0.07), transparent 70%)" }}
-        />
-        <div className="relative mx-auto grid max-w-[1200px] items-center gap-12 px-8 pb-[88px] pt-24 [grid-template-columns:repeat(auto-fit,minmax(min(100%,400px),1fr))]">
-          <div className="flex flex-col gap-7">
-            <Eyebrow>PLUGGIE · TOOLS FOR THE AGENT ERA</Eyebrow>
-            <h1 className="m-0 text-[clamp(40px,5vw,64px)] font-bold leading-[1.04] tracking-[-0.03em]">
-              Your agent defines the backend.
+        <HeroBackdrop align="right" />
+        <div className="relative mx-auto grid max-w-[1200px] items-center gap-12 px-8 pb-[96px] pt-28 [grid-template-columns:repeat(auto-fit,minmax(min(100%,400px),1fr))]">
+          <div className="enter flex flex-col gap-7">
+            <span
+              className="inline-flex w-fit items-center gap-2 rounded-full border px-3 py-1 font-mono text-[11px] tracking-[0.12em]"
+              style={{ borderColor: "rgba(67,222,131,0.3)", color: C.accent, background: "rgba(67,222,131,0.05)" }}
+            >
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: C.accent, animation: "pulse-dot 2.2s ease infinite" }} />
+              PLUGGIE · PRIVATE BETA
+            </span>
+            <h1 className="m-0 text-[clamp(42px,5.4vw,68px)] font-bold leading-[1.02] tracking-[-0.035em]">
+              Your agent defines the{" "}
+              <span className="grad-accent">backend</span>.
               <br />
               <span style={{ color: C.mute }}>We run everything else.</span>
             </h1>
             <p className="m-0 max-w-[520px] text-lg leading-[1.6]" style={{ color: C.mute }}>
               Pluggie builds platform tools for teams who ship with AI agents.{" "}
-              <Link href="/product" style={{ color: C.ink, borderBottom: "1px solid rgba(255,255,255,0.25)" }}>
+              <Link href="/product" className="mkt-link" style={{ color: C.ink, borderBottom: "1px solid rgba(255,255,255,0.25)" }}>
                 AgentX
               </Link>
               , our flagship, turns one MCP conversation into a branded client admin and a production
@@ -56,19 +61,31 @@ export default function Landing() {
                 Read the docs →
               </CTA>
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-7 gap-y-3 font-mono text-xs" style={{ color: C.faint }}>
-              <span>
-                <span style={{ color: C.ink }}>42</span> MCP tools
+            <div className="mt-2 flex flex-wrap gap-x-8 gap-y-3 border-t pt-5 font-mono text-xs" style={{ color: C.faint, borderColor: C.line }}>
+              <span className="flex flex-col gap-0.5">
+                <span className="text-[19px] tabular-nums" style={{ color: C.ink }}><CountUp to={42} /></span>
+                MCP tools
               </span>
-              <span>
-                <span style={{ color: C.ink }}>7</span> endpoint families
+              <span className="flex flex-col gap-0.5">
+                <span className="text-[19px] tabular-nums" style={{ color: C.ink }}><CountUp to={7} /></span>
+                endpoint families
               </span>
-              <span>
-                <span style={{ color: C.ink }}>458</span> smoke tests green
+              <span className="flex flex-col gap-0.5">
+                <span className="text-[19px] tabular-nums" style={{ color: C.ink }}><CountUp to={458} /></span>
+                smoke tests green
               </span>
             </div>
           </div>
-          <Transcript />
+          <div className="relative" style={{ animation: "rise-soft 0.8s cubic-bezier(0.16,1,0.3,1) 0.3s both" }}>
+            <div
+              className="pointer-events-none absolute -inset-6 -z-10 rounded-3xl"
+              style={{ background: "radial-gradient(closest-side, rgba(67,222,131,0.1), transparent 75%)" }}
+            />
+            <div className="relative overflow-hidden rounded-lg">
+              <span className="sweep-line" />
+              <Transcript />
+            </div>
+          </div>
         </div>
       </section>
 
@@ -213,7 +230,7 @@ export default function Landing() {
             <Reveal>
               <Link
                 href="/product"
-                className="flex h-full flex-col gap-[18px] rounded-[10px] p-10 hover:border-[rgba(67,222,131,0.5)]"
+                className="lift flex h-full flex-col gap-[18px] rounded-[10px] p-10"
                 style={{ background: C.panel, border: `1px solid rgba(255,255,255,0.1)`, color: C.ink }}
               >
                 <div className="flex items-center gap-3">
@@ -230,7 +247,7 @@ export default function Landing() {
             <Reveal delay={0.08}>
               <Link
                 href="/hostile-agent"
-                className="flex h-full flex-col gap-[18px] rounded-[10px] p-10 hover:border-[rgba(255,255,255,0.3)]"
+                className="lift flex h-full flex-col gap-[18px] rounded-[10px] p-10"
                 style={{ background: C.panel, border: `1px solid rgba(255,255,255,0.1)`, color: C.ink }}
               >
                 <div className="flex items-center gap-3">
@@ -283,7 +300,8 @@ function Row({ label, status, tone, muted }: { label: string; status: string; to
 function AgentCard({ title, children, foot }: { title: string; children: React.ReactNode; foot: React.ReactNode }) {
   return (
     <Reveal>
-      <div className="h-full overflow-hidden rounded-lg" style={{ background: C.panel, border: `1px solid rgba(255,255,255,0.1)` }}>
+      <div className="lift relative h-full overflow-hidden rounded-lg" style={{ background: C.panel, border: `1px solid rgba(255,255,255,0.1)` }}>
+        <span className="sweep-line" />
         <div className="px-[18px] py-3.5 text-sm font-semibold" style={{ borderBottom: `1px solid ${C.line}` }}>
           {title}
         </div>

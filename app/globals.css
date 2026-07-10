@@ -168,6 +168,91 @@ body {
   .reveal { opacity: 1; transform: none; transition: none; }
 }
 
+/* ---- Marketing: depth + life (2nd pass) ------------------------------- */
+@keyframes breathe {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.1); }
+}
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+@keyframes shimmer {
+  0% { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+@keyframes sweep {
+  0% { transform: translateX(-140%) skewX(-12deg); }
+  100% { transform: translateX(340%) skewX(-12deg); }
+}
+@keyframes node-pulse {
+  0%, 100% { opacity: 0.3; r: 2; }
+  50% { opacity: 1; r: 3.4; }
+}
+@keyframes dash-flow {
+  to { stroke-dashoffset: -1000; }
+}
+@keyframes rise-soft {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* Breathing radial glow behind a hero. */
+.aura { animation: breathe 10s ease-in-out infinite; }
+.float-slow { animation: float-y 7s ease-in-out infinite; }
+
+/* Signature shimmer on one accent word — restraint: use once per page. */
+.grad-accent {
+  background: linear-gradient(100deg, var(--color-ink) 0%, var(--color-ink) 42%, var(--color-accent) 54%, var(--color-ink) 66%, var(--color-ink) 100%);
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 7s linear infinite;
+}
+
+/* A faint beam that sweeps a panel — ambient life on a live surface. */
+.sweep-line {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(67, 222, 131, 0.07), transparent);
+  animation: sweep 8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Card lift + accent border on hover. */
+.lift {
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.3s ease, box-shadow 0.35s ease;
+}
+.lift:hover {
+  transform: translateY(-3px);
+  border-color: rgba(67, 222, 131, 0.35) !important;
+  box-shadow: 0 14px 44px -16px rgba(0, 0, 0, 0.7);
+}
+
+/* Staggered reveal (JS adds .in) — a touch of scale for depth. */
+.reveal-up {
+  opacity: 0;
+  transform: translateY(22px) scale(0.985);
+  transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reveal-up.in { opacity: 1; transform: none; }
+
+/* Hero entrance choreography (no JS — orchestrated on load). */
+.enter > * { animation: rise-soft 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.enter > *:nth-child(1) { animation-delay: 0.02s; }
+.enter > *:nth-child(2) { animation-delay: 0.1s; }
+.enter > *:nth-child(3) { animation-delay: 0.18s; }
+.enter > *:nth-child(4) { animation-delay: 0.26s; }
+.enter > *:nth-child(5) { animation-delay: 0.34s; }
+.enter > *:nth-child(6) { animation-delay: 0.42s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .aura, .float-slow, .sweep-line { animation: none; }
+  .grad-accent { animation: none; color: var(--color-ink); }
+  .reveal-up { opacity: 1; transform: none; transition: none; }
+  .enter > * { animation: none; }
+}
+
 /* Marketing links + CTAs. Text links green on hover (CTAs excluded — they own
    their hover). Base colors live here so :hover can override (inline can't). */
 .mkt a {

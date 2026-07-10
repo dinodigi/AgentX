@@ -38,7 +38,7 @@ export function Reveal({
     return () => io.disconnect();
   }, []);
   return (
-    <div ref={ref} className={`reveal ${className}`} style={{ transitionDelay: `${delay}s`, ...style }}>
+    <div ref={ref} className={`reveal-up ${className}`} style={{ transitionDelay: `${delay}s`, ...style }}>
       {children}
     </div>
   );
