@@ -581,6 +581,8 @@ export interface Branding {
   displayName?: string;
   logoUrl?: string;
   primaryColor?: string;
+  /** Admin register for this project's workspace: dark (default) | light. */
+  theme?: "dark" | "light";
 }
 
 /**

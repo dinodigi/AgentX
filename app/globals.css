@@ -1,28 +1,80 @@
 @import "tailwindcss";
 
+/* =====================================================================
+   Rebrand direction — "Signal on black" (docs/DESIGN-BRIEF.md +
+   Direction.dc.html). Dark-first, hairline-gridded, type-led; one sharp
+   green carries every signal, everything else near-monochrome.
+
+   IMPLEMENTATION NOTE (the design's palette invented --bg0/--tx names; the
+   live app consumes the --color-paper / --color-card / --color-ink /
+   --color-line families across ~20 files, so we KEEP those variable names and
+   restyle their VALUES — the same "class contract" rule at the token level).
+
+   THEME: dark is the default (:root / @theme). [data-theme="light"] flips the
+   surface + text + line tokens for the admin's per-project light option; every
+   component reads --color-* and never knows which theme it's in. Accent, brand,
+   fonts, radii are theme-independent.
+   ===================================================================== */
+
 @theme {
-  /* Per-project brand: overridden via the --brand var on the project shell. */
-  --color-brand: var(--brand, #4f46e5);
-  --color-brand-soft: color-mix(in srgb, var(--brand, #4f46e5) 9%, white);
-  --color-brand-wash: color-mix(in srgb, var(--brand, #4f46e5) 5%, #faf9f6);
-  --color-brand-strong: color-mix(in srgb, var(--brand, #4f46e5) 82%, black);
-
-  /* Paper & ink — the quiet shell that lets each project's brand speak. */
-  --color-ink: #16130e;
-  --color-ink-soft: #2a251d;
-  --color-ink-mute: #8a8177;
-  --color-paper: #f6f4ef;
-  --color-card: #fffefc;
-  --color-line: #e8e3d9;
-  --color-line-strong: #d6cfc2;
-
+  /* Fonts (Direction §03): Archivo display+UI, JetBrains Mono technical truth. */
   --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-display), var(--font-body), ui-sans-serif, sans-serif;
-  --font-mono: var(--font-mono), ui-monospace, monospace;
+  --font-display: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono), ui-monospace, SFMono-Regular, monospace;
+
+  /* Brand = per-project client color. CONTAINED: appears only as a FILL, never
+     as text or hairline; text on it is --brand-ink (luminance-computed at the
+     injection site); every fill sits inside a neutral hairline. Default brand =
+     the system green (marketing / no project). */
+  --color-brand: var(--brand, #43de83);
+  --color-brand-soft: color-mix(in srgb, var(--brand, #43de83) 16%, transparent);
+  --color-brand-wash: color-mix(in srgb, var(--brand, #43de83) 8%, transparent);
+  --color-brand-strong: var(--brand, #43de83);
+
+  /* Accent = the ONE system signal color (green). System-owned; brand never
+     carries meaning. Doubles as --color-ok. */
+  --color-accent: #43de83;
+  --color-accent-ink: #0a0b0d;
+
+  /* Status — semantic only, never decorative. */
+  --color-ok: #43de83;
+  --color-warn: #ffc66d;
+  --color-err: #ff7b72;
+
+  /* Surfaces + text + hairlines — DARK defaults (Direction §02).
+     text ladder: ink #E7EAE8 → ink-mute #9BA3A0 → line-strong #5C6360 (faint) */
+  --color-ink: #e7eae8;
+  --color-ink-soft: #c6cbc8;
+  --color-ink-mute: #9ba3a0;
+  --color-paper: #0a0b0d;
+  --color-card: #0d0f12;
+  --color-raised: #14171b;
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-line-strong: #5c6360;
 }
 
 :root {
-  --brand: #4f46e5;
+  --brand: #43de83;
+  --brand-ink: #0a0b0d;
+}
+
+/* Light register — admin per-project option. Attribute selector (not :root-only)
+   so it can flip a subtree (the admin shell) while marketing stays dark. */
+[data-theme="light"] {
+  --color-ink: #16130e;
+  --color-ink-soft: #2a251d;
+  --color-ink-mute: #6b6459;
+  --color-paper: #faf9f6;
+  --color-card: #ffffff;
+  --color-raised: #f3f1ea;
+  --color-line: #e8e3d9;
+  --color-line-strong: #cfc8ba;
+  /* status/accent darkened so they stay legible on light surfaces */
+  --color-accent: #1f9d57;
+  --color-accent-ink: #ffffff;
+  --color-ok: #1f9d57;
+  --color-warn: #b9791f;
+  --color-err: #d64b45;
 }
 
 body {
@@ -31,17 +83,19 @@ body {
   font-family: var(--font-sans);
   font-size: 14px;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--brand, #4f46e5) 22%, white);
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
 }
 
-/* One orchestrated entrance per page — content rises onto the paper. */
+/* One orchestrated entrance per page — content rises onto the surface.
+   Motion (Direction §04): cubic-bezier(.16,1,.3,1), 12–18px rise. */
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(7px);
+    transform: translateY(14px);
   }
   to {
     opacity: 1;
@@ -49,23 +103,113 @@ body {
   }
 }
 .page-enter {
-  animation: rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 .page-enter-late {
-  animation: rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) 0.06s both;
+  animation: rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both;
 }
 
-/* ---- Shared component vocabulary ---------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .page-enter,
+  .page-enter-late {
+    animation: none;
+  }
+}
+
+/* ---- Marketing motion (Direction §04) --------------------------------- */
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+@keyframes drift {
+  from { background-position: 0 0; }
+  to { background-position: 0 64px; }
+}
+@keyframes fade-line {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes leaf-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes scan {
+  0% { top: 0%; opacity: 0; }
+  10% { opacity: 1; }
+  90% { opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+/* Hairline grid backdrop for hero sections. */
+.grid-backdrop {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 64px 64px;
+  animation: drift 12s linear infinite;
+}
+/* Scroll-reveal: hidden until JS adds .in (IntersectionObserver). */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.7s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.reveal.in {
+  opacity: 1;
+  transform: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .grid-backdrop { animation: none; }
+  .reveal { opacity: 1; transform: none; transition: none; }
+}
+
+/* Marketing links + CTAs. Text links green on hover (CTAs excluded — they own
+   their hover). Base colors live here so :hover can override (inline can't). */
+.mkt a {
+  text-decoration: none;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.mkt a:not(.mkt-cta):hover {
+  color: var(--color-accent);
+}
+.mkt-cta {
+  color: #0a0b0d;
+  background: var(--color-accent);
+  border: none;
+  cursor: pointer;
+}
+.mkt-cta:hover {
+  background: #5bea9a;
+  color: #0a0b0d;
+}
+.mkt-waitlist-input:focus {
+  border-color: var(--color-accent) !important;
+}
+.mkt-ghost {
+  color: #e7eae8;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+.mkt-ghost:hover {
+  border-color: var(--color-accent);
+}
+
+/* ---- Shared component vocabulary --------------------------------------
+   Names are the wiring contract (~20 files); only the values move.        */
 
 .display {
   font-family: var(--font-display);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.03em;
 }
 
 .card {
   background: var(--color-card);
   border: 1px solid var(--color-line);
-  border-radius: 14px;
+  border-radius: 10px;
   transition: border-color 0.15s ease;
 }
 .card:hover {
@@ -79,9 +223,11 @@ body {
   letter-spacing: -0.01em;
 }
 
+/* Eyebrows are mono meta (Direction §03: "if the machine produced it, it's mono"). */
 .eyebrow {
-  font-size: 10.5px;
-  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--color-ink-mute);
@@ -91,12 +237,16 @@ body {
   width: 100%;
   background: var(--color-card);
   border: 1px solid var(--color-line);
-  border-radius: 10px;
+  border-radius: 6px;
   padding: 8px 12px;
   font-size: 14px;
+  color: var(--color-ink);
   transition:
     border-color 0.15s ease,
     box-shadow 0.15s ease;
+}
+.field-input::placeholder {
+  color: var(--color-ink-mute);
 }
 .field-input:hover {
   border-color: var(--color-line-strong);
@@ -104,44 +254,53 @@ body {
 .field-input:focus {
   outline: none;
   border-color: var(--brand);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 14%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
 }
 
+/* Controls read as technical: mono, tight, 6px radius. */
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border-radius: 10px;
-  padding: 7px 14px;
-  font-size: 13.5px;
+  border-radius: 6px;
+  padding: 7px 13px;
+  font-family: var(--font-mono);
+  font-size: 12px;
   font-weight: 500;
-  border: 1px solid var(--color-line);
-  background: var(--color-card);
+  color: var(--color-ink);
+  border: 1px solid var(--color-line-strong);
+  background: transparent;
+  cursor: pointer;
   transition:
     border-color 0.15s ease,
     background 0.15s ease,
+    color 0.15s ease,
     transform 0.1s ease;
 }
 .btn:hover {
-  border-color: var(--color-line-strong);
-  background: var(--color-paper);
+  border-color: var(--color-ink-mute);
+  background: var(--color-raised);
 }
 .btn:active {
   transform: scale(0.98);
 }
+/* Primary = brand FILL, brand-ink text, contained by a neutral hairline. */
 .btn-primary {
   background: var(--brand);
-  border-color: var(--brand);
-  color: #fff;
+  border-color: color-mix(in srgb, white 15%, transparent);
+  color: var(--brand-ink);
+  font-weight: 600;
 }
 .btn-primary:hover {
-  background: var(--color-brand-strong);
-  border-color: var(--color-brand-strong);
+  background: color-mix(in srgb, var(--brand) 88%, white);
+  border-color: color-mix(in srgb, white 22%, transparent);
 }
+/* Neutral high-contrast — inverts automatically (ink=light on dark, dark on light). */
 .btn-ink {
   background: var(--color-ink);
   border-color: var(--color-ink);
-  color: #fff;
+  color: var(--color-paper);
+  font-weight: 600;
 }
 .btn-ink:hover {
   background: var(--color-ink-soft);
@@ -151,47 +310,50 @@ body {
   color: var(--color-ink-mute);
 }
 .btn-danger-ghost:hover {
-  border-color: #fca5a5;
-  color: #dc2626;
-  background: #fef2f2;
+  border-color: var(--color-err);
+  color: var(--color-err);
+  background: color-mix(in srgb, var(--color-err) 12%, transparent);
 }
 
+/* Chips are rectangular technical tokens (Direction §05), not pills. */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-radius: 999px;
-  padding: 2px 9px;
-  font-size: 11.5px;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
   font-weight: 500;
 }
+/* Brand chip: brand-tinted fill + neutral ink text (brand never becomes text). */
 .chip-brand {
-  background: var(--color-brand-soft);
-  color: var(--color-brand-strong);
+  background: color-mix(in srgb, var(--brand) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand) 38%, transparent);
+  color: var(--color-ink);
 }
 .chip-mute {
-  border: 1px solid var(--color-line);
+  border: 1px solid var(--color-line-strong);
   color: var(--color-ink-mute);
 }
 .chip-ok {
-  background: #ecfdf5;
-  color: #047857;
+  border: 1px solid var(--color-ok);
+  color: var(--color-ok);
 }
 .chip-bad {
-  background: #fef2f2;
-  color: #b91c1c;
+  border: 1px solid var(--color-err);
+  color: var(--color-err);
 }
 
 .table-head {
+  font-family: var(--font-mono);
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--color-ink-mute);
 }
 
-/* Richtext editor content (TipTap) — preflight strips element styles, so the
-   editable area restores just enough typography to feel like a document. */
+/* Richtext editor content (TipTap) — colors follow the theme tokens. */
 .richtext-editor h2 {
   font-size: 1.25rem;
   font-weight: 600;

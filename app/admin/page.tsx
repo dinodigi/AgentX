@@ -5,6 +5,7 @@ import { count } from "drizzle-orm";
 import { db } from "@/db";
 import { collections, entries, projectConnectors } from "@/db/schema";
 import { accessibleProjects } from "@/lib/access";
+import { brandInk } from "@/lib/brand";
 
 /**
  * The studio dashboard — the operator's view of every project. Ink chrome up
@@ -92,7 +93,7 @@ export default async function AdminHome() {
                 key={p.id}
                 href={`/admin/${p.id}`}
                 className="card group overflow-hidden transition-transform hover:-translate-y-0.5"
-                style={{ "--brand": color } as React.CSSProperties}
+                style={{ "--brand": color, "--brand-ink": brandInk(color) } as React.CSSProperties}
               >
                 <div className="h-1 w-full" style={{ background: color }} />
                 <div className="p-5">
@@ -105,8 +106,8 @@ export default async function AdminHome() {
                       />
                     ) : (
                       <div
-                        className="display flex h-10 w-10 items-center justify-center rounded-xl text-[15px] font-semibold text-white"
-                        style={{ background: color }}
+                        className="display flex h-10 w-10 items-center justify-center rounded-xl text-[15px] font-semibold"
+                        style={{ background: color, color: "var(--brand-ink)" }}
                       >
                         {name.charAt(0).toUpperCase()}
                       </div>

@@ -7,12 +7,14 @@ import { entries } from "@/db/schema";
 import { getProject } from "@/lib/admin";
 import { getProjectRole } from "@/lib/access";
 import { listCollections } from "@/lib/collections";
+import { brandInk } from "@/lib/brand";
 import { Sidebar } from "@/components/Sidebar";
 
 /**
- * The branded workspace shell: ink rail + paper canvas. The per-project
- * --brand CSS variable set here is the single saturated color in the room —
- * every brand-* utility inside reskins to this project.
+ * The branded workspace shell. The per-project --brand CSS variable set here is
+ * the single client color in the room — CONTAINED as a fill only; --brand-ink
+ * is its luminance-safe text color. data-theme paints the shell (dark default),
+ * so the admin can flip to a per-project light register without touching pages.
  */
 export default async function ProjectLayout({
   params,
@@ -44,11 +46,13 @@ export default async function ProjectLayout({
 
   const brand = safeColor(project.branding.primaryColor);
   const displayName = project.branding.displayName ?? project.name;
+  const theme = project.branding.theme === "light" ? "light" : "dark";
 
   return (
     <div
-      className="flex min-h-screen"
-      style={{ "--brand": brand } as CSSProperties}
+      className="flex min-h-screen bg-[--color-paper] text-[--color-ink]"
+      data-theme={theme}
+      style={{ "--brand": brand, "--brand-ink": brandInk(brand) } as CSSProperties}
     >
       <Sidebar
         projectId={projectId}

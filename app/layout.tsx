@@ -1,22 +1,20 @@
 import type { ReactNode } from "react";
 import { ClerkProvider } from "@clerk/nextjs";
-import { Bricolage_Grotesque, Schibsted_Grotesk, IBM_Plex_Mono } from "next/font/google";
+import { Archivo, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const display = Bricolage_Grotesque({
-  subsets: ["latin"],
-  variable: "--font-display",
-  weight: ["400", "500", "600", "700"],
-});
-const body = Schibsted_Grotesk({
+// Rebrand direction (Direction.dc.html): Archivo carries display + UI (one
+// family, two weights/tracking), JetBrains Mono carries "technical truth" —
+// ids, tool names, code, eyebrows, chips, CTAs. Both OFL.
+const archivo = Archivo({
   subsets: ["latin"],
   variable: "--font-body",
-  weight: ["400", "500", "600"],
+  weight: ["400", "500", "600", "700"],
 });
-const mono = IBM_Plex_Mono({
+const mono = JetBrains_Mono({
   subsets: ["latin"],
   variable: "--font-mono",
-  weight: ["400", "500"],
+  weight: ["400", "500", "600"],
 });
 
 export const metadata = {
@@ -27,7 +25,7 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <ClerkProvider>
-      <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
+      <html lang="en" className={`${archivo.variable} ${mono.variable}`}>
         <body>{children}</body>
       </html>
     </ClerkProvider>
