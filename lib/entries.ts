@@ -32,7 +32,7 @@ import {
   type RelatedContextMap,
 } from "./query";
 import { emitEntryEvent, runEventAction, type EntryEvent } from "./events";
-import { callWriteHook, type HookEnvelope } from "./hooks";
+import { callWriteHook, pooled, type HookEnvelope } from "./hooks";
 import { evaluateComputed, recomputeOnUpdate, hasRecomputable } from "./computed";
 import { stampIdentity, stampedIdentityFields } from "./access-rules";
 import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workflow";
@@ -1636,8 +1636,24 @@ export interface BulkItemResult {
   ok: boolean;
   id?: string;
   error?: string;
+  /** Machine code for a failed item (E_VALIDATION | E_HOOK_REJECTED | E_HOOK_FAILED). */
+  code?: string;
   /** Structured mirror of `error` — present on validation-shaped item failures. */
   issues?: ConstraintIssue[];
+}
+
+/** I5: per-item hook concurrency + the batch-size budget the cap is sized against. */
+const BULK_HOOK_CONCURRENCY = 5;
+const BULK_HOOK_BUDGET_MS = 7000; // ~8s host window minus room for the insert
+
+function bulkItemError(index: number, e: unknown): BulkItemResult {
+  return {
+    index,
+    ok: false,
+    error: e instanceof Error ? e.message : String(e),
+    ...(e instanceof ValidationError ? { code: e.code } : {}),
+    ...(e instanceof ValidationError && e.issues?.length ? { issues: e.issues } : {}),
+  };
 }
 
 /**
@@ -1652,39 +1668,68 @@ export async function bulkCreateEntries(
   actor: AuditActor = UNKNOWN_ACTOR,
 ): Promise<BulkItemResult[]> {
   if (items.length > 100) throw new ValidationError("max 100 entries per bulk call");
-  // I1a: bulk does NOT run before-create hooks (a synchronous per-item consult
-  // would blow the host budget). Refuse rather than silently skip the hook.
-  if (collection.hooks?.beforeCreate && !collection.hooks.beforeCreate.disabled) {
-    throw new ValidationError(
-      `"${collection.name}" has a beforeCreate hook — use create_entry per item, or set hooks.beforeCreate.disabled to bulk-insert`,
-    );
+  const hook = collection.hooks?.beforeCreate;
+  const hookEnabled = Boolean(hook && !hook.disabled);
+  if (hookEnabled) {
+    // I5: run the hook per item with bounded concurrency, but cap the batch so
+    // the worst case ceil(n/CONCURRENCY) rounds × timeout fits the host window.
+    const timeout = hook!.timeoutMs ?? 3000;
+    const cap = Math.max(BULK_HOOK_CONCURRENCY, Math.floor(BULK_HOOK_BUDGET_MS / timeout) * BULK_HOOK_CONCURRENCY);
+    if (items.length > cap) {
+      throw new ValidationError(
+        `"${collection.name}" has a beforeCreate hook (timeout ${timeout}ms) — bulk_create_entries allows at most ${cap} items so the consults fit the host budget; split the batch or lower hooks.beforeCreate.timeoutMs`,
+      );
+    }
   }
   const { refChecks } = buildEntrySchema(collection.fields);
   const hasComputed = collection.fields.some((f) => f.computed);
 
   const results: BulkItemResult[] = [];
-  const valid: { index: number; clean: Record<string, unknown> }[] = [];
+
+  // Phase 1: validate + verifyRefs (computed is stamped AFTER the hook, phase 3).
+  const validated: { index: number; clean: Record<string, unknown> }[] = [];
   await Promise.all(
     items.map(async (item, index) => {
       try {
         const clean = validate(collection.fields, item, false);
         applyWorkflowOnCreate(collection, clean); // same initial-state rule as createEntry
         await verifyRefs(projectId, clean, refChecks);
-        // I3: stamp computed per item (distinct now/uuid each), then STORAGE-validate.
-        const toStore = hasComputed
-          ? validate(collection.fields, evaluateComputed(collection.fields, clean), false, "storage")
-          : clean;
-        valid.push({ index, clean: toStore });
+        validated.push({ index, clean });
       } catch (e) {
-        results.push({
-          index,
-          ok: false,
-          error: e instanceof Error ? e.message : String(e),
-          ...(e instanceof ValidationError && e.issues?.length ? { issues: e.issues } : {}),
-        });
+        results.push(bulkItemError(index, e));
       }
     }),
   );
+
+  // Phase 2 (I5): consult the before-create hook per item, bounded concurrency.
+  // A rejection/outage is a PER-ITEM failure (E_HOOK_REJECTED/E_HOOK_FAILED);
+  // only passing items continue. bulk is MCP full-trust → no identity re-stamp.
+  let hooked = validated;
+  if (hookEnabled) {
+    hooked = [];
+    await pooled(validated, BULK_HOOK_CONCURRENCY, async ({ index, clean }) => {
+      try {
+        hooked.push({ index, clean: await runBeforeCreateHook(projectId, collection, clean) });
+      } catch (e) {
+        results.push(bulkItemError(index, e));
+      }
+    });
+  }
+
+  // Phase 3: stamp computed (distinct now/uuid each) + STORAGE-validate.
+  const valid: { index: number; clean: Record<string, unknown> }[] = [];
+  for (const { index, clean } of hooked) {
+    try {
+      valid.push({
+        index,
+        clean: hasComputed
+          ? validate(collection.fields, evaluateComputed(collection.fields, clean), false, "storage")
+          : clean,
+      });
+    } catch (e) {
+      results.push(bulkItemError(index, e));
+    }
+  }
 
   if (valid.length > 0) {
     // One multi-row insert; a unique violation fails the whole batch with the

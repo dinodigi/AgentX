@@ -429,9 +429,11 @@ the spec file where they disagree.*
       recomputed values STORAGE-re-validated (obey min/max); update_entry_if/CAS never
       recomputes (stated). ✅ 2026-07-09, 42-computed smoke (11). Self-review caught the
       recomputed-value-bounds gap (updateEntryCore doesn't re-validate the merge).
-- [ ] 16.6 `I5` (S) — hooks on bulk_create_entries **bounded to the host budget**:
-      item cap sized so `ceil(n/5) × timeout + insert` fits ~8s; above it,
-      E_VALIDATION with a "split the batch" hint. (Async bulk hooks ride G1 later.)
+- [x] 16.6 `I5` (S) — hooks on bulk_create_entries: per-item beforeCreate consult with
+      bounded concurrency (5, plain promise pool); rejected/failed items report
+      E_HOOK_REJECTED/E_HOOK_FAILED per-item, passing items still insert; batch capped so
+      ceil(n/5)×timeout fits the ~8s host budget (over-cap → E_VALIDATION "split the batch").
+      ✅ 2026-07-09, 43-bulk-hooks smoke (3) + 39 updated.
 - [ ] 16.7 `I6` (S) — composition guide in get_project_info/get_client_code:
       hooks (sync) + events (async) + transact + jobs = business logic on YOUR infra.
 

@@ -206,6 +206,7 @@ export async function startHookReceiver() {
   let mode = "approve";
   let rejectError = "nope";
   let transformData = {};
+  let rejectSubstr = null;
   const server = http.createServer((req, res) => {
     let data = "";
     req.on("data", (c) => (data += c));
@@ -223,11 +224,13 @@ export async function startHookReceiver() {
         return res.end("not json {{{");
       }
       res.writeHead(200, { "content-type": "application/json" });
-      // echo = a no-op transform: reply {ok:true, data} with the candidate
-      // UNCHANGED (exercises the replace path + re-validation without rewriting).
+      // rejectMatching = content-based: reject only items whose candidate JSON
+      // contains the substring (for mixed-batch tests); approve the rest.
+      const matched = mode === "rejectMatching" && JSON.stringify(json?.candidate?.data ?? {}).includes(rejectSubstr);
+      // echo = a no-op transform: reply {ok:true, data} with the candidate UNCHANGED.
       const body =
-        mode === "reject"
-          ? { ok: false, error: rejectError }
+        mode === "reject" || matched
+          ? { ok: false, error: matched ? `rejected: ${rejectSubstr}` : rejectError }
           : mode === "transform"
             ? { ok: true, data: transformData }
             : mode === "echo"
@@ -251,6 +254,10 @@ export async function startHookReceiver() {
       transformData = data;
     },
     echo: () => (mode = "echo"), // no-op transform: echo the candidate back
+    rejectMatching: (substr) => {
+      mode = "rejectMatching";
+      rejectSubstr = substr;
+    },
     malformed: () => (mode = "malformed"),
     hang: () => (mode = "hang"),
     close: () => new Promise((r) => server.close(r)),

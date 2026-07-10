@@ -790,9 +790,11 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "bulk_create_entries",
     description:
       "Create up to 100 entries in one call (use for seeding). Each item is validated like " +
-      "create_entry; returns per-item results so you can fix only the failures. Refused " +
-      "(E_VALIDATION) on a collection with an enabled beforeCreate hook — a per-item synchronous " +
-      "consult would blow the batch budget; use create_entry per item or disable the hook.",
+      "create_entry; returns per-item results so you can fix only the failures. A beforeCreate " +
+      "hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/" +
+      "E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the " +
+      "consults fit the host budget (ceil(n/5)×timeout), and an over-cap batch is refused with a " +
+      "'split the batch' hint.",
     inputSchema: {
       type: "object",
       properties: {

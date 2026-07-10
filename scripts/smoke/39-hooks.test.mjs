@@ -129,12 +129,16 @@ describe("before-create hooks (I1a)", () => {
     rcv.approve();
   });
 
-  it("bulk_create_entries is refused on a hooked collection", async () => {
-    const r = await mcp(p.mcpToken, "bulk_create_entries", {
-      collection: "leads",
-      entries: [{ title: "a" }, { title: "b" }],
-    });
-    assert.ok(!r.ok && /beforeCreate hook|create_entry per item/.test(r.errorText), r.errorText);
+  it("bulk_create_entries runs the hook per item — approve inserts all, reject fails each item (I5)", async () => {
+    rcv.approve();
+    const okBatch = await mcp(p.mcpToken, "bulk_create_entries", { collection: "leads", entries: [{ title: "a" }, { title: "b" }] });
+    assert.ok(okBatch.ok, okBatch.errorText);
+    assert.ok(okBatch.value.results.every((r) => r.ok), JSON.stringify(okBatch.value.results));
+    rcv.reject("no bulk");
+    const rej = await mcp(p.mcpToken, "bulk_create_entries", { collection: "leads", entries: [{ title: "c" }, { title: "d" }] });
+    assert.ok(rej.ok, rej.errorText); // the CALL succeeds; items fail individually
+    assert.ok(rej.value.results.every((r) => !r.ok && r.code === "E_HOOK_REJECTED"), JSON.stringify(rej.value.results));
+    rcv.approve();
   });
 
   it("transact creates ARE gated by the hook (no bypass) — reject aborts, approve commits", async () => {

@@ -17,6 +17,20 @@ import { projects, webhookDeliveries, type Collection, type WriteHook } from "@/
  * refireable — a before-write consult only makes sense against a live write.
  */
 
+/** Run `fn` over `items` with at most `limit` in flight — a plain promise pool.
+ * Bounds bulk before-create hook consults (I5) so N items take ceil(N/limit)
+ * rounds, not N sequential timeouts. `fn` must handle its own errors. */
+export async function pooled<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      await fn(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 export type HookOutcome =
   | { kind: "proceed" }
   /** transform mode returned {ok:true, data} — the FULL new entry data (I1b). */
