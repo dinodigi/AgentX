@@ -116,6 +116,9 @@ function typeBlock(p: CollectionPlan): string {
       p.publicFields.length
         ? `  sort?: { field: ${p.publicFields.map((f) => JSON.stringify(f.name)).join(" | ")}; dir: "asc" | "desc" };`
         : ``,
+      p.publicFields.some(fieldLocalized)
+        ? `  /** Localized fields serve this locale's variant (fallback: the default locale). */\n  locale?: string;`
+        : ``,
       `  limit?: number;`,
       `  offset?: number;`,
       `}`,
@@ -139,13 +142,20 @@ function typeBlock(p: CollectionPlan): string {
 function accessorBlock(p: CollectionPlan): string {
   const methods: string[] = [];
   if (p.canRead) {
+    const localized = p.publicFields.some(fieldLocalized);
     methods.push(
       `      async list(opts: ${p.typeName}ListOpts = {}): Promise<${p.typeName}[]> {
         const query: Record<string, unknown> = { limit: opts.limit, offset: opts.offset, ...(opts.filter ?? {}) };
-        if (opts.sort) query.sort = opts.sort.field + ":" + opts.sort.dir;
+        if (opts.sort) query.sort = opts.sort.field + ":" + opts.sort.dir;${
+          localized ? `\n        if (opts.locale) query.locale = opts.locale;` : ``
+        }
         return (await request<{ data: ${p.typeName}[] }>("GET", "/${p.slug}", query)).data;
       },`,
-      `      async get(id: string): Promise<${p.typeName}> {
+      localized
+        ? `      async get(id: string, opts: { locale?: string } = {}): Promise<${p.typeName}> {
+        return (await request<{ data: ${p.typeName} }>("GET", "/${p.slug}/" + encodeURIComponent(id), { locale: opts.locale })).data;
+      },`
+        : `      async get(id: string): Promise<${p.typeName}> {
         return (await request<{ data: ${p.typeName} }>("GET", "/${p.slug}/" + encodeURIComponent(id))).data;
       },`,
     );

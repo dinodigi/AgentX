@@ -98,12 +98,29 @@ export async function GET(req: NextRequest, { params }: Params) {
   }
 
   const [resolved] = await resolveRefsForRead(projectId, collection, [entry], gate.user);
-  // J4: localized variant maps flatten to the default locale (?locale= is J6).
-  const locales = hasLocalizedFields(collection.fields) ? await getLocales(projectId) : null;
+  // J4/J6: localized variant maps flatten to ONE locale — ?locale=xx when
+  // requested (validated, per-variant fallback to default), else the default.
+  let requestedLocale: string | undefined;
+  const localeParam = new URL(req.url).searchParams.get("locale");
+  let locales = hasLocalizedFields(collection.fields) ? await getLocales(projectId) : null;
+  if (localeParam !== null) {
+    if (!locales) locales = await getLocales(projectId);
+    const tag = localeParam.trim().toLowerCase();
+    if (!locales || !locales.supported.includes(tag)) {
+      return err(
+        422,
+        locales
+          ? `unknown locale "${localeParam}" — supported: ${locales.supported.join(", ")} (default ${locales.default})`
+          : "this project has no locales configured — ?locale= is not available",
+      );
+    }
+    requestedLocale = tag;
+  }
   const view = localizeView(
     toPublicView(collection, resolved) as Record<string, unknown>,
     collection.fields,
     locales,
+    requestedLocale,
   );
 
   const includeParam = new URL(req.url).searchParams.get("include");

@@ -1386,7 +1386,10 @@ export async function callTool(
               "?include=child.relField embeds a public child collection's rows that point back " +
               "(both the child and its back-reference field must be public). " +
               "?q=terms full-text search over public searchable fields, rank-ordered (websearch " +
-              "syntax), rate-limited. Same params on GET {deliveryBase}/{collection}/{id}.",
+              "syntax), rate-limited. " +
+              "Localized fields serve the DEFAULT locale as a flat string; ?locale=xx switches " +
+              "(per-variant fallback to default; unknown locale 422s listing supported). " +
+              "Same params on GET {deliveryBase}/{collection}/{id}.",
             write:
               "POST {deliveryBase}/{collection} — anonymous when publicWrite, or " +
               "authenticated per access rules; validated like create_entry; fires events",

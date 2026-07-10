@@ -62,6 +62,26 @@ export async function GET(
   const limit = Number(url.searchParams.get("limit") ?? 100);
   const offset = Number(url.searchParams.get("offset") ?? 0);
 
+  // J6: ?locale=xx switches which variant localized fields serve (per-variant
+  // fallback to the default). Validated against the project registry; ETag
+  // correctness is free (cachedJson hashes the localized body).
+  let requestedLocale: string | undefined;
+  const localeParam = url.searchParams.get("locale");
+  let locales = hasLocalizedFields(collection.fields) ? await getLocales(projectId) : null;
+  if (localeParam !== null) {
+    if (!locales) locales = await getLocales(projectId);
+    const tag = localeParam.trim().toLowerCase();
+    if (!locales || !locales.supported.includes(tag)) {
+      return deliveryError(
+        422,
+        locales
+          ? `unknown locale "${localeParam}" — supported: ${locales.supported.join(", ")} (default ${locales.default})`
+          : "this project has no locales configured — ?locale= is not available",
+      );
+    }
+    requestedLocale = tag;
+  }
+
   // ?select=a,b trims the projection; restricted to public fields like filters.
   let select: string[] | null = null;
   const selectParam = url.searchParams.get("select");
@@ -116,7 +136,8 @@ export async function GET(
       key === "select" ||
       key === "expand" ||
       key === "include" ||
-      key === "q"
+      key === "q" ||
+      key === "locale"
     )
       continue;
 
@@ -253,11 +274,10 @@ export async function GET(
     const reverse = includeSpecs
       ? await includeReverse(projectId, collection, resolved.map((r) => r.id), includeSpecs, "public", gate.user)
       : undefined;
-    // J4: flatten localized variant maps to the default locale AFTER the
-    // public projection (no-op until localized fields exist; J6 adds ?locale=).
-    const locales = hasLocalizedFields(collection.fields) ? await getLocales(projectId) : null;
+    // J4/J6: flatten localized variant maps AFTER the public projection —
+    // ?locale= variant when requested, per-variant fallback to the default.
     const data = resolved.map((e) => {
-      const view = localizeView(toPublicView(collection, e), collection.fields, locales);
+      const view = localizeView(toPublicView(collection, e), collection.fields, locales, requestedLocale);
       const rel = reverse?.get(e.id);
       if (!select) return rel ? { ...view, related: rel } : view;
       const picked: Record<string, unknown> = { id: view.id };

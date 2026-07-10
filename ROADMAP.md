@@ -537,7 +537,11 @@ site needs srcsets.
       `?expand=`/`?include=` embeds now flatten target/child localized fields.
       J3's confirm-gate + purge smoke landed here as planned. ✅ 2026-07-09,
       46-localized-fields smoke (13), full suite 392/392.
-- [ ] 18.6 `J6` (S) — delivery `?locale=` with defaultLocale fallback.
+- [x] 18.6 `J6` (S) — delivery `?locale=` on list + single GET (validated, 422
+      lists supported+default; per-VARIANT fallback; locale-aware ETags verified;
+      reserved in the filter loop). Generated client gains `locale` opts only on
+      collections with localized public fields. ✅ 2026-07-10, 47-delivery-locale
+      smoke (7), full suite 399/399.
 - [ ] 18.7 `J7` (M) — admin locale switcher on entry forms.
 - [ ] 18.8 `J8` (M) — localize/delocalize populated fields via wrap-backfill
       (delocalize = plan + confirm).
