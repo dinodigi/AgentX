@@ -7,7 +7,7 @@ import { getProject } from "@/lib/admin";
 import { getProjectRole, accessibleProjects } from "@/lib/access";
 import { listCollections } from "@/lib/collections";
 import { brandInk } from "@/lib/brand";
-import { getWorkspaceTheme } from "@/lib/theme";
+import { getWorkspaceTheme, getSidebarCollapsed } from "@/lib/theme";
 import { WorkspaceSidebar } from "@/components/admin/WorkspaceSidebar";
 import type { SwitcherProject } from "@/components/admin/ProjectSwitcher";
 
@@ -24,12 +24,13 @@ export default async function ProjectLayout({
   children: ReactNode;
 }) {
   const { projectId } = await params;
-  const [project, collections, role, allProjects, theme] = await Promise.all([
+  const [project, collections, role, allProjects, theme, collapsed] = await Promise.all([
     getProject(projectId),
     listCollections(projectId),
     getProjectRole(projectId),
     accessibleProjects(),
     getWorkspaceTheme(),
+    getSidebarCollapsed(),
   ]);
   if (!project || !role) notFound();
 
@@ -61,6 +62,7 @@ export default async function ProjectLayout({
           unhandled: unhandledById.get(c.id) ?? 0,
         }))}
         theme={theme}
+        defaultCollapsed={collapsed}
       />
       <main className="page-enter mx-auto min-w-0 max-w-[1400px] flex-1 px-5 py-7 md:px-10 md:py-9">
         {children}

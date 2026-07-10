@@ -401,3 +401,36 @@ body {
   color: var(--color-ink-mute);
   margin: 0.5em 0;
 }
+
+/* Themed scrollbars — the default system bar reads as foreign chrome. A slim,
+   theme-aware thumb under the admin (and marketing) keeps scroll UI in-system. */
+[data-theme-root],
+.mkt {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-line-strong) 55%, transparent) transparent;
+}
+[data-theme-root] ::-webkit-scrollbar,
+.mkt ::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+[data-theme-root] ::-webkit-scrollbar-track,
+.mkt ::-webkit-scrollbar-track {
+  background: transparent;
+}
+[data-theme-root] ::-webkit-scrollbar-thumb,
+.mkt ::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-line-strong) 50%, transparent);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+[data-theme-root] ::-webkit-scrollbar-thumb:hover,
+.mkt ::-webkit-scrollbar-thumb:hover {
+  background: var(--color-line-strong);
+  background-clip: padding-box;
+}
+[data-theme-root] ::-webkit-scrollbar-corner,
+.mkt ::-webkit-scrollbar-corner {
+  background: transparent;
+}

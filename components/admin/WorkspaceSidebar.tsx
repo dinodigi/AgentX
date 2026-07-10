@@ -11,6 +11,8 @@ import {
   LayoutGrid,
   Menu,
   Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plug,
   Plus,
   Settings,
@@ -22,10 +24,10 @@ import { ThemeToggle } from "./ThemeToggle";
 import { ProjectSwitcher, type SwitcherProject } from "./ProjectSwitcher";
 
 /**
- * The one workspace rail, used at both studio and project level. Three regions:
- * a PINNED switcher (jump anywhere, always visible), a SCROLLING contextual nav,
- * and a PINNED footer (theme + account). "All projects" lives in the switcher —
- * it never scrolls away with the collection list.
+ * The one workspace rail (studio + project). Three regions: a PINNED switcher
+ * (jump anywhere), a SCROLLING nav, and a PINNED footer (theme + account).
+ * In a project it collapses to an icon rail on desktop (persisted per operator);
+ * the mobile drawer always opens full.
  */
 export interface SidebarCollection {
   name: string;
@@ -39,30 +41,61 @@ export function WorkspaceSidebar({
   currentId,
   content,
   theme,
+  defaultCollapsed = false,
 }: {
   projects: SwitcherProject[];
   currentId?: string;
   content?: SidebarCollection[];
   theme: "dark" | "light";
+  defaultCollapsed?: boolean;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
   useEffect(() => setOpen(false), [pathname]);
 
   const inProject = Boolean(currentId);
   const collections = (content ?? []).filter((c) => !c.publicWrite);
   const inbox = (content ?? []).filter((c) => c.publicWrite);
+  const current = projects.find((p) => p.id === currentId);
+
+  // Collapse is a desktop project affordance; the open mobile drawer is always full.
+  const compact = inProject && collapsed && !open;
+
+  const toggleCollapse = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    document.cookie = `ax_sidebar=${next ? "1" : "0"};path=/;max-age=31536000;samesite=lax`;
+  };
 
   const item = (href: string, label: string, Icon: typeof Table2, badge?: number) => {
     const active = pathname === href || pathname.startsWith(href + "/");
+    if (compact) {
+      return (
+        <Link
+          key={href}
+          href={href}
+          title={badge ? `${label} · ${badge} unhandled` : label}
+          className={`group relative flex h-9 items-center justify-center rounded-lg transition-colors ${
+            active ? "bg-raised text-ink" : "text-ink-mute hover:bg-raised hover:text-ink"
+          }`}
+        >
+          {active && (
+            <span className="absolute left-0 top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-r" style={{ background: "var(--brand)" }} />
+          )}
+          <Icon className="h-[18px] w-[18px]" style={active ? { color: "var(--brand)" } : undefined} />
+          {badge ? (
+            <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full" style={{ background: "var(--brand)" }} />
+          ) : null}
+        </Link>
+      );
+    }
     return (
       <Link
         key={href}
         href={href}
         className={`group relative flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13.5px] transition-colors ${
-          active
-            ? "bg-raised font-medium text-ink"
-            : "text-ink-mute hover:bg-raised hover:text-ink"
+          active ? "bg-raised font-medium text-ink" : "text-ink-mute hover:bg-raised hover:text-ink"
         }`}
       >
         {active && (
@@ -82,10 +115,30 @@ export function WorkspaceSidebar({
     );
   };
 
-  const group = (text: string) => (
-    <p className="px-2.5 pb-1 pt-4 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-line-strong">
-      {text}
-    </p>
+  const group = (text: string) =>
+    compact ? (
+      <div className="mx-2 my-2 h-px bg-line" />
+    ) : (
+      <p className="px-2.5 pb-1 pt-4 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-line-strong">
+        {text}
+      </p>
+    );
+
+  const projectNav = (
+    <>
+      {collections.length > 0 && group("Content")}
+      {collections.map((c) => item(`/admin/${currentId}/${c.name}`, c.displayName, Table2))}
+      {inbox.length > 0 && group("Inbox")}
+      {inbox.map((c) => item(`/admin/${currentId}/${c.name}`, c.displayName, Inbox, c.unhandled))}
+      {group("Project")}
+      {item(`/admin/${currentId}`, "Overview", LayoutGrid)}
+      {item(`/admin/${currentId}/assets`, "Media", ImageIcon)}
+      {item(`/admin/${currentId}/trash`, "Trash", Trash2)}
+      {item(`/admin/${currentId}/appearance`, "Appearance", Palette)}
+      {item(`/admin/${currentId}/connectors`, "Connectors", Plug)}
+      {item(`/admin/${currentId}/api`, "API reference", Code2)}
+      {item(`/admin/${currentId}/settings`, "Settings", Settings)}
+    </>
   );
 
   return (
@@ -101,37 +154,53 @@ export function WorkspaceSidebar({
       {open && <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={() => setOpen(false)} />}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex h-screen w-64 shrink-0 flex-col border-r border-line bg-card transition-transform md:sticky md:top-0 md:translate-x-0 ${
-          open ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={`fixed inset-y-0 left-0 z-50 flex h-screen shrink-0 flex-col border-r border-line bg-card transition-[transform,width] duration-200 md:sticky md:top-0 md:translate-x-0 ${
+          compact ? "w-14" : "w-64"
+        } ${open ? "translate-x-0" : "-translate-x-full"}`}
       >
-        {/* PINNED: switcher */}
-        <div className="flex items-center gap-1 border-b border-line p-2.5">
-          <div className="min-w-0 flex-1">
-            <ProjectSwitcher projects={projects} currentId={currentId} />
+        {/* PINNED: switcher / collapse */}
+        {compact ? (
+          <div className="flex flex-col items-center gap-2 border-b border-line py-2.5">
+            <button
+              type="button"
+              onClick={toggleCollapse}
+              title={current ? `${current.name} — expand` : "Expand"}
+              className="grid h-8 w-8 place-items-center rounded-md"
+              style={current ? { background: current.brand, color: current.brandInk } : undefined}
+            >
+              {current ? (
+                <span className="display text-[13px] font-semibold">{current.initial}</span>
+              ) : (
+                <PanelLeftOpen className="h-4 w-4 text-ink-mute" />
+              )}
+            </button>
           </div>
-          <button type="button" onClick={() => setOpen(false)} className="rounded-md p-1 text-ink-mute md:hidden">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
+        ) : (
+          <div className="flex items-center gap-1 border-b border-line p-2.5">
+            <div className="min-w-0 flex-1">
+              <ProjectSwitcher projects={projects} currentId={currentId} />
+            </div>
+            {inProject && (
+              <button
+                type="button"
+                onClick={toggleCollapse}
+                aria-label="Collapse sidebar"
+                title="Collapse sidebar"
+                className="hidden rounded-md p-1.5 text-ink-mute transition-colors hover:bg-raised hover:text-ink md:inline-flex"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </button>
+            )}
+            <button type="button" onClick={() => setOpen(false)} className="rounded-md p-1 text-ink-mute md:hidden">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
 
         {/* SCROLL: contextual nav */}
-        <nav className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
+        <nav className={`min-h-0 flex-1 overflow-y-auto py-2 ${compact ? "flex flex-col items-stretch gap-0.5 px-2" : "px-2.5"}`}>
           {inProject ? (
-            <>
-              {collections.length > 0 && group("Content")}
-              {collections.map((c) => item(`/admin/${currentId}/${c.name}`, c.displayName, Table2))}
-              {inbox.length > 0 && group("Inbox")}
-              {inbox.map((c) => item(`/admin/${currentId}/${c.name}`, c.displayName, Inbox, c.unhandled))}
-              {group("Project")}
-              {item(`/admin/${currentId}`, "Overview", LayoutGrid)}
-              {item(`/admin/${currentId}/assets`, "Media", ImageIcon)}
-              {item(`/admin/${currentId}/trash`, "Trash", Trash2)}
-              {item(`/admin/${currentId}/appearance`, "Appearance", Palette)}
-              {item(`/admin/${currentId}/connectors`, "Connectors", Plug)}
-              {item(`/admin/${currentId}/api`, "API reference", Code2)}
-              {item(`/admin/${currentId}/settings`, "Settings", Settings)}
-            </>
+            projectNav
           ) : (
             <>
               {group("Workspace")}
@@ -142,13 +211,11 @@ export function WorkspaceSidebar({
         </nav>
 
         {/* PINNED: theme + account */}
-        <div className="flex items-center justify-between border-t border-line px-3 py-2.5">
-          <span className="font-mono text-[10px] text-line-strong">agentx</span>
-          <div className="flex items-center gap-1.5">
+        <div className={`border-t border-line ${compact ? "flex flex-col items-center gap-2 py-3" : "flex items-center justify-between px-3 py-2.5"}`}>
+          {!compact && <span className="font-mono text-[10px] text-line-strong">agentx</span>}
+          <div className={compact ? "flex flex-col items-center gap-2" : "flex items-center gap-1.5"}>
             <ThemeToggle initial={theme} />
-            <UserButton
-              appearance={{ elements: { userButtonAvatarBox: "h-6 w-6" } }}
-            />
+            <UserButton appearance={{ elements: { userButtonAvatarBox: "h-6 w-6" } }} />
           </div>
         </div>
       </aside>

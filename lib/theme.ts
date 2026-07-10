@@ -11,3 +11,11 @@ export async function getWorkspaceTheme(): Promise<"dark" | "light"> {
   const c = await cookies();
   return c.get(THEME_COOKIE)?.value === "light" ? "light" : "dark";
 }
+
+/** Whether the project sidebar starts collapsed (operator preference, per SSR). */
+export const SIDEBAR_COOKIE = "ax_sidebar";
+
+export async function getSidebarCollapsed(): Promise<boolean> {
+  const c = await cookies();
+  return c.get(SIDEBAR_COOKIE)?.value === "1";
+}
