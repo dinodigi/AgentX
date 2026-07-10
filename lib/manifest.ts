@@ -168,6 +168,8 @@ export interface ImportResult {
   /** Collections whose destructive changes need confirm: true. */
   pendingPlans: { collection: string; plan: SchemaDiff }[];
   brandingUpdated: boolean;
+  /** Non-fatal downgrades applied during import (e.g. hooks disabled). */
+  warnings: string[];
 }
 
 /**
@@ -195,6 +197,29 @@ export async function importProject(
 
   const applied: string[] = [];
   const pendingPlans: ImportResult["pendingPlans"] = [];
+  const warnings: string[] = [];
+
+  // A before-write hook needs the project's signing secret. Rather than hard-fail
+  // an otherwise-valid import, downgrade any hooked collection to disabled + warn
+  // (the operator sets the secret, then re-enables) — the semantic-search
+  // downgrade precedent.
+  const [proj] = await db
+    .select({ secret: projects.webhookSigningSecret })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!proj?.secret) {
+    for (const col of manifest.collections) {
+      const h = col.hooks as { beforeCreate?: { disabled?: boolean }; beforeUpdate?: { disabled?: boolean } } | null;
+      if (h?.beforeCreate || h?.beforeUpdate) {
+        if (h.beforeCreate) h.beforeCreate.disabled = true;
+        if (h.beforeUpdate) h.beforeUpdate.disabled = true;
+        warnings.push(
+          `"${col.name}": before-write hooks imported DISABLED — the project has no webhook signing secret. Generate it in settings, then re-enable.`,
+        );
+      }
+    }
+  }
 
   for (const col of topoSort(manifest.collections as ProjectManifest["collections"])) {
     const result = await defineCollection(projectId, {
@@ -215,5 +240,5 @@ export async function importProject(
     else pendingPlans.push({ collection: col.name, plan: result.diff });
   }
 
-  return { applied, pendingPlans, brandingUpdated: true };
+  return { applied, pendingPlans, brandingUpdated: true, warnings };
 }

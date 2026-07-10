@@ -205,6 +205,7 @@ export async function startHookReceiver() {
   const received = [];
   let mode = "approve";
   let rejectError = "nope";
+  let transformData = {};
   const server = http.createServer((req, res) => {
     let data = "";
     req.on("data", (c) => (data += c));
@@ -222,7 +223,17 @@ export async function startHookReceiver() {
         return res.end("not json {{{");
       }
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(mode === "reject" ? { ok: false, error: rejectError } : { ok: true }));
+      // echo = a no-op transform: reply {ok:true, data} with the candidate
+      // UNCHANGED (exercises the replace path + re-validation without rewriting).
+      const body =
+        mode === "reject"
+          ? { ok: false, error: rejectError }
+          : mode === "transform"
+            ? { ok: true, data: transformData }
+            : mode === "echo"
+              ? { ok: true, data: json?.candidate?.data ?? {} }
+              : { ok: true };
+      res.end(JSON.stringify(body));
     });
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -234,6 +245,12 @@ export async function startHookReceiver() {
       mode = "reject";
       rejectError = err;
     },
+    // transform: reply {ok:true, data} — the FULL new entry the hook wants written.
+    transform: (data) => {
+      mode = "transform";
+      transformData = data;
+    },
+    echo: () => (mode = "echo"), // no-op transform: echo the candidate back
     malformed: () => (mode = "malformed"),
     hang: () => (mode = "hang"),
     close: () => new Promise((r) => server.close(r)),

@@ -33,6 +33,7 @@ import {
 } from "./query";
 import { emitEntryEvent, runEventAction, type EntryEvent } from "./events";
 import { callWriteHook } from "./hooks";
+import { stampIdentity, stampedIdentityFields } from "./access-rules";
 import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workflow";
 import { recordChange, recordChanges, type ChangeInput } from "./changes";
 import type { WorkflowActor } from "@/db/schema";
@@ -276,21 +277,33 @@ async function createEntryCore(
   return { entry: existing, emit: null };
 }
 
+/** Identity to re-stamp after a transform. Presence marks the DELIVERY path
+ * (re-stamp with `user`, which may be null=anonymous); ABSENCE marks a
+ * full-trust MCP/admin write (no re-stamp). */
+export interface WriteIdentity {
+  user: EndUser | null;
+}
+
 /**
- * I1a: consult the collection's before-create hook. Throws E_HOOK_REJECTED when
- * the tenant endpoint rejects the write, or E_HOOK_FAILED when it is
- * unreachable/malformed AND onError is 'reject' (fail-closed, the default). A
- * disabled hook, a non-matching `when`, or onError:'allow' on an outage all let
- * the write proceed (the consult is still logged to webhook_deliveries).
+ * I1a/I1b: consult the before-create hook and return the data to actually
+ * write. Throws E_HOOK_REJECTED (tenant rejected) or E_HOOK_FAILED (unreachable/
+ * malformed AND onError:'reject', the fail-closed default). A disabled hook, a
+ * non-matching `when`, or onError:'allow' on an outage returns the data
+ * unchanged. A transform's replacement is re-validated FULLY and ownership is
+ * re-stamped from the verified identity — a hook can NEVER move ownership.
  */
 async function runBeforeCreateHook(
   projectId: string,
   collection: Collection,
   data: Record<string, unknown>,
-): Promise<void> {
+  identity?: WriteIdentity,
+  /** transact passes its same-batch create ids so a transform's re-verifyRefs
+   *  doesn't reject a $ref to a sibling row not yet in the DB. */
+  assumeExisting?: Set<string>,
+): Promise<Record<string, unknown>> {
   const hook = collection.hooks?.beforeCreate;
-  if (!hook || hook.disabled) return;
-  if (hook.when?.length && !matchesClauses(collection.fields, hook.when, data)) return;
+  if (!hook || hook.disabled) return data;
+  if (hook.when?.length && !matchesClauses(collection.fields, hook.when, data)) return data;
   const outcome = await callWriteHook(projectId, collection, hook, {
     event: "entry.before_create",
     collection: collection.name,
@@ -301,30 +314,44 @@ async function runBeforeCreateHook(
     // hook's own message is the human reason. A hook cannot mint arbitrary codes.
     throw new ValidationError(outcome.error, "E_HOOK_REJECTED");
   }
-  if (outcome.kind === "unavailable" && (hook.onError ?? "reject") === "reject") {
-    throw new ValidationError(
-      `before-write hook could not be consulted: ${outcome.reason}`,
-      "E_HOOK_FAILED",
-    );
+  if (outcome.kind === "unavailable") {
+    if ((hook.onError ?? "reject") === "reject") {
+      throw new ValidationError(`before-write hook could not be consulted: ${outcome.reason}`, "E_HOOK_FAILED");
+    }
+    return data; // fail-open
   }
+  if (outcome.kind === "replace") {
+    // The transform's FULL output is re-validated exactly like client input,
+    // the initial-state workflow rule re-applied, ownership re-stamped from the
+    // verified identity, and refs re-checked — the hook has no more authority
+    // than an honest client and cannot move ownership or dangle a relation.
+    let out = validate(collection.fields, outcome.data, false);
+    applyWorkflowOnCreate(collection, out);
+    if (identity) out = stampIdentity(collection, identity.user, out);
+    const { refChecks } = buildEntrySchema(collection.fields);
+    await verifyRefs(projectId, out, refChecks, assumeExisting);
+    return out;
+  }
+  return data;
 }
 
 export async function createEntry(
   projectId: string,
   collection: Collection,
   data: unknown,
-  opts: { idempotencyKey?: string; actor?: AuditActor } = {},
+  opts: { idempotencyKey?: string; actor?: AuditActor; identity?: WriteIdentity } = {},
 ): Promise<Entry> {
   const clean = validate(collection.fields, data, false);
   applyWorkflowOnCreate(collection, clean); // default/enforce the initial state
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
 
-  // I1a: consult the before-create hook AFTER cheap local validation, BEFORE the
-  // write — a rejection or a fail-closed outage stops the insert entirely.
-  await runBeforeCreateHook(projectId, collection, clean);
+  // I1a/I1b: consult the before-create hook AFTER cheap local validation, BEFORE
+  // the write. A rejection or fail-closed outage stops the insert; a transform
+  // returns the (re-validated, re-stamped) data to write instead.
+  const finalData = await runBeforeCreateHook(projectId, collection, clean, opts.identity);
 
-  const { entry, emit } = await createEntryCore(db, projectId, collection, clean, {
+  const { entry, emit } = await createEntryCore(db, projectId, collection, finalData, {
     idempotencyKey: opts.idempotencyKey,
   });
   if (emit) {
@@ -338,7 +365,7 @@ export async function createEntry(
       entryId: entry.id,
       action: "create",
       actor: opts.actor ?? UNKNOWN_ACTOR,
-      changedFields: Object.keys(clean),
+      changedFields: Object.keys(finalData),
     });
   }
   return entry;
@@ -370,12 +397,17 @@ async function updateEntryCore(
   let transition: EmitDescriptor["transition"];
   const wf = collection.workflow;
   if (wf && wf.field in patch) {
-    if (!actorType) {
-      throw new ValidationError(`workflow: "${wf.field}" can only be changed by a known actor (mcp/admin/delivery)`);
-    }
-    const check = checkTransition(collection, actorType, patch)!; // throws E_VALIDATION on a bad target/actor
     const from = current.data[wf.field];
-    if (from !== check.to) {
+    const to = patch[wf.field];
+    // from === to is an idempotent no-op — checked FIRST, so it never trips the
+    // transition validator. A source-only state (draft, or K4 orders 'pending')
+    // is never any transition's TARGET, so a full-replace patch (I1b transform)
+    // that echoes the unchanged field must NOT be treated as a move.
+    if (to !== from) {
+      if (!actorType) {
+        throw new ValidationError(`workflow: "${wf.field}" can only be changed by a known actor (mcp/admin/delivery)`);
+      }
+      const check = checkTransition(collection, actorType, patch)!; // throws E_VALIDATION on a bad target/actor
       if (typeof from !== "string" || !check.allowedFroms.includes(from)) {
         throw new ValidationError(
           `workflow: "${wf.field}" cannot move ${JSON.stringify(from)} → "${check.to}" for actor "${actorType}" — allowed from: ${check.allowedFroms.join(", ")}`,
@@ -384,7 +416,6 @@ async function updateEntryCore(
       guards.push(sql`${entries.data}->>${wf.field} = ${from}`);
       transition = { field: wf.field, from, to: check.to };
     }
-    // from === to is an idempotent no-op: write it, fire nothing.
   }
 
   // null = explicit unset (validate() already rejected null on required fields).
@@ -424,6 +455,80 @@ async function updateEntryCore(
   };
 }
 
+/** {...current, ...patch} with null = unset — the merged snapshot the hook sees. */
+function mergePatch(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...current };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete out[k];
+    else out[k] = v;
+  }
+  return out;
+}
+
+/** A patch that, merged onto `current`, yields EXACTLY `full`: every full key,
+ * plus null for any current key the transform dropped (so it is unset). */
+function buildReplacePatch(
+  current: Record<string, unknown>,
+  full: Record<string, unknown>,
+): Record<string, unknown> {
+  const patch: Record<string, unknown> = { ...full };
+  for (const k of Object.keys(current)) if (!(k in full)) patch[k] = null;
+  return patch;
+}
+
+/**
+ * I1b: consult the before-UPDATE hook and return the patch to actually apply.
+ * The hook sees the MERGED post-patch snapshot (candidate) + the current row.
+ * A transform's FULL output is re-validated, then identity fields are RE-STRIPPED
+ * to the CURRENT row's values — a transform can never move ownership on update —
+ * and converted to a replace patch. Throws E_HOOK_REJECTED / E_HOOK_FAILED.
+ */
+async function runBeforeUpdateHook(
+  projectId: string,
+  collection: Collection,
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const hook = collection.hooks!.beforeUpdate!;
+  const [current] = await db
+    .select()
+    .from(entries)
+    .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
+    .limit(1);
+  if (!current) throw new ValidationError(`entry ${id} not found`, "E_NOT_FOUND");
+  const merged = mergePatch(current.data, patch);
+  if (hook.when?.length && !matchesClauses(collection.fields, hook.when, merged)) return patch;
+  const outcome = await callWriteHook(projectId, collection, hook, {
+    event: "entry.before_update",
+    collection: collection.name,
+    candidate: { data: merged },
+    current: { data: current.data },
+  });
+  if (outcome.kind === "reject") throw new ValidationError(outcome.error, "E_HOOK_REJECTED");
+  if (outcome.kind === "unavailable") {
+    if ((hook.onError ?? "reject") === "reject") {
+      throw new ValidationError(`before-write hook could not be consulted: ${outcome.reason}`, "E_HOOK_FAILED");
+    }
+    return patch; // fail-open
+  }
+  if (outcome.kind === "replace") {
+    const full = validate(collection.fields, outcome.data, false);
+    // Re-strip: identity fields keep the EXISTING row's values (ownership is
+    // immutable via a hook). Dropped ⇒ absent (buildReplacePatch nulls them).
+    for (const f of stampedIdentityFields(collection)) {
+      if (f in current.data) full[f] = current.data[f];
+      else delete full[f];
+    }
+    const { refChecks } = buildEntrySchema(collection.fields);
+    await verifyRefs(projectId, full, refChecks);
+    return buildReplacePatch(current.data, full);
+  }
+  return patch;
+}
+
 export async function updateEntry(
   projectId: string,
   collection: Collection,
@@ -431,9 +536,15 @@ export async function updateEntry(
   data: unknown,
   actor: AuditActor = UNKNOWN_ACTOR,
 ): Promise<Entry> {
-  const patch = validate(collection.fields, data, true);
+  let patch = validate(collection.fields, data, true);
   const { refChecks } = buildEntrySchema(collection.fields, true);
   await verifyRefs(projectId, patch, refChecks);
+
+  // I1b: consult the before-update hook (validate gates; transform replaces the
+  // patch with the re-validated, identity-re-stripped full entry).
+  if (collection.hooks?.beforeUpdate && !collection.hooks.beforeUpdate.disabled) {
+    patch = await runBeforeUpdateHook(projectId, collection, id, patch);
+  }
 
   const { entry, emit } = await updateEntryCore(db, collection, id, patch, workflowActor(actor));
   await recordChange({
@@ -1178,9 +1289,11 @@ export async function transact(
         // The before-create hook gates transact creates too — consulted HERE in
         // the prep pass, BEFORE withTransaction opens, so the synchronous
         // external call never holds the pooled connection and a rejection aborts
-        // the whole batch cleanly (nothing has been written yet).
-        await runBeforeCreateHook(projectId, collection, clean);
-        prepared.push({ kind: "create", collection, id: createIds[i]!, clean, changedFields: Object.keys(clean) });
+        // the whole batch cleanly (nothing has been written yet). transact is
+        // full-trust (MCP), so no identity re-stamp applies; pass assumeExisting
+        // so a transform's re-verifyRefs accepts same-batch $refs.
+        const hooked = await runBeforeCreateHook(projectId, collection, clean, undefined, assumeExisting);
+        prepared.push({ kind: "create", collection, id: createIds[i]!, clean: hooked, changedFields: Object.keys(hooked) });
       } else if (op.op === "update") {
         if (!id) throw new ValidationError("update op requires an id");
         const clean = validate(collection.fields, data, true);

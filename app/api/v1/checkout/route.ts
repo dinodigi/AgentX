@@ -133,7 +133,13 @@ export async function POST(req: NextRequest) {
     const orderData: Record<string, unknown> = { [f.status]: "pending" };
     if (f.items) orderData[f.items] = JSON.stringify(body.items);
     try {
-      const order = await createEntry(projectId, ordersColl, orderData, { actor: { type: "delivery" } });
+      // Anonymous buyer: identity:{user:null} makes a beforeCreate transform on
+      // the orders collection have owner/org STRIPPED (a hook can't inject
+      // ownership on the order it can't otherwise set), same as an anonymous POST.
+      const order = await createEntry(projectId, ordersColl, orderData, {
+        actor: { type: "delivery" },
+        identity: { user: null },
+      });
       metadata.orderEntryId = order.id;
       clientReferenceId = order.id;
     } catch {

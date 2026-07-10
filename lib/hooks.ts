@@ -19,6 +19,8 @@ import { projects, webhookDeliveries, type Collection, type WriteHook } from "@/
 
 export type HookOutcome =
   | { kind: "proceed" }
+  /** transform mode returned {ok:true, data} — the FULL new entry data (I1b). */
+  | { kind: "replace"; data: Record<string, unknown> }
   | { kind: "reject"; error: string; code?: string }
   /** Endpoint unreachable / timed out / malformed — onError decides the write. */
   | { kind: "unavailable"; reason: string };
@@ -53,7 +55,7 @@ async function readCapped(res: Response, max: number): Promise<string | null> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-function parseAck(text: string | null): { ok?: unknown; error?: unknown; code?: unknown } | null {
+function parseAck(text: string | null): { ok?: unknown; error?: unknown; code?: unknown; data?: unknown } | null {
   if (text === null) return null;
   try {
     const j = JSON.parse(text);
@@ -104,8 +106,15 @@ export async function callWriteHook(
         outcome = { kind: "unavailable", reason: `malformed hook response (HTTP ${res.status})` };
         responseSummary = { error: "malformed response", status: res.status };
       } else if (ack.ok === true) {
-        outcome = { kind: "proceed" };
-        responseSummary = { ok: true, status: res.status };
+        // transform mode may return the FULL new entry data to write in place of
+        // the candidate (I1b). validate mode ignores any data — it only gates.
+        if (hook.mode === "transform" && ack.data && typeof ack.data === "object" && !Array.isArray(ack.data)) {
+          outcome = { kind: "replace", data: ack.data as Record<string, unknown> };
+          responseSummary = { ok: true, transformed: true, status: res.status };
+        } else {
+          outcome = { kind: "proceed" };
+          responseSummary = { ok: true, status: res.status };
+        }
       } else {
         const error = typeof ack.error === "string" && ack.error ? ack.error : "the hook rejected this write";
         outcome = { kind: "reject", error, code: typeof ack.code === "string" ? ack.code : undefined };

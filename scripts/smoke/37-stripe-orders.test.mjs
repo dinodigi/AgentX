@@ -8,6 +8,7 @@ import {
   mcp,
   delivery,
   startWebhookReceiver,
+  startHookReceiver,
   queryDeliveries,
   waitFor,
   BASE,
@@ -341,6 +342,36 @@ describe("stripe order lifecycle (K4)", () => {
       assert.equal(second.status, 201, JSON.stringify(second.json) + " — two pending orders must not collide on an empty session_id");
     } finally {
       await receiver.close();
+      await p.destroy();
+    }
+  });
+
+  it("a beforeCreate transform on the orders collection CANNOT stamp ownership on the pending order (review #B)", async () => {
+    const p = await createEphemeralProject("orders-hook-owner");
+    const hookRcv = await startHookReceiver();
+    try {
+      await connectStripe(p.id, { whsec: WHSEC });
+      // Owner-scoped orders + a beforeCreate transform hook that injects an owner.
+      // Checkout creates the order ANONYMOUSLY (identity:{user:null}), so the
+      // re-stamp must STRIP the hook's owner — a hook can't forge ownership.
+      await mcp(p.mcpToken, "define_collection", {
+        name: "orders",
+        fields: [...orderFields, { name: "owner", label: "O", type: "text" }],
+        access: { read: "owner", write: "owner", ownerField: "owner" },
+        hooks: { beforeCreate: { url: hookRcv.url, mode: "transform", timeoutMs: 700 } },
+      });
+      const def = await mcp(p.mcpToken, "define_collection", { name: "products", fields: productFields, checkout });
+      assert.ok(def.ok, def.errorText);
+      const prod = await mcp(p.mcpToken, "create_entry", { collection: "products", data: { title: "W", price_id: "price_w" } });
+      hookRcv.transform({ status: "pending", owner: "user_attacker" });
+      mock.reset();
+      const res = await delivery(p.deliveryToken, "/checkout", { method: "POST", body: { collection: "products", items: [{ id: prod.value.id, quantity: 1 }] } });
+      assert.equal(res.status, 201, JSON.stringify(res.json));
+      const sent = mock.requests.find((q) => q.path === "/v1/checkout/sessions");
+      const order = await mcp(p.mcpToken, "get_entry", { collection: "orders", id: sent.form["metadata[orderEntryId]"] });
+      assert.ok(!order.value.data.owner, "the transform's injected owner must be stripped: " + JSON.stringify(order.value.data));
+    } finally {
+      await hookRcv.close();
       await p.destroy();
     }
   });

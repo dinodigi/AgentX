@@ -167,21 +167,6 @@ describe("before-create hooks (I1a)", () => {
     assert.ok(!refire.ok && /cannot be replayed|re-attempt the write/.test(refire.errorText), refire.errorText);
   });
 
-  it("define-time: transform mode and beforeUpdate are rejected (land in I1b)", async () => {
-    const transform = await mcp(p.mcpToken, "define_collection", {
-      name: "leads_t",
-      fields: [{ name: "title", label: "T", type: "text", required: true }],
-      hooks: { beforeCreate: { url: rcv.url, mode: "transform" } },
-    });
-    assert.ok(!transform.ok && /transform mode lands|I1b/.test(transform.errorText), transform.errorText);
-    const bu = await mcp(p.mcpToken, "define_collection", {
-      name: "leads_u",
-      fields: [{ name: "title", label: "T", type: "text", required: true }],
-      hooks: { beforeUpdate: { url: rcv.url, mode: "validate" } },
-    });
-    assert.ok(!bu.ok && /beforeUpdate lands|I1b/.test(bu.errorText), bu.errorText);
-  });
-
   it("define-time: a hook needs the project's webhook signing secret", async () => {
     const noSecret = await createEphemeralProject("hooks-nosecret");
     try {

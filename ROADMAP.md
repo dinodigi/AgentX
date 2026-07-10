@@ -393,18 +393,24 @@ confirms tenant endpoints exist to call. *This design's revision pass did not
 complete — the verifier-confirmed corrections are folded in below and override
 the spec file where they disagree.*
 
-- [ ] 16.1 `I1a` (M) — **validate-only** `beforeCreate` hook: HMAC-signed POST of
+- [x] 16.1 `I1a` (M) — **validate-only** `beforeCreate` hook: HMAC-signed POST of
       the candidate entry to the tenant endpoint; `{ok} | {ok:false, error}`;
-      strict timeout; fail-open/closed per config. Includes the delivery
-      error-code plumbing verifiers demanded: `deliveryError` gains a code
-      override so `E_HOOK_REJECTED` (422) / `E_HOOK_FAILED` (502) reach delivery
-      clients distinctly. `hook.*` rows in webhook_deliveries + refire guard.
-- [ ] 16.2 `I1b` (M) — transform mode + `beforeUpdate`: **https-only for transform;
-      after any transform, re-stamp ownerField/org from the verified identity and
-      re-strip on PATCH** (a hook can never move ownership); full re-validation
-      of hook output via buildEntrySchema + verifyRefs; hooks join the manifest
-      (import without a signing secret → imported `disabled:true` + warning,
-      matching the semantic-search downgrade precedent).
+      strict timeout; fail-open/closed per config. `deliveryError` code override →
+      `E_HOOK_REJECTED` (422) / `E_HOOK_FAILED` (502); `hook.*` rows in
+      webhook_deliveries + refire guard. Runs on create_entry AND transact creates
+      (consulted in transact's prep pass, before the tx); bulk refused; CAS skips.
+      ✅ 2026-07-09, 39-hooks smoke (12); adversarial review fixed 1 high (transact
+      create bypass — 3 lenses converged; 2 findings refuted on verify).
+- [x] 16.2 `I1b` (M) — transform mode + `beforeUpdate`: https-only for transform
+      (loopback excepted); re-stamp ownerField/org from the verified identity on
+      create + re-strip to the current row on update (a hook can never move
+      ownership); full re-validation of hook output; full-data replace on update
+      (dropped keys unset); manifest downgrade (no signing secret → imported
+      `disabled:true` + warning). ✅ 2026-07-09, 40-hooks-transform smoke (6);
+      openMinor #2 resolved (candidate=merged snapshot, response=full entry,
+      re-validate FULL). Adversarial review fixed 5 (HIGH: transform beforeUpdate
+      failed edits of source-only-workflow-state rows; MED: checkout could stamp
+      order ownership via a transform; +transact $ref, [::1] loopback).
 - [ ] 16.3 `I2` (S) — `test_hook` dry-run MCP tool.
 - [ ] 16.4 `I3` (M) — computed fields, closed vocabulary (slugify | template | now | uuid):
       **two explicit schema modes** — INPUT (rejects computed keys, applied to all

@@ -104,6 +104,20 @@ const WHERE_ITEM_JSON = {
   ],
 } as const;
 
+const WRITE_HOOK_JSON = {
+  type: "object",
+  properties: {
+    url: { type: "string", description: "your endpoint AgentX POSTs the candidate to (https REQUIRED for transform)" },
+    mode: { type: "string", enum: ["validate", "transform"], description: "gate only, or rewrite the entry" },
+    onError: { type: "string", enum: ["reject", "allow"], description: "fail-closed (default) or open on an outage" },
+    timeoutMs: { type: "number", description: "500–5000, default 3000" },
+    when: { type: "array", description: "only consult when these clauses match the candidate snapshot" },
+    disabled: { type: "boolean" },
+  },
+  required: ["url", "mode"],
+  additionalProperties: false,
+} as const;
+
 export const TOOL_DEFS: ToolDef[] = [
   {
     name: "get_project_info",
@@ -308,28 +322,21 @@ export const TOOL_DEFS: ToolDef[] = [
         hooks: {
           type: "object",
           description:
-            "signed before-write hooks to YOUR compute — custom validation without AgentX hosting " +
-            "code. I1a: only beforeCreate in mode 'validate'. Each POST to your `url` is HMAC-signed " +
-            "with the project's webhook signing secret (set it in project settings first) and carries " +
-            "{event, collection, candidate:{data}}; answer {ok:true} to allow or {ok:false, error} to " +
-            "reject (→ E_HOOK_REJECTED). onError:'reject' (default) fails the write closed when your " +
-            "endpoint is unreachable; 'allow' fails open. Runs on create_entry AND transact creates — " +
-            "NOT bulk_create_entries (refused) or update_entry_if (single-statement CAS). `when` gates " +
+            "signed before-write hooks to YOUR compute — custom validation/transformation without " +
+            "AgentX hosting code. beforeCreate and/or beforeUpdate, each mode 'validate' (gate only) " +
+            "or 'transform' (rewrite). Each POST to your `url` is HMAC-signed with the project's " +
+            "webhook signing secret (set it in project settings first) and carries {event, collection, " +
+            "candidate:{data}} (+ current:{data} on update, where candidate is the MERGED post-patch " +
+            "row). Answer {ok:true} to allow, {ok:false, error} to reject (→ E_HOOK_REJECTED), or (transform " +
+            "only) {ok:true, data:{…}} with the FULL new entry — re-validated like client input, and " +
+            "ownership (ownerField/org) is always re-stamped/preserved so a hook can NEVER move it. " +
+            "transform is HTTPS-ONLY. onError:'reject' (default) fails closed when your endpoint is " +
+            "unreachable; 'allow' fails open. Runs on create_entry, update_entry, AND transact creates " +
+            "— NOT bulk_create_entries (refused) or update_entry_if (single-statement CAS). `when` gates " +
             "by the candidate snapshot.",
           properties: {
-            beforeCreate: {
-              type: "object",
-              properties: {
-                url: { type: "string", description: "http(s) endpoint AgentX POSTs the candidate to" },
-                mode: { type: "string", enum: ["validate"], description: "validate-only in I1a" },
-                onError: { type: "string", enum: ["reject", "allow"], description: "fail-closed (default) or open" },
-                timeoutMs: { type: "number", description: "500–5000, default 3000" },
-                when: { type: "array", description: "only consult when these clauses match the candidate" },
-                disabled: { type: "boolean" },
-              },
-              required: ["url", "mode"],
-              additionalProperties: false,
-            },
+            beforeCreate: WRITE_HOOK_JSON,
+            beforeUpdate: WRITE_HOOK_JSON,
           },
           additionalProperties: false,
         },

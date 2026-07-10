@@ -1,7 +1,7 @@
 import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
-import { collections, entries, entriesTrash, projects, type Collection, type EventAction } from "@/db/schema";
+import { collections, entries, entriesTrash, projects, type Collection, type EventAction, type WriteHook } from "@/db/schema";
 import { getConnector } from "./connectors";
 import { parseAfter } from "./events";
 import { validateWorkflow } from "./workflow";
@@ -348,43 +348,61 @@ function assertOrdersMapping(orders: OrdersMapping, targetFields: FieldDef[], ta
 }
 
 /**
- * I1a: validate a before-write hook config. Only `beforeCreate` in `validate`
- * mode is available now (transform + beforeUpdate land in I1b, rejected here so
- * nothing is silently ignored). Requires the project's webhook signing secret —
- * the consult is HMAC-signed so the tenant endpoint can authenticate AgentX.
+ * I1a/I1b: validate before-write hook config (beforeCreate + beforeUpdate,
+ * validate + transform). Requires the project's webhook signing secret — the
+ * consult is HMAC-signed so the tenant endpoint can authenticate AgentX.
+ * transform is https-only: it rewrites your data, so the channel must be
+ * encrypted (a MITM on http could inject fields / move ownership).
  */
-async function validateHooks(
-  projectId: string,
-  hooks: NonNullable<DefineCollectionInput["hooks"]>,
-  fields: FieldDef[],
-): Promise<void> {
-  if (hooks.beforeUpdate) {
-    throw new ValidationError("hooks.beforeUpdate lands in a later increment (I1b) — only beforeCreate is available now");
-  }
-  const hook = hooks.beforeCreate;
-  if (!hook) return;
-  if (hook.mode !== "validate") {
-    throw new ValidationError('hooks.beforeCreate.mode must be "validate" — transform mode lands in a later increment (I1b)');
+function validateOneHook(stage: string, hook: WriteHook, fields: FieldDef[]): void {
+  if (hook.mode !== "validate" && hook.mode !== "transform") {
+    throw new ValidationError(`hooks.${stage}.mode must be "validate" or "transform"`);
   }
   let u: URL;
   try {
     u = new URL(hook.url);
   } catch {
-    throw new ValidationError("hooks.beforeCreate.url must be an absolute http(s) URL");
+    throw new ValidationError(`hooks.${stage}.url must be an absolute http(s) URL`);
   }
   if (u.protocol !== "http:" && u.protocol !== "https:") {
-    throw new ValidationError("hooks.beforeCreate.url must use http or https");
+    throw new ValidationError(`hooks.${stage}.url must use http or https`);
+  }
+  // transform rewrites your data, so the channel must be encrypted — EXCEPT
+  // loopback, which can't be MITM'd (a co-located endpoint may use http localhost).
+  // Node's WHATWG URL serializes an IPv6 host WITH brackets ("[::1]"), so match that.
+  const loopback =
+    u.hostname === "localhost" || u.hostname === "[::1]" || /^127(\.\d+){3}$/.test(u.hostname);
+  if (hook.mode === "transform" && u.protocol !== "https:" && !loopback) {
+    throw new ValidationError(
+      `hooks.${stage}.url must be https for transform mode (loopback excepted) — a transform rewrites your data, so a non-loopback channel must be encrypted`,
+    );
   }
   if (hook.onError !== undefined && hook.onError !== "reject" && hook.onError !== "allow") {
-    throw new ValidationError('hooks.beforeCreate.onError must be "reject" (fail-closed, default) or "allow"');
+    throw new ValidationError(`hooks.${stage}.onError must be "reject" (fail-closed, default) or "allow"`);
   }
   if (
     hook.timeoutMs !== undefined &&
     (typeof hook.timeoutMs !== "number" || hook.timeoutMs < 500 || hook.timeoutMs > 5000)
   ) {
-    throw new ValidationError("hooks.beforeCreate.timeoutMs must be a number between 500 and 5000");
+    throw new ValidationError(`hooks.${stage}.timeoutMs must be a number between 500 and 5000`);
   }
   if (hook.when?.length) buildWhere(fields, hook.when); // throws a field-named hint on a bad clause
+}
+
+async function validateHooks(
+  projectId: string,
+  hooks: NonNullable<DefineCollectionInput["hooks"]>,
+  fields: FieldDef[],
+): Promise<void> {
+  // Shape is always validated (so re-enabling later is clean), but the signing
+  // secret is only required by an ENABLED hook — a disabled one never runs, so a
+  // manifest can import hooks into a secret-less project as disabled (see
+  // importProject's downgrade).
+  if (hooks.beforeCreate) validateOneHook("beforeCreate", hooks.beforeCreate, fields);
+  if (hooks.beforeUpdate) validateOneHook("beforeUpdate", hooks.beforeUpdate, fields);
+  const hasEnabled =
+    (hooks.beforeCreate && !hooks.beforeCreate.disabled) || (hooks.beforeUpdate && !hooks.beforeUpdate.disabled);
+  if (!hasEnabled) return;
   const [proj] = await db
     .select({ secret: projects.webhookSigningSecret })
     .from(projects)

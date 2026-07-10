@@ -325,6 +325,9 @@ export async function POST(
         : body;
     const entry = await createEntry(projectId, collection, data, {
       actor: { type: "delivery", userSub: gate.user?.id },
+      // I1b: on a transform, re-stamp ownership from THIS verified identity —
+      // a hook can never move ownership (anonymous ⇒ owner/org stripped).
+      identity: { user: gate.user },
     });
     return corsJson({ id: entry.id }, { status: 201 });
   } catch (e) {
