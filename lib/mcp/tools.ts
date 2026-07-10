@@ -196,8 +196,10 @@ export const TOOL_DEFS: ToolDef[] = [
       "To RENAME a field, pass renames: [{from, to}] with the new name in fields — entry " +
       "data is backfilled, no confirm needed; without renames a rename is a destructive drop+add. " +
       "localized:true (text/richtext, needs set_locales) stores {locale: value} variant maps — " +
-      "empty fields only for now, and not for unique/searchable/computed/labelField/email-template " +
-      `fields; see list_field_types. ${BOUNDARIES}`,
+      "not for unique/searchable/computed/labelField/email-template fields; see list_field_types. " +
+      "LOCALIZING a populated field wraps existing values under the default locale (immediate, " +
+      "non-destructive, reported in changes.localized); DE-localizing keeps only the default " +
+      `variant and requires confirm:true (entries without one lose the field). ${BOUNDARIES}`,
     inputSchema: {
       type: "object",
       properties: {

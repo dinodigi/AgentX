@@ -25,6 +25,12 @@ tests green · deployed on Render** (same Neon DB as dev; dogfood posture).
   Client-supplied values rejected at input, stamped server-side on create,
   recomputed on update when a source field changes (`now` supports
   `on:'always'`); frozen otherwise. Define-time cycle/chain rules.
+- **Localized fields** (Phase 18): `set_locales {default, supported}` registers
+  the project's locales; `localized: true` on text/richtext stores strict
+  `{locale: value}` variant maps. Delivery serves ONE flat string (default or
+  `?locale=`); MCP reads return the raw map; updates merge per locale. Barred
+  from unique/searchable/computed/labelField/email templates/filters. Toggling
+  a populated field: localize = wrap-backfill; delocalize = plan + confirm.
 - **Schema evolution**: `define_collection` diffs against the live schema and
   returns a **plan + confirm** for destructive changes; field renames backfill
   atomically (including trash); define-time tightening scans report
@@ -65,7 +71,8 @@ tests green · deployed on Render** (same Neon DB as dev; dogfood posture).
   projection, `publicFilter` row gate, filters/sort/paging/`?select=`,
   `?expand=` (target shown exactly as a direct GET would), `?author.name=X`
   related-field filters with full target row gates, `?include=` reverse embeds,
-  `?q=` keyword search (public-searchable subset, GIN-indexed), strong ETags/304.
+  `?q=` keyword search (public-searchable subset, GIN-indexed), `?locale=`
+  (localized fields, per-variant fallback to default), strong ETags/304.
 - **Writes**: `POST` (public or identity-gated), `PATCH`/`DELETE` under owner/
   claim rules, `POST /v1/{collection}/uploads` (multipart public upload intake).
 - `GET /v1/changes?since=` + `GET /v1/changes/stream` (SSE) — near-realtime
@@ -203,8 +210,8 @@ Design system: "paper-and-ink editorial" (shared CSS vocabulary in globals.css).
 ## Not built (deliberate — with revisit triggers)
 
 - Semantic/hybrid search (Phase 14 — gated on dogfood FTS evidence)
-- Localized fields / `?locale=` (Phase 18 — locale registry `set_locales` shipped
-  (J3); field-level i18n J4–J8 in progress)
+- Locale-aware search — localized × searchable is barred until search
+  understands locales (the E×J conflict; needs a multilingual site asking)
 - Per-row sharing ACLs (F5 — design recorded, needs a real ask)
 - Delivery-surface `transact` · subscriptions/refunds (tenant app layer)
 - Hosted/sandboxed tenant code · raw SQL · hosted email · rule expression

@@ -210,6 +210,7 @@ export const COMMON_FIELD_CONFIG = [
     "the default locale's variant present at create. Delivery serves ONE flat string (the default " +
     "locale); MCP reads return the raw map. update_entry MERGES variant maps ({de:...} preserves " +
     "en; there is no per-variant unset). Localized fields can't be unique/searchable/computed, " +
-    "can't be filtered or sorted, can't back a relation labelField or an email template, and " +
-    "can't toggle on a populated field (yet).",
+    "can't be filtered or sorted, and can't back a relation labelField or an email template. " +
+    "Toggling on a populated field: localizing wraps values under the default locale " +
+    "(non-destructive); delocalizing keeps only the default variant (plan + confirm).",
 ];

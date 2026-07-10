@@ -550,8 +550,15 @@ site needs srcsets.
       Admin is Clerk-gated → compile-verified per precedent (entries layer
       already smoke-covered). ✅ 2026-07-10, full suite 399/399.
       **USER: eyeball the switcher visually before next client handoff.**
-- [ ] 18.8 `J8` (M) — localize/delocalize populated fields via wrap-backfill
-      (delocalize = plan + confirm).
+- [x] 18.8 `J8` (M) — localize/delocalize populated fields: localize = atomic
+      jsonb wrap under the default locale (entries + trash, rename-backfill
+      precedent, reported in `changes.localized`); delocalize = counted plan +
+      confirm (entriesAffected, variantsLost, entriesLosingField) collapsing to
+      the default variant — entries WITHOUT one drop the key entirely (openMinor
+      #4: a text field never holds JSON null). Inbound-labelField guard holds on
+      the toggle path (shared define-time validation). ✅ 2026-07-10,
+      48-localized-backfill smoke (5), full suite 458 green (staggered runs —
+      see harness note). **PHASE 18 COMPLETE.**
 
 ---
 
@@ -594,7 +601,13 @@ data-ownership requirement demands it — the bridge into multi-tenancy.
   loop**), which outlives the dev server's 5s HTTP keep-alive timeout and leaves
   undici's pooled socket half-dead → first reuse resets (ECONNRESET). Wrapped the
   first post-compile delivery read in a `retryTransient` helper. Server is
-  unaffected — a pure client-side stale-socket artifact.
+  unaffected — a pure client-side stale-socket artifact. Same artifact bit
+  `41-test-hook` (its I6 test also compiles) — `retryTransient` is now exported
+  from `helpers.mjs`; wrap the first call after ANY execFileSync-compile test.
+- Long full-suite runs (~15+ min) have twice lost the dev server mid-run
+  (ECONNRESET then unreachable); re-running the remaining suites against a
+  restarted server completes the regression — per-suite results are independent
+  (ephemeral projects).
 
 ## Engineering discipline (cross-phase contracts)
 

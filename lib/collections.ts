@@ -465,6 +465,18 @@ export interface SchemaDiff {
   renamed: { from: string; to: string }[];
   /** Entries whose stored data contains a removed/retyped key. */
   affectedEntries: number;
+  /** J8: localizing a populated field — non-destructive wrap under the default
+   * locale, applied immediately (rename-backfill precedent). */
+  localized?: { field: string; entriesToWrap: number }[];
+  /** J8: DE-localizing a populated field drops every non-default variant
+   * (entries lacking a default variant lose the field entirely) — destructive,
+   * so it joins the confirm gate. */
+  delocalized?: {
+    field: string;
+    entriesAffected: number;
+    variantsLost: string[];
+    entriesLosingField: number;
+  }[];
 }
 
 /** Structural diff between an existing definition and a proposed one. */
@@ -841,20 +853,76 @@ async function validateLocalizedFields(
       );
     }
   }
-  if (current) {
-    const renamedFrom = new Map(renames.map((r) => [r.to, r.from]));
-    for (const f of fields) {
-      const oldName = renamedFrom.get(f.name) ?? f.name;
-      const old = (current.fields as FieldDef[]).find((x) => x.name === oldName);
-      if (!old || fieldLocalized(old) === fieldLocalized(f)) continue;
-      const n = await countEntriesWithKeys(current.id, [oldName]);
-      if (n > 0) {
-        throw new ValidationError(
-          `cannot ${fieldLocalized(f) ? "localize" : "delocalize"} "${f.name}" — ${n} entr(ies) hold a value; toggling localized on populated fields ships in a later increment (empty fields only for now)`,
+  // J8: toggling localized on a populated field is legal — localize wraps
+  // existing values under the default locale (non-destructive, immediate);
+  // delocalize is a counted plan + confirm in defineCollection's diff gate.
+}
+
+/**
+ * J8: detect localized-flag toggles (rename-aware) and count their impact —
+ * queried under the OLD key names, before the rename backfill runs.
+ */
+async function planLocalizedToggles(
+  current: Collection,
+  fields: FieldDef[],
+  renames: { from: string; to: string }[],
+  defaultLocale: string | null,
+): Promise<{
+  localized: NonNullable<SchemaDiff["localized"]>;
+  delocalized: NonNullable<SchemaDiff["delocalized"]>;
+  /** Post-backfill UPDATE targets (NEW field names). */
+  wraps: string[];
+  collapses: string[];
+}> {
+  const renamedFrom = new Map(renames.map((r) => [r.to, r.from]));
+  const localized: NonNullable<SchemaDiff["localized"]> = [];
+  const delocalized: NonNullable<SchemaDiff["delocalized"]> = [];
+  const wraps: string[] = [];
+  const collapses: string[] = [];
+
+  for (const f of fields) {
+    const oldName = renamedFrom.get(f.name) ?? f.name;
+    const old = (current.fields as FieldDef[]).find((x) => x.name === oldName);
+    if (!old || fieldLocalized(old) === fieldLocalized(f)) continue;
+
+    const key = sql`${entries.data} -> ${oldName}::text`;
+    if (fieldLocalized(f)) {
+      const [row] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(entries)
+        .where(and(eq(entries.collectionId, current.id), sql`jsonb_typeof(${key}) = 'string'`));
+      localized.push({ field: f.name, entriesToWrap: row.n });
+      wraps.push(f.name);
+    } else {
+      const [affected] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(entries)
+        .where(and(eq(entries.collectionId, current.id), sql`jsonb_typeof(${key}) = 'object'`));
+      const [losing] = await db
+        .select({ n: sql<number>`count(*)::int` })
+        .from(entries)
+        .where(
+          and(
+            eq(entries.collectionId, current.id),
+            sql`jsonb_typeof(${key}) = 'object'`,
+            sql`NOT jsonb_exists(${key}, ${defaultLocale ?? ""}::text)`,
+          ),
         );
-      }
+      const keyRows = (await db.execute(
+        sql`SELECT DISTINCT jsonb_object_keys(${key}) AS k FROM entries
+            WHERE collection_id = ${current.id} AND jsonb_typeof(${key}) = 'object'`,
+      )) as unknown as { rows?: { k: string }[] };
+      const allLocales = ((keyRows.rows ?? []) as { k: string }[]).map((r) => r.k);
+      delocalized.push({
+        field: f.name,
+        entriesAffected: affected.n,
+        variantsLost: allLocales.filter((l) => l !== defaultLocale),
+        entriesLosingField: losing.n,
+      });
+      collapses.push(f.name);
     }
   }
+  return { localized, delocalized, wraps, collapses };
 }
 
 /**
@@ -945,6 +1013,9 @@ export async function defineCollection(
   validateRenames(current, fields, renames);
   await validateLocalizedFields(projectId, name, fields, existing, current, renames);
   let diff: SchemaDiff | undefined;
+  let toggleWraps: string[] = [];
+  let toggleCollapses: string[] = [];
+  const projectLocales = await getLocales(projectId);
   if (current) {
     const structural = diffFields(current.fields, fields, renames);
     const dangerousKeys = [
@@ -952,13 +1023,28 @@ export async function defineCollection(
       ...structural.retyped.map((r) => r.field),
     ];
     const affectedEntries = await countEntriesWithKeys(current.id, dangerousKeys);
-    diff = { ...structural, affectedEntries };
-    if (dangerousKeys.length > 0 && !input.confirm) {
+    // J8: localized-flag toggles — wrap counts ride the diff for visibility;
+    // a delocalize (variants dropped) joins the confirm gate like a removal.
+    const toggles = await planLocalizedToggles(current, fields, renames, projectLocales?.default ?? null);
+    toggleWraps = toggles.wraps;
+    toggleCollapses = toggles.collapses;
+    diff = {
+      ...structural,
+      affectedEntries,
+      ...(toggles.localized.length > 0 ? { localized: toggles.localized } : {}),
+      ...(toggles.delocalized.length > 0 ? { delocalized: toggles.delocalized } : {}),
+    };
+    const destructiveDelocalize = toggles.delocalized.some(
+      (d) => d.entriesAffected > 0 && (d.variantsLost.length > 0 || d.entriesLosingField > 0),
+    );
+    if ((dangerousKeys.length > 0 || destructiveDelocalize) && !input.confirm) {
       return {
         applied: false,
         requiresConfirmation: true,
         diff,
-        hint: "destructive change — re-run with confirm: true to apply",
+        hint: destructiveDelocalize
+          ? "destructive change — delocalizing drops every non-default variant (entries without a default variant lose the field); re-run with confirm: true to apply"
+          : "destructive change — re-run with confirm: true to apply",
       };
     }
   }
@@ -1043,6 +1129,40 @@ export async function defineCollection(
           SET data = (data - ${r.from}::text) || jsonb_build_object(${r.to}::text, data->${r.from}::text)
           WHERE collection_id = ${row.id} AND data ? ${r.from}::text`,
     );
+  }
+
+  // J8: localized-flag toggle backfills — AFTER the rename backfill, so they
+  // target the new key names; live + trash, like renames. Same read-window
+  // caveat as renames (see above); do schema toggles when quiescent.
+  if ((toggleWraps.length > 0 || toggleCollapses.length > 0) && projectLocales) {
+    const def = projectLocales.default;
+    for (const table of ["entries", "entries_trash"] as const) {
+      const t = sql.raw(table);
+      for (const f of toggleWraps) {
+        // Localize ON: wrap existing plain strings under the default locale.
+        await db.execute(
+          sql`UPDATE ${t}
+              SET data = jsonb_set(data, ARRAY[${f}::text], jsonb_build_object(${def}::text, data->${f}::text))
+              WHERE collection_id = ${row.id} AND jsonb_typeof(data->${f}::text) = 'string'`,
+        );
+      }
+      for (const f of toggleCollapses) {
+        // Delocalize (confirmed): keep the default variant as the plain value…
+        await db.execute(
+          sql`UPDATE ${t}
+              SET data = jsonb_set(data, ARRAY[${f}::text], data->${f}::text->${def}::text)
+              WHERE collection_id = ${row.id} AND jsonb_typeof(data->${f}::text) = 'object'
+                AND jsonb_exists(data->${f}::text, ${def}::text)`,
+        );
+        // …and drop the key entirely where no default variant exists — a text
+        // field must never hold JSON null (openMinor #4).
+        await db.execute(
+          sql`UPDATE ${t}
+              SET data = data - ${f}::text
+              WHERE collection_id = ${row.id} AND jsonb_typeof(data->${f}::text) = 'object'`,
+        );
+      }
+    }
   }
 
   revalidateTag(collectionsTag(projectId));

@@ -264,6 +264,24 @@ export async function startHookReceiver() {
   };
 }
 
+/** Retry a transient stale-socket reset (ECONNRESET / fetch failed) — needed
+ * for the FIRST call after a blocking child process (tsc via execFileSync)
+ * outlives the dev server's HTTP keep-alive; see the ROADMAP test-harness note. */
+export async function retryTransient(fn, tries = 3) {
+  let last;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      const code = e?.cause?.code ?? e?.code;
+      if (code !== "ECONNRESET" && !/fetch failed/.test(String(e?.message))) throw e;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+  throw last;
+}
+
 /** Poll until fn() is truthy or timeout. */
 export async function waitFor(fn, { timeoutMs = 8000, stepMs = 250 } = {}) {
   const end = Date.now() + timeoutMs;

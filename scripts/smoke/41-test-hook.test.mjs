@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ensureServer, createEphemeralProject, startHookReceiver, mcp, waitFor, queryDeliveries } from "./helpers.mjs";
+import { ensureServer, createEphemeralProject, startHookReceiver, mcp, waitFor, queryDeliveries, retryTransient } from "./helpers.mjs";
 
 // I2: test_hook dry-runs a collection's hook against sample data WITHOUT writing.
 // It DOES call the tenant endpoint (logged as hook.test).
@@ -115,7 +115,10 @@ describe("test_hook dry-run (I2)", () => {
   });
 
   it("beforeUpdate without entryId, and a stage with no hook, are rejected", async () => {
-    const noId = await mcp(p.mcpToken, "test_hook", { collection: "docs", stage: "beforeUpdate", data: { title: "x" } });
+    // First call after the blocking tsc compile above — retry a stale-socket reset.
+    const noId = await retryTransient(() =>
+      mcp(p.mcpToken, "test_hook", { collection: "docs", stage: "beforeUpdate", data: { title: "x" } }),
+    );
     assert.ok(!noId.ok && /entryId/.test(noId.errorText), noId.errorText);
     // A collection with no configured hook for the stage.
     await mcp(p.mcpToken, "define_collection", {
