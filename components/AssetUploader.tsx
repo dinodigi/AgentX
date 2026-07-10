@@ -29,7 +29,7 @@ export function AssetUploader({ projectId }: { projectId: string }) {
 
   return (
     <div className="ml-auto flex items-center gap-3">
-      {error && <p className="text-xs text-red-600">{error}</p>}
+      {error && <p className="text-xs text-[--color-err]">{error}</p>}
       <input
         ref={inputRef}
         type="file"

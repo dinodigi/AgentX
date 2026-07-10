@@ -56,11 +56,11 @@ export default async function ApiReference({
       <div className="card mb-6 max-w-2xl p-4">
         <p className="mb-2 text-sm font-medium">Realtime — change feed</p>
         <p className="mb-2 flex items-center gap-2">
-          <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-xs font-medium text-emerald-800">GET</span>
+          <span className="chip chip-ok rounded px-1.5 py-0.5 font-mono text-xs font-medium">GET</span>
           <code className="font-mono text-sm">/api/v1/changes?since=&lt;cursor&gt;</code>
         </p>
         <p className="mb-2 flex items-center gap-2">
-          <span className="rounded bg-emerald-100 px-1.5 py-0.5 font-mono text-xs font-medium text-emerald-800">GET</span>
+          <span className="chip chip-ok rounded px-1.5 py-0.5 font-mono text-xs font-medium">GET</span>
           <code className="font-mono text-sm">/api/v1/changes/stream</code>{" "}
           <span className="text-xs text-[--color-ink-mute]">(SSE)</span>
         </p>
@@ -97,12 +97,12 @@ export default async function ApiReference({
 function Method({ verb, tone }: { verb: string; tone: "get" | "post" | "mut" }) {
   const cls =
     tone === "get"
-      ? "bg-brand-soft text-brand-strong"
+      ? "chip-brand"
       : tone === "post"
-        ? "bg-amber-50 text-amber-800"
-        : "bg-[--color-paper] text-[--color-ink-soft]";
+        ? "alert-warn"
+        : "chip-mute";
   return (
-    <span className={`mr-2 rounded px-1.5 py-0.5 font-mono text-xs font-medium ${cls}`}>
+    <span className={`chip mr-2 rounded px-1.5 py-0.5 font-mono text-xs font-medium ${cls}`}>
       {verb}
     </span>
   );

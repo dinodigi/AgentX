@@ -41,7 +41,7 @@ export function RichtextInput({ name, initialHtml }: { name: string; initialHtml
     }`;
 
   return (
-    <div className="rounded-lg border border-[--color-line] bg-white focus-within:border-[--color-line-strong]">
+    <div className="rounded-lg border border-[--color-line] bg-[--color-card] focus-within:border-[--color-line-strong]">
       <input type="hidden" name={name} value={html} />
       {editor && (
         <div className="flex items-center gap-0.5 border-b border-[--color-line] px-1.5 py-1">

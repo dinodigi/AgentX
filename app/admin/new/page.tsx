@@ -5,10 +5,10 @@ import { NewProjectForm } from "./NewProjectForm";
 export default function NewProjectPage() {
   return (
     <div className="min-h-screen">
-      <header className="bg-[#16130e]">
+      <header className="border-b border-[--color-line] bg-[--color-card]">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-8 py-4">
-          <Link href="/admin" className="display text-[15px] font-semibold tracking-tight text-white">
-            Agent<span className="text-white/50">X</span>
+          <Link href="/admin" className="display text-[15px] font-semibold tracking-tight">
+            Agent<span className="text-[--color-ink-mute]">X</span>
           </Link>
           <UserButton />
         </div>

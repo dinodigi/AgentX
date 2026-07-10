@@ -44,10 +44,10 @@ export default async function AdminHome() {
 
   return (
     <div className="min-h-screen">
-      <header className="bg-[#16130e]">
+      <header className="border-b border-[--color-line] bg-[--color-card]">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-8 py-4">
-          <span className="display text-[15px] font-semibold tracking-tight text-white">
-            Agent<span className="text-white/50">X</span>
+          <span className="display text-[15px] font-semibold tracking-tight">
+            Agent<span className="text-[--color-ink-mute]">X</span>
           </span>
           <UserButton />
         </div>
@@ -136,9 +136,8 @@ export default async function AdminHome() {
                           title={`${c.type}: ${c.status}`}
                         >
                           <span
-                            className={`h-1.5 w-1.5 rounded-full ${
-                              c.status === "connected" ? "bg-emerald-500" : "bg-red-500"
-                            }`}
+                            className="h-1.5 w-1.5 rounded-full"
+                            style={{ background: c.status === "connected" ? "var(--color-ok)" : "var(--color-err)" }}
                           />
                           {c.type}
                         </span>

@@ -22,7 +22,7 @@ const buttonClass = "btn btn-primary disabled:opacity-60";
 
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
-  return <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>;
+  return <p className="alert-error mt-2 rounded-lg px-3 py-2 text-sm">{error}</p>;
 }
 
 export function BrandingForm({
@@ -30,12 +30,13 @@ export function BrandingForm({
   initial,
 }: {
   projectId: string;
-  initial: { displayName: string; primaryColor: string; logoUrl: string };
+  initial: { displayName: string; primaryColor: string; logoUrl: string; theme: "dark" | "light" };
 }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [logoUrl, setLogoUrl] = useState(initial.logoUrl);
   const [uploading, setUploading] = useState(false);
+  const [theme, setTheme] = useState<"dark" | "light">(initial.theme);
 
   async function onLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -76,6 +77,26 @@ export function BrandingForm({
         {logoUrl && <img src={logoUrl} alt="" className="h-9 w-9 rounded-lg border border-[--color-line] object-cover" />}
         <input type="file" accept="image/*" onChange={onLogoFile} disabled={uploading} className="text-sm text-[--color-ink-soft]" />
       </div>
+
+      <label className="mb-1 block text-sm font-medium">Admin theme</label>
+      <input type="hidden" name="theme" value={theme} />
+      <div className="mb-1 inline-flex overflow-hidden rounded-lg border border-[--color-line]">
+        {(["dark", "light"] as const).map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTheme(t)}
+            className={`px-3.5 py-1.5 font-mono text-xs capitalize transition-colors ${
+              theme === t ? "bg-[--color-raised] text-[--color-ink]" : "text-[--color-ink-mute] hover:text-[--color-ink]"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <p className="mb-4 text-xs text-[--color-ink-mute]">
+        The register your client&apos;s workspace uses. Dark is the default.
+      </p>
 
       <button type="submit" className={buttonClass}>
         {saved ? "Saved" : "Save branding"}
@@ -167,7 +188,7 @@ export function TokensSection({
                   const res = await revokeToken(projectId, t.id);
                   setError(res.error ?? null);
                 }}
-                className="rounded p-1 text-[--color-ink-mute] hover:bg-red-50 hover:text-red-600"
+                className="rounded p-1 text-[--color-ink-mute] transition-colors hover:text-[--color-err]"
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -193,7 +214,7 @@ export function TokensSection({
               {copied ? "Copied" : "Copy"}
             </button>
           </div>
-          <p className="my-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <p className="alert-warn my-2 rounded-lg px-3 py-2 text-sm">
             Shown once — store it now.
           </p>
           <McpSnippet token={revealed} />
@@ -318,9 +339,14 @@ export function ConnectorCard(p: ConnectorCardProps) {
     >
       <div className="mb-3 flex items-center gap-2">
         <span
-          className={`h-2 w-2 rounded-full ${
-            !p.connected ? "bg-gray-300" : p.status === "connected" ? "bg-emerald-500" : "bg-red-500"
-          }`}
+          className="h-2 w-2 rounded-full"
+          style={{
+            background: !p.connected
+              ? "var(--color-line-strong)"
+              : p.status === "connected"
+                ? "var(--color-ok)"
+                : "var(--color-err)",
+          }}
         />
         <p className="text-sm font-medium">{p.label}</p>
         {p.connected && (
@@ -495,7 +521,7 @@ export function MembersSection({
                   const res = await removeMember(projectId, m.id);
                   setError(res.error ?? null);
                 }}
-                className="ml-auto rounded p-1 text-[--color-ink-mute] hover:bg-red-50 hover:text-red-600"
+                className="ml-auto rounded p-1 text-[--color-ink-mute] transition-colors hover:text-[--color-err]"
               >
                 <Trash2 className="h-4 w-4" />
               </button>

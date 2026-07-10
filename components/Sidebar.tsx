@@ -6,10 +6,10 @@ import { usePathname } from "next/navigation";
 import { ArrowLeft, Code2, Image as ImageIcon, Inbox, Menu, Palette, Plug, Settings, Table2, Trash2 } from "lucide-react";
 
 /**
- * The project workspace rail — ink-dark so the content area reads as paper and
- * the project's brand color is the only saturated voice. Renders entirely from
- * the schema registry: content collections, public-write inboxes, then the
- * project tabs (Appearance / Connectors / Settings / API).
+ * The project workspace rail. Token-based (rebrand direction) so it follows the
+ * project's theme — a raised panel against the page, with the client brand as
+ * the only saturated voice (active markers, badges). Renders entirely from the
+ * schema registry: content collections, public-write inboxes, then project tabs.
  */
 
 export interface SidebarCollection {
@@ -46,8 +46,8 @@ export function Sidebar({
         href={href}
         className={`group relative flex items-center gap-2.5 rounded-lg px-2.5 py-[7px] text-[13.5px] transition-colors ${
           active
-            ? "bg-white/[0.08] font-medium text-white"
-            : "text-white/55 hover:bg-white/[0.05] hover:text-white/85"
+            ? "bg-[--color-raised] font-medium text-[--color-ink]"
+            : "text-[--color-ink-mute] hover:bg-[--color-raised] hover:text-[--color-ink]"
         }`}
       >
         {active && (
@@ -57,14 +57,14 @@ export function Sidebar({
           />
         )}
         <Icon
-          className={`h-4 w-4 shrink-0 transition-colors ${active ? "" : "text-white/40 group-hover:text-white/70"}`}
+          className="h-4 w-4 shrink-0 transition-colors"
           style={active ? { color: "var(--brand)" } : undefined}
         />
         <span className="truncate">{label}</span>
         {badge ? (
           <span
-            className="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white"
-            style={{ background: "var(--brand)" }}
+            className="ml-auto rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none"
+            style={{ background: "var(--brand)", color: "var(--brand-ink)" }}
             title={`${badge} unhandled`}
           >
             {badge > 99 ? "99+" : badge}
@@ -75,7 +75,7 @@ export function Sidebar({
   };
 
   const groupLabel = (text: string) => (
-    <p className="px-2.5 pb-1.5 pt-5 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">
+    <p className="px-2.5 pb-1.5 pt-5 font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[--color-ink-mute]">
       {text}
     </p>
   );
@@ -87,33 +87,33 @@ export function Sidebar({
         type="button"
         aria-label="Open navigation"
         onClick={() => setOpen(true)}
-        className="fixed left-3 top-2.5 z-40 rounded-lg bg-[#16130e] p-2 text-white/80 shadow md:hidden"
+        className="fixed left-3 top-2.5 z-40 rounded-lg border border-[--color-line] bg-[--color-card] p-2 text-[--color-ink-mute] shadow md:hidden"
       >
         <Menu className="h-4 w-4" />
       </button>
       {open && (
         <div
-          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
           onClick={() => setOpen(false)}
         />
       )}
       <aside
-        className={`fixed inset-y-0 left-0 z-50 flex w-60 shrink-0 flex-col overflow-y-auto bg-[#16130e] px-3 py-4 transition-transform md:static md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-60 shrink-0 flex-col overflow-y-auto border-r border-[--color-line] bg-[--color-card] px-3 py-4 transition-transform md:static md:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
       <div className="mb-2 flex items-center gap-2.5 px-2.5">
         {logoUrl ? (
-          <img src={logoUrl} alt="" className="h-7 w-7 rounded-lg object-cover ring-1 ring-white/10" />
+          <img src={logoUrl} alt="" className="h-7 w-7 rounded-lg object-cover ring-1 ring-[--color-line]" />
         ) : (
           <div
-            className="display flex h-7 w-7 items-center justify-center rounded-lg text-[13px] font-semibold text-white"
-            style={{ background: "var(--brand)" }}
+            className="display flex h-7 w-7 items-center justify-center rounded-lg text-[13px] font-semibold"
+            style={{ background: "var(--brand)", color: "var(--brand-ink)" }}
           >
             {projectName.charAt(0).toUpperCase()}
           </div>
         )}
-        <span className="display truncate text-[14.5px] font-semibold text-white">
+        <span className="display truncate text-[14.5px] font-semibold text-[--color-ink]">
           {projectName}
         </span>
       </div>
@@ -134,7 +134,7 @@ export function Sidebar({
 
       <Link
         href="/admin"
-        className="mt-auto flex items-center gap-2 px-2.5 py-2 text-xs text-white/35 transition-colors hover:text-white/70"
+        className="mt-auto flex items-center gap-2 px-2.5 py-2 font-mono text-[11px] text-[--color-ink-mute] transition-colors hover:text-[--color-ink]"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
         All projects

@@ -53,7 +53,7 @@ export function NewProjectForm() {
           </button>
         </div>
 
-        <p className="mb-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <p className="alert-warn mb-4 rounded-lg px-3 py-2 text-sm">
           Shown once — store it now.
         </p>
 
@@ -80,7 +80,7 @@ export function NewProjectForm() {
         id="name"
         name="name"
         placeholder="Acme Landscaping"
-        className="mb-4 w-full rounded-lg border border-[--color-line] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-200"
+        className="field-input mb-4"
       />
 
       <p className="mb-1.5 text-sm font-medium">Brand color</p>
@@ -109,7 +109,7 @@ export function NewProjectForm() {
       </div>
 
       {error && (
-        <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        <p className="alert-error mb-3 rounded-lg px-3 py-2 text-sm">{error}</p>
       )}
       <button
         type="submit"

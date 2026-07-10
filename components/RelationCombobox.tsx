@@ -79,7 +79,7 @@ export function RelationCombobox({
       )}
 
       {open && !selected && (
-        <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-[--color-line] bg-white shadow-lg">
+        <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-[--color-line] bg-[--color-card] shadow-lg">
           {filtered.length === 0 ? (
             <p className="px-3 py-2.5 text-sm text-[--color-ink-mute]">No matches.</p>
           ) : (

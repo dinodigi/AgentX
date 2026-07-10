@@ -43,8 +43,8 @@ export function ConfirmButton({
     "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors disabled:opacity-50";
   const tone = danger
     ? armed
-      ? "border-red-600 bg-red-600 text-white"
-      : "border-[--color-line] text-[--color-ink-mute] hover:border-red-200 hover:text-red-600"
+      ? "border-[--color-err] bg-[--color-err] text-white"
+      : "border-[--color-line] text-[--color-ink-mute] hover:border-[--color-err] hover:text-[--color-err]"
     : "border-[--color-line] text-[--color-ink-mute] hover:border-[--color-line-strong] hover:text-[--color-ink-soft]";
 
   return (
@@ -52,7 +52,7 @@ export function ConfirmButton({
       <button type="button" disabled={pending} onClick={run} className={`${base} ${tone}`}>
         {pending ? pendingLabel : armed && confirmLabel ? confirmLabel : label}
       </button>
-      {error && <span className="text-[11px] text-red-600">{error}</span>}
+      {error && <span className="text-[11px] text-[--color-err]">{error}</span>}
     </span>
   );
 }

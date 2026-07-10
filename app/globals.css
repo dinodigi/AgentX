@@ -353,6 +353,24 @@ body {
   color: var(--color-ink-mute);
 }
 
+/* Theme-aware message surfaces — replace hardcoded bg-red-50/amber-50 so admin
+   alerts read correctly in both dark and light registers. */
+.alert-error {
+  background: color-mix(in srgb, var(--color-err) 12%, transparent);
+  color: var(--color-err);
+  border: 1px solid color-mix(in srgb, var(--color-err) 30%, transparent);
+}
+.alert-warn {
+  background: color-mix(in srgb, var(--color-warn) 12%, transparent);
+  color: var(--color-warn);
+  border: 1px solid color-mix(in srgb, var(--color-warn) 30%, transparent);
+}
+.alert-ok {
+  background: color-mix(in srgb, var(--color-ok) 12%, transparent);
+  color: var(--color-ok);
+  border: 1px solid color-mix(in srgb, var(--color-ok) 30%, transparent);
+}
+
 /* Richtext editor content (TipTap) — colors follow the theme tokens. */
 .richtext-editor h2 {
   font-size: 1.25rem;

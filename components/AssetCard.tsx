@@ -63,15 +63,15 @@ export function AssetCard({
           }}
           className={`shrink-0 rounded p-1.5 transition-colors ${
             armed
-              ? "bg-red-600 text-white"
-              : "text-[--color-ink-mute] hover:bg-red-50 hover:text-red-600"
+              ? "bg-[--color-err] text-white"
+              : "text-[--color-ink-mute] hover:text-[--color-err]"
           }`}
         >
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
       {error && (
-        <p className="border-t border-[--color-line] bg-red-50 px-3 py-2 text-[11px] leading-snug text-red-700">
+        <p className="alert-error border-t px-3 py-2 text-[11px] leading-snug">
           {error}
         </p>
       )}

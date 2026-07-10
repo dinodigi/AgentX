@@ -30,6 +30,7 @@ export default async function AppearancePage({
           displayName: project.branding.displayName ?? project.name,
           primaryColor: project.branding.primaryColor ?? "#4f46e5",
           logoUrl: project.branding.logoUrl ?? "",
+          theme: project.branding.theme ?? "dark",
         }}
       />
     </>

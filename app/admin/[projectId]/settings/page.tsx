@@ -142,7 +142,7 @@ export default async function SettingsPage({
                     <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
                       {d.createdAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                     </td>
-                    <td className="max-w-40 truncate px-3 py-2.5 text-xs text-red-600">
+                    <td className="max-w-40 truncate px-3 py-2.5 text-xs text-[--color-err]">
                       {d.lastError}
                     </td>
                     <td className="px-3 py-2.5">
@@ -239,7 +239,7 @@ export default async function SettingsPage({
                         <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
                           {j.attempts}/{j.maxAttempts}
                         </td>
-                        <td className="max-w-40 truncate px-3 py-2.5 text-xs text-red-600">{j.lastError}</td>
+                        <td className="max-w-40 truncate px-3 py-2.5 text-xs text-[--color-err]">{j.lastError}</td>
                         <td className="px-3 py-2.5">
                           {j.status === "pending" && (
                             <form action={cancelJobAction.bind(null, projectId, j.id)}>

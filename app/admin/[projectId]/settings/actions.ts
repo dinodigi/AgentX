@@ -56,12 +56,13 @@ export async function updateBranding(
   const displayName = String(formData.get("displayName") ?? "").trim();
   const primaryColor = String(formData.get("primaryColor") ?? "").trim();
   const logoUrl = String(formData.get("logoUrl") ?? "").trim();
+  const theme = formData.get("theme") === "light" ? "light" : "dark";
   if (!displayName) return { error: "Enter a display name" };
   if (!/^#[0-9a-fA-F]{6}$/.test(primaryColor)) return { error: "Pick a valid color" };
 
   await db
     .update(projects)
-    .set({ branding: { displayName, primaryColor, logoUrl: logoUrl || undefined } })
+    .set({ branding: { displayName, primaryColor, logoUrl: logoUrl || undefined, theme } })
     .where(eq(projects.id, projectId));
   revalidateTag(`project:${projectId}`);
   revalidatePath(`/admin/${projectId}`, "layout");

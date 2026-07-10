@@ -78,7 +78,7 @@ export function EntryForm({
         />
       ))}
       {error && (
-        <p className="mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        <p className="alert-error mb-3 rounded-lg px-3 py-2 text-sm">{error}</p>
       )}
       <button
         type="submit"
@@ -110,7 +110,7 @@ function Label({ field, localeChip }: { field: FieldDef; localeChip?: string | n
     <div className="mb-1.5 flex items-center gap-2">
       <span className="text-sm font-medium">
         {field.label}
-        {field.required ? <span className="text-red-500"> *</span> : null}
+        {field.required ? <span className="text-[--color-err]"> *</span> : null}
       </span>
       <VisibilityPill publicRead={field.publicRead} />
       {localeChip ? <span className="chip chip-mute">{localeChip}</span> : null}
