@@ -31,25 +31,48 @@ a good tone reference — "declarative + self-describing", "machine-readable
 errors with fix hints", "destructive = plan + confirm". Anti-hype; show real
 mechanics (tool calls, plans, diffs) rather than abstract AI promises.
 
-## 2. Existing design system (extend, don't replace)
+## 2. Design direction — THIS IS A REBRAND
 
-"**Paper-and-ink editorial**" — established 2026-07-05, lives in
-[app/globals.css](../app/globals.css):
+**The owner has decided to move away from the current look.** The incumbent
+system ("paper-and-ink editorial": warm paper canvas, ink sidebar, Bricolage
+Grotesque display type) is documented below only so you know what you're
+replacing and what its wiring contract is. Do not extend it.
 
-- **Canvas**: warm paper background; **ink sidebar** `#16130e` in the admin.
-- **Fonts** (via next/font, already wired): Bricolage Grotesque (display),
-  Schibsted Grotesk (body), IBM Plex Mono (code/ids).
-- **Shared CSS vocabulary** (the class contract components rely on):
-  `.card`, `.btn`, `.btn-primary`, `.btn-ink`, `.field-input`, `.chip-*`
-  (chip-brand / chip-mute), `.eyebrow`, `.display`, `.section-label`,
-  `.richtext-editor`. CSS variables like `--color-paper`, `--color-ink-mute`,
-  `--color-line`, `--brand` (per-project brand color is injected at runtime
-  from project branding — the admin must look right under ANY brand color).
-- **Stack**: Next.js App Router + Tailwind v4. Server components by default.
+**Target direction: futuristic, technical, AI-native.**
+**Primary reference: the Payload CMS website (payloadcms.com).** What we like
+about it: dark-first, high-contrast, engineered feel — visible grid/hairlines,
+monospace accents for technical truth (ids, tool names, code), restrained
+near-monochrome palette with one sharp accent, generous negative space,
+type-led rather than illustration-led, subtle purposeful motion. It looks like
+a serious tool built by people who ship. AgentX's subject matter fits this
+perfectly: MCP tool calls, schema diffs, plan+confirm flows ARE the visuals —
+lean into rendering real mechanics (terminal-style tool-call snippets, schema
+diffs, API responses) as first-class design elements.
 
-You may evolve tokens/values and add classes; keep the class NAMES stable
-(components across ~20 admin pages consume them). If you change a token,
-deliver the updated `globals.css` block.
+Anchor on Payload as the reference point, but this must not read as a Payload
+clone — find AgentX's own signature within that genre (one direction, not
+three options).
+
+**Scope of the rebrand**: marketing AND the platform admin — one system, two
+registers. Dark-first is on the table for the admin too (owner is open to it);
+decide and commit. Fonts are replaceable (next/font makes wiring trivial —
+pick license-safe/open faces; a strong mono is essential to this direction).
+
+### The incumbent (what you're replacing — wiring contract only)
+
+Lives in [app/globals.css](../app/globals.css). The **class-name contract**
+matters for wiring even after the rebrand: ~20 admin pages consume
+`.card`, `.btn`, `.btn-primary`, `.btn-ink`, `.field-input`, `.chip-*`,
+`.eyebrow`, `.display`, `.section-label`, `.richtext-editor`. Preferred:
+keep these class NAMES and restyle their values wholesale (cheapest wiring).
+If the new system genuinely needs a different vocabulary, deliver an explicit
+old→new mapping and engineering will migrate.
+
+Two hard invariants that survive the rebrand:
+- `--brand`: each project injects an arbitrary client brand color into the
+  admin at runtime — the new system needs explicit rules for where that color
+  appears and how it stays legible on the new (likely dark) surfaces.
+- **Stack**: Next.js App Router + Tailwind v4, server components by default.
 
 ## 3. Workstream A — marketing pages (net-new)
 
@@ -69,10 +92,13 @@ Nothing exists today. Proposed minimum set (adjust if you see a better shape):
 Constraints:
 - Lives in the same Next app under a `(marketing)` route group (default
   assumption — flag if you'd rather it be standalone).
-- Marketing MAY have its own expanded palette/imagery, but must feel like the
-  same brand family as the paper-and-ink admin.
-- Original illustrations/diagrams only; no stock-alike AI hero clichés.
+- Marketing is where the new direction (§2) shows at full strength; the admin
+  is its quieter, denser sibling — one recognizable system across both.
+- Original illustrations/diagrams only; no stock-alike AI hero clichés
+  (no glowing brains, no robot hands). Real mechanics as visuals: tool-call
+  transcripts, schema diffs, plan/confirm exchanges, API payloads.
 - Responsive down to 375px; static/server-rendered; no heavy JS libraries.
+  Motion via CSS/small hand-rolled JS only.
 
 ## 4. Workstream B — platform UI pass (existing, never had a design pass)
 
@@ -96,17 +122,19 @@ Surfaces (all under [app/admin/](../app/admin/) + [components/](../components/))
 | API reference | .../api | generated per-project docs |
 
 Design goals, in priority order:
-1. **Client-credibility**: the entry list + entry form are what clients live
-   in — they should feel like a paid product. Density, hierarchy, empty
-   states (there are "teaching" empty states — keep the teaching, raise the
-   craft).
+1. **Reskin to the new system (§2)**: this is not a polish pass on the old
+   look — every surface moves to the new direction. The entry list + entry
+   form are what clients live in; they should feel like a paid product.
+   Keep the "teaching" empty states, raise the craft.
 2. **Mobile**: sidebar is a drawer; forms and tables need real small-screen
    treatment, not just wrapping.
 3. **Brand-color resilience**: every accent must survive an arbitrary client
-   `--brand` value (including ugly ones) — define usage rules (where brand
-   color may/may not appear, contrast fallbacks).
-4. **The operator surfaces** (settings/connectors/automation) can stay denser
-   and more technical — different register, same system.
+   `--brand` value (including ugly ones) on the new surfaces — define usage
+   rules (where brand color may/may not appear, contrast fallbacks). This
+   gets HARDER on dark surfaces; solve it explicitly.
+4. **The operator surfaces** (settings/connectors/automation) can be denser
+   and more technical — the register where the mono/terminal voice of the
+   new direction is most at home.
 
 What NOT to change: form semantics and field behavior (inputs, hidden fields
 like `__locale`, confirm-flows); information architecture of settings; any
@@ -115,10 +143,11 @@ game.
 
 ## 5. Deliverables (what engineering needs back)
 
-1. **Direction**: one consolidated visual direction (not three options) —
-   moodboard-level for marketing + a token sheet (colors incl. dark-of-paper
-   decisions, type scale, spacing scale, radii, shadows). Explicit decision:
-   marketing dark-mode yes/no (admin stays light for v1).
+1. **Direction**: one consolidated visual direction (not three options),
+   Payload-anchored per §2 — moodboard + a FULL new token sheet (palette,
+   type scale + chosen faces, spacing, radii, borders/hairlines, shadows,
+   motion rules). Explicit decisions to make and state: dark-first for the
+   admin yes/no; how `--brand` client colors behave on the new surfaces.
 2. **Marketing pages**: high-fidelity mockups (HTML/Tailwind v4 preferred —
    they wire near-verbatim; Figma acceptable with a full handoff spec), all
    breakpoints for the landing page, copy included (or marked TODO-copy per
@@ -132,16 +161,21 @@ game.
    treatment.
 
 Format notes for the wiring session: Tailwind v4 utilities + the shared class
-vocabulary; no new fonts; no new runtime deps without flagging; every spec
-names the file it applies to.
+vocabulary (or an explicit old→new class mapping, see §2); new fonts fine via
+next/font (state the faces + licenses); no new runtime deps without flagging;
+every spec names the file it applies to.
 
 ## 6. Open questions (answer or decide-and-note)
 
 1. Marketing CTA reality: "request access" vs "book a call" vs just a repo
    link — owner call (platform is not self-serve until Phase 20).
 2. Product name/logo: "AgentX" is the working name — is it the shipping name?
-   Marketing pages make this decision real.
+   Marketing pages make this decision real; the rebrand is the moment to
+   settle it.
 3. Same-app `(marketing)` route group vs separate site (default: same app).
 4. Screenshots of the current admin for workstream B: the admin is auth-gated;
    ask the owner for a walkthrough/screens, or design from the component
    files listed above.
+5. Admin dark-first: owner is open to it (Payload's own admin is dark-capable)
+   — design should make the call and defend it, considering client-facing
+   readability and the `--brand` injection.
