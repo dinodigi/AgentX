@@ -442,8 +442,8 @@ export const TOOL_DEFS: ToolDef[] = [
       "E_CONFLICT whose message names the cause — an if-clause that didn't hold, the increment " +
       "field being unset, or the increment breaching min/max. Re-read and retry. Book-a-seat: " +
       '{if:[{field:"seats",op:"gt",value:0}], increment:{field:"seats",by:-1}}. ' +
-      "Does NOT run before-write hooks — its value is a single atomic statement with no pre-read, " +
-      "which a synchronous external consult would defeat.",
+      "Does NOT run before-write hooks OR recompute computed fields — its value is a single atomic " +
+      "statement with no pre-read, which a synchronous external consult (or a source-diff) would defeat.",
     inputSchema: {
       type: "object",
       properties: {

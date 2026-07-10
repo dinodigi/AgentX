@@ -424,8 +424,11 @@ the spec file where they disagree.*
       validates (was rejecting a snapshot's own computed values); test_hook beforeUpdate dry-
       run mirrors the write-path frozen-strip. Adversarial review (3 lenses) confirmed only
       the test_hook one; injection + cycles lenses clean.
-- [ ] 16.5 `I4` (S) — computed recompute on update (source-field-triggered;
-      `now on:'always'` restamps; CAS path documented as skipping).
+- [x] 16.5 `I4` (S) — computed recompute on update: slugify/template recompute when a
+      source field is in the patch; `now on:'always'` restamps; uuid + now:'create' frozen;
+      recomputed values STORAGE-re-validated (obey min/max); update_entry_if/CAS never
+      recomputes (stated). ✅ 2026-07-09, 42-computed smoke (11). Self-review caught the
+      recomputed-value-bounds gap (updateEntryCore doesn't re-validate the merge).
 - [ ] 16.6 `I5` (S) — hooks on bulk_create_entries **bounded to the host budget**:
       item cap sized so `ceil(n/5) × timeout + insert` fits ~8s; above it,
       E_VALIDATION with a "split the batch" hint. (Async bulk hooks ride G1 later.)

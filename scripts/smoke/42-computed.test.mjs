@@ -8,6 +8,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 const postFields = [
   { name: "title", label: "T", type: "text", required: true, publicRead: true },
+  { name: "body", label: "B", type: "text", publicRead: true }, // plain, non-source
   { name: "slug", label: "Slug", type: "text", unique: true, publicRead: true, computed: { fn: "slugify", from: "title" } },
   { name: "ref", label: "Ref", type: "text", publicRead: true, computed: { fn: "uuid" } },
   { name: "created_at", label: "C", type: "date", publicRead: true, computed: { fn: "now" } },
@@ -53,15 +54,21 @@ describe("computed fields (I3)", () => {
     assert.match(read.json.data.ref, UUID_RE);
   });
 
-  it("computed fields are FROZEN on update — patching one is rejected, and a normal update doesn't recompute", async () => {
-    const c = await mcp(p.mcpToken, "create_entry", { collection: "posts", data: { title: "First Version" } });
+  it("update: a client can't patch a computed key; slug recomputes on a source change, stable otherwise (I4)", async () => {
+    const c = await mcp(p.mcpToken, "create_entry", { collection: "posts", data: { title: "First Version", body: "x" } });
     const patchComputed = await mcp(p.mcpToken, "update_entry", { collection: "posts", id: c.value.id, data: { slug: "manual" } });
     assert.ok(!patchComputed.ok && /is computed/.test(patchComputed.errorText), patchComputed.errorText);
-    // Changing the source title does NOT recompute the slug in I3 (I4 adds that).
+    // A SOURCE change recomputes slug + template.
     const u = await mcp(p.mcpToken, "update_entry", { collection: "posts", id: c.value.id, data: { title: "Second Version" } });
     assert.ok(u.ok, u.errorText);
-    assert.equal(u.value.data.title, "Second Version");
-    assert.equal(u.value.data.slug, "first-version", "computed slug is frozen on update (I3)");
+    assert.equal(u.value.data.slug, "second-version", "slug recomputes when its source changes");
+    assert.equal(u.value.data.heading, "Second Version!", "template recomputes when a {{source}} changes");
+    const refAfterSlugChange = u.value.data.ref;
+    // An UNRELATED change leaves computed fields stable (no source touched).
+    const u2 = await mcp(p.mcpToken, "update_entry", { collection: "posts", id: c.value.id, data: { body: "y" } });
+    assert.ok(u2.ok, u2.errorText);
+    assert.equal(u2.value.data.slug, "second-version", "slug stable when no source changes");
+    assert.equal(u2.value.data.ref, refAfterSlugChange, "uuid never recomputes");
   });
 
   it("bulk_create_entries stamps computed per item (distinct uuids)", async () => {
@@ -114,6 +121,62 @@ describe("computed fields (I3)", () => {
     assert.equal(restored.value.data.slug, "version-a", "the version's computed value is preserved");
   });
 
+  it("now:'always' restamps on update; now:'create' + update_entry_if never recompute (I4)", async () => {
+    const proj = await createEphemeralProject("computed-i4");
+    try {
+      await mcp(proj.mcpToken, "define_collection", {
+        name: "events",
+        fields: [
+          { name: "name", label: "N", type: "text", required: true, publicRead: true },
+          { name: "slug", label: "S", type: "text", publicRead: true, computed: { fn: "slugify", from: "name" } },
+          { name: "created_at", label: "C", type: "date", publicRead: true, computed: { fn: "now" } },
+          { name: "updated_at", label: "U", type: "date", publicRead: true, computed: { fn: "now", on: "always" } },
+        ],
+      });
+      const c = await mcp(proj.mcpToken, "create_entry", { collection: "events", data: { name: "Launch" } });
+      const g0 = (await mcp(proj.mcpToken, "get_entry", { collection: "events", id: c.value.id })).value.data;
+      await new Promise((r) => setTimeout(r, 25)); // distinct timestamp
+      const u = await mcp(proj.mcpToken, "update_entry", { collection: "events", id: c.value.id, data: { name: "Relaunch" } });
+      assert.equal(u.value.data.slug, "relaunch", "slug recomputes on source change");
+      assert.equal(u.value.data.created_at, g0.created_at, "now:'create' stays frozen");
+      assert.notEqual(u.value.data.updated_at, g0.updated_at, "now:'always' restamps on update");
+
+      // update_entry_if (CAS) does NOT recompute — a source change via CAS leaves slug stale.
+      const cas = await mcp(proj.mcpToken, "update_entry_if", {
+        collection: "events",
+        id: c.value.id,
+        if: [{ field: "name", op: "eq", value: "Relaunch" }],
+        data: { name: "CasName" },
+      });
+      assert.ok(cas.ok, cas.errorText);
+      const g1 = (await mcp(proj.mcpToken, "get_entry", { collection: "events", id: c.value.id })).value.data;
+      assert.equal(g1.name, "CasName");
+      assert.equal(g1.slug, "relaunch", "CAS never recomputes computed fields");
+    } finally {
+      await proj.destroy();
+    }
+  });
+
+  it("a recomputed value still obeys its own constraints on update (I4)", async () => {
+    const proj = await createEphemeralProject("computed-bounds");
+    try {
+      await mcp(proj.mcpToken, "define_collection", {
+        name: "tags",
+        fields: [
+          { name: "title", label: "T", type: "text", required: true, publicRead: true },
+          { name: "slug", label: "S", type: "text", max: 5, publicRead: true, computed: { fn: "slugify", from: "title" } },
+        ],
+      });
+      const c = await mcp(proj.mcpToken, "create_entry", { collection: "tags", data: { title: "Ab" } });
+      assert.equal((await mcp(proj.mcpToken, "get_entry", { collection: "tags", id: c.value.id })).value.data.slug, "ab");
+      // Updating to a long title would recompute a slug past max(5) — must be rejected.
+      const u = await mcp(proj.mcpToken, "update_entry", { collection: "tags", id: c.value.id, data: { title: "Very Long Title" } });
+      assert.ok(!u.ok && /slug.*at most 5|at most 5 characters/.test(u.errorText), u.errorText);
+    } finally {
+      await proj.destroy();
+    }
+  });
+
   it("a beforeUpdate transform CANNOT change a computed field (frozen, restored from current)", async () => {
     const rcv = await startHookReceiver();
     const proj = await createEphemeralProject("computed-hook");
@@ -133,7 +196,9 @@ describe("computed fields (I3)", () => {
       const u = await mcp(proj.mcpToken, "update_entry", { collection: "docs", id: c.value.id, data: { title: "trigger" } });
       assert.ok(u.ok, u.errorText);
       assert.equal(u.value.data.title, "Edited", "transform's non-computed change applies");
-      assert.equal(u.value.data.slug, "original", "computed slug is FROZEN — the transform can't set it");
+      // The attacker's slug is stripped; I4 then recomputes it from the NEW title —
+      // never the attacker's value, and never left stale.
+      assert.equal(u.value.data.slug, "edited", "slug is derived from the transform's title, not the attacker's value");
 
       // test_hook's beforeUpdate preview must AGREE with the write path — the
       // echoed computed key must not be reported as invalid (review fix).

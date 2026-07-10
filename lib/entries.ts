@@ -33,7 +33,7 @@ import {
 } from "./query";
 import { emitEntryEvent, runEventAction, type EntryEvent } from "./events";
 import { callWriteHook, type HookEnvelope } from "./hooks";
-import { evaluateComputed } from "./computed";
+import { evaluateComputed, recomputeOnUpdate, hasRecomputable } from "./computed";
 import { stampIdentity, stampedIdentityFields } from "./access-rules";
 import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workflow";
 import { recordChange, recordChanges, type ChangeInput } from "./changes";
@@ -561,6 +561,26 @@ export async function updateEntry(
   // patch with the re-validated, identity-re-stripped full entry).
   if (collection.hooks?.beforeUpdate && !collection.hooks.beforeUpdate.disabled) {
     patch = await runBeforeUpdateHook(projectId, collection, id, patch);
+  }
+
+  // I4: recompute source-triggered computed fields onto the final patch (after
+  // any transform). slugify/template follow a changed source; now(on:'always')
+  // restamps; uuid + now(on:'create') stay frozen. CAS (update_entry_if) skips this.
+  if (hasRecomputable(collection.fields)) {
+    const [cur] = await db
+      .select()
+      .from(entries)
+      .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
+      .limit(1);
+    if (cur) {
+      const additions = recomputeOnUpdate(collection.fields, patch, cur.data);
+      if (Object.keys(additions).length > 0) {
+        // STORAGE-validate the recomputed values (min/max) — updateEntryCore
+        // doesn't re-validate the merge, so a too-long derived slug must be
+        // caught HERE, matching create's post-stamp STORAGE check.
+        patch = validate(collection.fields, { ...patch, ...additions }, true, "storage");
+      }
+    }
   }
 
   const { entry, emit } = await updateEntryCore(db, collection, id, patch, workflowActor(actor));

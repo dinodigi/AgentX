@@ -191,6 +191,8 @@ export const COMMON_FIELD_CONFIG = [
   "in update calls, set a field to null to unset it (optional fields only)",
   "computed?: {fn} — value DERIVED server-side, never client-supplied (a supplied value is " +
     "rejected). fn: {slugify, from:<sibling text field>} | {template, template:'{{a}}-{{b}}'} | " +
-    "{now} (date) | {uuid}. slugify/template/uuid on text, now on date; can't be required; " +
-    "references must be plain (non-computed) siblings. Stamped at create; frozen on update (I4 adds recompute).",
+    "{now, on?:'create'|'always'} (date) | {uuid}. slugify/template/uuid on text, now on date; " +
+    "can't be required; references must be plain (non-computed) siblings. Stamped at create; on " +
+    "UPDATE slugify/template recompute when a source field changes and now:'always' restamps, " +
+    "while uuid + now:'create' stay frozen (update_entry_if/CAS never recomputes).",
 ];

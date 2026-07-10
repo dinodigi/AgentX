@@ -52,3 +52,49 @@ export function evaluateComputed(fields: FieldDef[], data: Record<string, unknow
 export function computedFieldNames(fields: FieldDef[]): Set<string> {
   return new Set(fields.filter((f) => f.computed).map((f) => f.name));
 }
+
+/** True if any computed field recomputes on update (so updateEntry must fetch
+ * the current row). uuid and now(on:'create') stay frozen. */
+export function hasRecomputable(fields: FieldDef[]): boolean {
+  return fields.some(
+    (f) =>
+      f.computed &&
+      (f.computed.fn === "slugify" ||
+        f.computed.fn === "template" ||
+        (f.computed.fn === "now" && f.computed.on === "always")),
+  );
+}
+
+/**
+ * I4: recompute source-triggered computed fields on update. slugify/template
+ * recompute only when a source field is in the patch; now(on:'always') restamps
+ * every update; uuid + now(on:'create') stay frozen. Returns the additions to
+ * merge into the patch (computed over the MERGED post-patch snapshot).
+ */
+export function recomputeOnUpdate(
+  fields: FieldDef[],
+  patch: Record<string, unknown>,
+  current: Record<string, unknown>,
+): Record<string, unknown> {
+  const patchKeys = new Set(Object.keys(patch));
+  const merged = { ...current };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete merged[k];
+    else merged[k] = v;
+  }
+  const additions: Record<string, unknown> = {};
+  for (const f of fields) {
+    const c = f.computed;
+    if (!c) continue;
+    const recompute =
+      c.fn === "slugify"
+        ? patchKeys.has(c.from)
+        : c.fn === "template"
+          ? [...c.template.matchAll(/\{\{(\w+)\}\}/g)].some((m) => patchKeys.has(m[1]))
+          : c.fn === "now"
+            ? c.on === "always"
+            : false; // uuid, now(on:'create')
+    if (recompute) additions[f.name] = computeValue(c, merged);
+  }
+  return additions;
+}
