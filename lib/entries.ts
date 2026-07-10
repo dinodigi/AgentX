@@ -10,7 +10,9 @@ import {
   transactReceipts,
   type Collection,
   type Entry,
+  type ProjectLocales,
 } from "@/db/schema";
+import { getLocales, hasLocalizedFields, localizeView } from "./locales";
 import {
   buildEntrySchema,
   formatZodError,
@@ -49,7 +51,7 @@ import type { ErrorCode } from "./error-codes";
 import type { AuditActor } from "@/db/schema";
 
 const UNKNOWN_ACTOR: AuditActor = { type: "unknown" };
-import type { FieldDef } from "./field-types";
+import { fieldLocalized, type FieldDef } from "./field-types";
 import { z } from "zod";
 
 /**
@@ -161,8 +163,10 @@ function validate(
   data: unknown,
   partial: boolean,
   mode: "input" | "storage" = "input",
+  /** J5: required when `fields` contains localized fields (see localesFor). */
+  locales?: ProjectLocales | null,
 ): Record<string, unknown> {
-  const { schema } = buildEntrySchema(fields, partial, mode);
+  const { schema } = buildEntrySchema(fields, partial, mode, locales);
   try {
     return schema.parse(data);
   } catch (e) {
@@ -171,6 +175,17 @@ function validate(
     }
     throw e;
   }
+}
+
+/**
+ * J5: the locales context each write path passes into validate(). Cached read;
+ * null when the collection has no localized fields (the common case, free).
+ * A localized field can only exist when project locales are configured
+ * (define-time guard), so a null result for a localized collection makes the
+ * compiled schema fail closed rather than under-validate.
+ */
+async function localesFor(projectId: string, collection: Collection): Promise<ProjectLocales | null> {
+  return hasLocalizedFields(collection.fields) ? getLocales(projectId) : null;
 }
 
 /** Full searchable text of a DB error (message + constraint name if exposed). */
@@ -327,7 +342,7 @@ async function runBeforeCreateHook(
     // the initial-state workflow rule re-applied, ownership re-stamped from the
     // verified identity, and refs re-checked — the hook has no more authority
     // than an honest client and cannot move ownership or dangle a relation.
-    let out = validate(collection.fields, outcome.data, false);
+    let out = validate(collection.fields, outcome.data, false, "input", await localesFor(projectId, collection));
     applyWorkflowOnCreate(collection, out);
     if (identity) out = stampIdentity(collection, identity.user, out);
     const { refChecks } = buildEntrySchema(collection.fields);
@@ -343,7 +358,8 @@ export async function createEntry(
   data: unknown,
   opts: { idempotencyKey?: string; actor?: AuditActor; identity?: WriteIdentity } = {},
 ): Promise<Entry> {
-  const clean = validate(collection.fields, data, false);
+  const locales = await localesFor(projectId, collection);
+  const clean = validate(collection.fields, data, false, "input", locales);
   applyWorkflowOnCreate(collection, clean); // default/enforce the initial state
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
@@ -357,7 +373,7 @@ export async function createEntry(
   // then re-validate in STORAGE mode so the derived output still obeys min/max
   // (unique surfaces at insert via the partial index). No-op without computed fields.
   const toWrite = collection.fields.some((f) => f.computed)
-    ? validate(collection.fields, evaluateComputed(collection.fields, finalData), false, "storage")
+    ? validate(collection.fields, evaluateComputed(collection.fields, finalData), false, "storage", locales)
     : finalData;
 
   const { entry, emit } = await createEntryCore(db, projectId, collection, toWrite, {
@@ -392,6 +408,9 @@ async function updateEntryCore(
   id: string,
   patch: Record<string, unknown>,
   actorType?: WorkflowActor,
+  /** J5: a transform replace-patch is authoritative — its variant maps REPLACE
+   *  instead of merging (the hook saw the merged candidate and owns the result). */
+  coreOpts: { localizedReplace?: boolean } = {},
 ): Promise<{ entry: Entry; emit: EmitDescriptor }> {
   const [current] = await dbc
     .select()
@@ -435,6 +454,22 @@ async function updateEntryCore(
     else sets[k] = v;
   }
   const merged = { ...current.data, ...sets };
+  // J5: localized variant maps MERGE per field — a {de} patch preserves en.
+  // Uses the SAME-EXECUTOR pre-read, so transact updates merge tx-consistently.
+  if (!coreOpts.localizedReplace) {
+    for (const f of collection.fields) {
+      if (!fieldLocalized(f)) continue;
+      const cur = current.data[f.name];
+      const next = sets[f.name];
+      if (
+        cur && next &&
+        typeof cur === "object" && typeof next === "object" &&
+        !Array.isArray(cur) && !Array.isArray(next)
+      ) {
+        merged[f.name] = { ...(cur as Record<string, unknown>), ...(next as Record<string, unknown>) };
+      }
+    }
+  }
   for (const k of unsetKeys) delete merged[k];
   let row: Entry | undefined;
   try {
@@ -464,15 +499,25 @@ async function updateEntryCore(
   };
 }
 
-/** {...current, ...patch} with null = unset — the merged snapshot the hook sees. */
+/** {...current, ...patch} with null = unset — the merged snapshot the hook sees.
+ * Localized fields variant-merge (J5), mirroring updateEntryCore, so the hook's
+ * candidate is the TRUE post-merge row. */
 function mergePatch(
   current: Record<string, unknown>,
   patch: Record<string, unknown>,
+  fields: FieldDef[],
 ): Record<string, unknown> {
   const out = { ...current };
   for (const [k, v] of Object.entries(patch)) {
     if (v === null) delete out[k];
-    else out[k] = v;
+    else if (
+      v && current[k] &&
+      typeof v === "object" && typeof current[k] === "object" &&
+      !Array.isArray(v) && !Array.isArray(current[k]) &&
+      fields.some((f) => f.name === k && fieldLocalized(f))
+    ) {
+      out[k] = { ...(current[k] as Record<string, unknown>), ...(v as Record<string, unknown>) };
+    } else out[k] = v;
   }
   return out;
 }
@@ -500,7 +545,7 @@ async function runBeforeUpdateHook(
   collection: Collection,
   id: string,
   patch: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+): Promise<{ patch: Record<string, unknown>; replaced: boolean }> {
   const hook = collection.hooks!.beforeUpdate!;
   const [current] = await db
     .select()
@@ -508,8 +553,10 @@ async function runBeforeUpdateHook(
     .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
     .limit(1);
   if (!current) throw new ValidationError(`entry ${id} not found`, "E_NOT_FOUND");
-  const merged = mergePatch(current.data, patch);
-  if (hook.when?.length && !matchesClauses(collection.fields, hook.when, merged)) return patch;
+  const merged = mergePatch(current.data, patch, collection.fields);
+  if (hook.when?.length && !matchesClauses(collection.fields, hook.when, merged)) {
+    return { patch, replaced: false };
+  }
   const outcome = await callWriteHook(projectId, collection, hook, {
     event: "entry.before_update",
     collection: collection.name,
@@ -521,7 +568,7 @@ async function runBeforeUpdateHook(
     if ((hook.onError ?? "reject") === "reject") {
       throw new ValidationError(`before-write hook could not be consulted: ${outcome.reason}`, "E_HOOK_FAILED");
     }
-    return patch; // fail-open
+    return { patch, replaced: false }; // fail-open
   }
   if (outcome.kind === "replace") {
     // Server-derived fields are frozen w.r.t. a hook on update: identity
@@ -535,15 +582,15 @@ async function runBeforeUpdateHook(
     ];
     const raw = { ...(outcome.data as Record<string, unknown>) };
     for (const f of frozen) delete raw[f];
-    const full = validate(collection.fields, raw, false);
+    const full = validate(collection.fields, raw, false, "input", await localesFor(projectId, collection));
     for (const f of frozen) {
       if (f in current.data) full[f] = current.data[f];
     }
     const { refChecks } = buildEntrySchema(collection.fields);
     await verifyRefs(projectId, full, refChecks);
-    return buildReplacePatch(current.data, full);
+    return { patch: buildReplacePatch(current.data, full), replaced: true };
   }
-  return patch;
+  return { patch, replaced: false };
 }
 
 export async function updateEntry(
@@ -553,14 +600,19 @@ export async function updateEntry(
   data: unknown,
   actor: AuditActor = UNKNOWN_ACTOR,
 ): Promise<Entry> {
-  let patch = validate(collection.fields, data, true);
+  const locales = await localesFor(projectId, collection);
+  let patch = validate(collection.fields, data, true, "input", locales);
   const { refChecks } = buildEntrySchema(collection.fields, true);
   await verifyRefs(projectId, patch, refChecks);
 
   // I1b: consult the before-update hook (validate gates; transform replaces the
-  // patch with the re-validated, identity-re-stripped full entry).
+  // patch with the re-validated, identity-re-stripped full entry). A transform's
+  // variant maps are authoritative (localizedReplace) — a plain patch's merge.
+  let localizedReplace = false;
   if (collection.hooks?.beforeUpdate && !collection.hooks.beforeUpdate.disabled) {
-    patch = await runBeforeUpdateHook(projectId, collection, id, patch);
+    const hooked = await runBeforeUpdateHook(projectId, collection, id, patch);
+    patch = hooked.patch;
+    localizedReplace = hooked.replaced;
   }
 
   // I4: recompute source-triggered computed fields onto the final patch (after
@@ -578,12 +630,14 @@ export async function updateEntry(
         // STORAGE-validate the recomputed values (min/max) — updateEntryCore
         // doesn't re-validate the merge, so a too-long derived slug must be
         // caught HERE, matching create's post-stamp STORAGE check.
-        patch = validate(collection.fields, { ...patch, ...additions }, true, "storage");
+        patch = validate(collection.fields, { ...patch, ...additions }, true, "storage", locales);
       }
     }
   }
 
-  const { entry, emit } = await updateEntryCore(db, collection, id, patch, workflowActor(actor));
+  const { entry, emit } = await updateEntryCore(db, collection, id, patch, workflowActor(actor), {
+    localizedReplace,
+  });
   await recordChange({
     projectId,
     collection,
@@ -642,18 +696,19 @@ export async function dryRunHook(
   const hook = collection.hooks?.[stage];
   if (!hook) throw new ValidationError(`"${collection.name}" has no ${stage} hook configured — define one first`);
 
+  const locales = await localesFor(projectId, collection);
   let envelope: HookEnvelope;
   if (stage === "beforeCreate") {
-    const clean = validate(collection.fields, data, false);
+    const clean = validate(collection.fields, data, false, "input", locales);
     applyWorkflowOnCreate(collection, clean);
     envelope = { event: "entry.before_create", collection: collection.name, candidate: { data: clean } };
   } else {
     if (!current) throw new ValidationError("beforeUpdate test needs entryId — the row the update targets");
-    const patch = validate(collection.fields, data, true);
+    const patch = validate(collection.fields, data, true, "input", locales);
     envelope = {
       event: "entry.before_update",
       collection: collection.name,
-      candidate: { data: mergePatch(current, patch) },
+      candidate: { data: mergePatch(current, patch, collection.fields) },
       current: { data: current },
     };
   }
@@ -682,7 +737,7 @@ export async function dryRunHook(
     }
     let validationOfFinalData: { ok: boolean; error?: string };
     try {
-      validate(collection.fields, toValidate, false);
+      validate(collection.fields, toValidate, false, "input", locales);
       validationOfFinalData = { ok: true };
     } catch (e) {
       validationOfFinalData = { ok: false, error: e instanceof ValidationError ? e.message : String(e) };
@@ -828,6 +883,19 @@ async function prepareUpdateIf(
   opts: UpdateIfOpts,
   assumeExisting?: Set<string>,
 ): Promise<CasPlan> {
+  // J5: the CAS path is one SQL statement — no in-tx variant merge exists here,
+  // and a shallow overwrite would silently drop the other locales' variants.
+  // Honest boundary instead: send localized fields through update_entry.
+  if (opts.data && typeof opts.data === "object") {
+    for (const k of Object.keys(opts.data as Record<string, unknown>)) {
+      const f = collection.fields.find((x) => x.name === k);
+      if (f && fieldLocalized(f)) {
+        throw new ValidationError(
+          `update_entry_if: "${k}" is a localized field — use update_entry, which merges variant maps`,
+        );
+      }
+    }
+  }
   const patch = opts.data !== undefined ? validate(collection.fields, opts.data, true) : {};
   if (opts.data !== undefined) {
     const { refChecks } = buildEntrySchema(collection.fields, true);
@@ -1090,7 +1158,8 @@ export async function restoreEntryVersion(
   // STORAGE mode: a version snapshot legitimately CONTAINS its computed values;
   // a restore reverts to the exact prior state (old slug/uuid/timestamp kept),
   // so those keys are valid input here, not client-supplied ones to reject.
-  const clean = validate(collection.fields, version.data, false, "storage");
+  // (Restore writes the FULL snapshot — variant maps restore exactly, no merge.)
+  const clean = validate(collection.fields, version.data, false, "storage", await localesFor(projectId, collection));
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
 
@@ -1398,7 +1467,8 @@ export async function transact(
       }
 
       if (op.op === "create") {
-        const clean = validate(collection.fields, data, false);
+        const locales = await localesFor(projectId, collection);
+        const clean = validate(collection.fields, data, false, "input", locales);
         applyWorkflowOnCreate(collection, clean); // initial-state rule on the transact create path too
         const { refChecks } = buildEntrySchema(collection.fields);
         await verifyRefs(projectId, clean, refChecks, assumeExisting);
@@ -1410,12 +1480,12 @@ export async function transact(
         // so a transform's re-verifyRefs accepts same-batch $refs.
         const hooked = await runBeforeCreateHook(projectId, collection, clean, undefined, assumeExisting);
         const toWrite = collection.fields.some((f) => f.computed)
-          ? validate(collection.fields, evaluateComputed(collection.fields, hooked), false, "storage")
+          ? validate(collection.fields, evaluateComputed(collection.fields, hooked), false, "storage", locales)
           : hooked;
         prepared.push({ kind: "create", collection, id: createIds[i]!, clean: toWrite, changedFields: Object.keys(toWrite) });
       } else if (op.op === "update") {
         if (!id) throw new ValidationError("update op requires an id");
-        const clean = validate(collection.fields, data, true);
+        const clean = validate(collection.fields, data, true, "input", await localesFor(projectId, collection));
         const { refChecks } = buildEntrySchema(collection.fields, true);
         await verifyRefs(projectId, clean, refChecks, assumeExisting);
         prepared.push({ kind: "update", collection, id, clean, changedFields: Object.keys(clean) });
@@ -1683,6 +1753,7 @@ export async function bulkCreateEntries(
   }
   const { refChecks } = buildEntrySchema(collection.fields);
   const hasComputed = collection.fields.some((f) => f.computed);
+  const locales = await localesFor(projectId, collection);
 
   const results: BulkItemResult[] = [];
 
@@ -1691,7 +1762,7 @@ export async function bulkCreateEntries(
   await Promise.all(
     items.map(async (item, index) => {
       try {
-        const clean = validate(collection.fields, item, false);
+        const clean = validate(collection.fields, item, false, "input", locales);
         applyWorkflowOnCreate(collection, clean); // same initial-state rule as createEntry
         await verifyRefs(projectId, clean, refChecks);
         validated.push({ index, clean });
@@ -1723,7 +1794,7 @@ export async function bulkCreateEntries(
       valid.push({
         index,
         clean: hasComputed
-          ? validate(collection.fields, evaluateComputed(collection.fields, clean), false, "storage")
+          ? validate(collection.fields, evaluateComputed(collection.fields, clean), false, "storage", locales)
           : clean,
       });
     } catch (e) {
@@ -2113,8 +2184,15 @@ export async function expandRelations(
     // Snapshot label values before resolveRefsForRead mutates ref fields in place.
     const rawById = new Map(targetRows.map((t) => [t.id, { ...t.data }]));
     await resolveRefsForRead(projectId, targetColl, targetRows, viewer);
+    // J5: an expanded target's localized fields flatten like a direct GET of
+    // the target would — a raw variant map must never ride out via ?expand=.
+    const targetLocales =
+      mode === "public" && hasLocalizedFields(targetColl.fields) ? await getLocales(projectId) : null;
     for (const tr of targetRows) {
-      const view = mode === "public" ? toPublicView(targetColl, tr) : { id: tr.id, ...tr.data };
+      const view =
+        mode === "public"
+          ? localizeView(toPublicView(targetColl, tr), targetColl.fields, targetLocales)
+          : { id: tr.id, ...tr.data };
       expandedById.set(tr.id, { raw: rawById.get(tr.id)!, view });
     }
   }
@@ -2229,8 +2307,16 @@ export async function includeReverse(
     const kept = [...byParent.values()].flatMap((list) => list.slice(0, limit));
     const childEntries = kept.map((r) => ({ id: r.id, data: r.data }) as Entry);
     await resolveRefsForRead(projectId, child, childEntries, viewer);
+    // J5: reverse-included children flatten localized fields like a direct GET.
+    const childLocales =
+      mode === "public" && hasLocalizedFields(child.fields) ? await getLocales(projectId) : null;
     const viewById = new Map<string, Record<string, unknown>>(
-      childEntries.map((e) => [e.id, mode === "public" ? toPublicView(child, e) : { id: e.id, data: e.data }]),
+      childEntries.map((e) => [
+        e.id,
+        mode === "public"
+          ? localizeView(toPublicView(child, e), child.fields, childLocales)
+          : { id: e.id, data: e.data },
+      ]),
     );
 
     const key = `${spec.collection}.${spec.field}`;

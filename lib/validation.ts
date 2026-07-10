@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { FIELD_TYPES, fieldMin, fieldMax, fieldPattern, type FieldDef } from "./field-types";
+import { FIELD_TYPES, fieldMin, fieldMax, fieldPattern, fieldLocalized, type FieldDef } from "./field-types";
+import type { ProjectLocales } from "@/db/schema";
 import type { ErrorCode } from "./error-codes";
 
 /**
@@ -248,13 +249,34 @@ const fieldDefSchema = z
   })
   .strict()
   .superRefine((f, ctx) => {
-    // J4: the read side is plumbed but the write side (J5) isn't — reject the
-    // knob explicitly so no localized field can enter the registry yet.
+    // J5: localized = a {locale: value} variant map on text/richtext. Barred
+    // from every knob that needs ONE comparable/indexable/printable value.
     if (f.localized) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "localized fields are not yet enabled",
-      });
+      if (f.type !== "text" && f.type !== "richtext") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "localized is only valid on text/richtext fields",
+        });
+      }
+      if (f.unique) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "a localized field cannot be unique — a variant map has no single comparable value",
+        });
+      }
+      if (f.searchable) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "a localized field cannot be searchable — search is not locale-aware yet; make a non-localized field searchable instead",
+        });
+      }
+      if (f.computed) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "a computed field cannot be localized — computed values are derived single strings",
+        });
+      }
     }
     if (f.computed) {
       const fn = f.computed.fn;
@@ -436,6 +458,13 @@ export const fieldsSchema = z
             code: z.ZodIssueCode.custom,
             message: `${f.name}.computed references computed field "${r}" — computed fields can't chain; reference a plain field`,
           });
+        } else if (sib.localized) {
+          // J5: computed fns derive from ONE string — a variant map would
+          // stringify to garbage. Same rationale as the email-template bar.
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${f.name}.computed references localized field "${r}" — derive from a non-localized field`,
+          });
         }
       }
     }
@@ -553,6 +582,56 @@ export interface RefCheck {
 }
 
 /**
+ * J5: compile a localized field's validator — a strict {locale: value} variant
+ * map whose keys must be supported project locales and whose values reuse the
+ * field's own constrained value schema (min/max/pattern apply per variant).
+ * Fail-closed: without a locales context the schema rejects any value, so a
+ * call site that forgot to pass it fails loudly instead of under-validating.
+ */
+function localizedSchemaFor(
+  field: FieldDef,
+  locales: ProjectLocales | null | undefined,
+  requireDefault: boolean,
+): z.ZodTypeAny {
+  if (!locales) {
+    return z.custom(() => false, {
+      message: `internal: locales context missing while validating localized field "${field.name}"`,
+    });
+  }
+  const value = valueSchemaFor(field);
+  let v: z.ZodTypeAny = z
+    .record(z.string(), value)
+    .superRefine((map: Record<string, unknown>, ctx) => {
+      const keys = Object.keys(map);
+      if (keys.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "empty variant map — provide at least one locale variant or omit the field",
+        });
+      }
+      for (const k of keys) {
+        if (!locales.supported.includes(k)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `unknown locale "${k}" — supported: ${locales.supported.join(", ")}`,
+            params: { constraint: "locale" },
+          });
+        }
+      }
+    });
+  if (requireDefault) {
+    v = v.refine(
+      (map: Record<string, unknown>) => map !== null && locales.default in map,
+      {
+        message: `required localized field must include the default locale "${locales.default}"`,
+        params: { constraint: "required" },
+      },
+    );
+  }
+  return v;
+}
+
+/**
  * Compile a collection's fields[] into a strict entry validator.
  * @param partial when true (updates), all keys are optional but still typed —
  *        required-ness is only enforced on create.
@@ -563,6 +642,9 @@ export function buildEntrySchema(
   /** I3: 'input' (default) REJECTS a client-supplied computed key; 'storage'
    *  validates the post-stamp data where computed keys are legitimately present. */
   mode: "input" | "storage" = "input",
+  /** J5: required whenever `fields` contains a localized field — localized
+   *  variant maps validate against the project's supported locales. */
+  locales?: ProjectLocales | null,
 ): CompiledSchema {
   const shape: Record<string, z.ZodTypeAny> = {};
   const refChecks: RefCheck[] = [];
@@ -573,6 +655,15 @@ export function buildEntrySchema(
       // Any PRESENT value is caught by the superRefine below with a clear
       // "computed" message; absence is fine.
       v = z.unknown().optional();
+    } else if (fieldLocalized(field)) {
+      // Required-on-create = the DEFAULT locale's variant is present (partial
+      // updates merge, so any subset of variants is a valid patch).
+      v = localizedSchemaFor(field, locales, !partial && field.required === true);
+      if (partial) {
+        v = v.nullable().optional();
+      } else if (!field.required) {
+        v = v.optional();
+      }
     } else {
       v = valueSchemaFor(field);
       if (partial) {

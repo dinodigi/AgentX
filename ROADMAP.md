@@ -526,9 +526,17 @@ site needs srcsets.
       filter/sort rejection at the shared `fieldOrThrow` gate. Found a spec gap for J5:
       `?expand=`/`?include=` embed target views unlocalized — logged to close with J5.
       ✅ 2026-07-09, 45-localized-readside smoke (6, SQL-seeded variant maps), 379/379.
-- [ ] 18.5 `J5` (M) — `localized: true` goes live: strict per-locale validation,
-      barred from labelField/templates/publicFilter/ownerField, **and barred from
-      combining with `searchable` until search is locale-aware** (E×J conflict).
+- [x] 18.5 `J5` (M) — `localized: true` goes live: strict per-locale validation
+      (locales context through the single validate() choke point — create/update/
+      CAS/bulk/transact/restore/hooks/dry-run all inherit; fail-closed schema if a
+      call site misses the context), variant-map MERGE on update (transform hooks
+      keep replace semantics), update_entry_if honest rejection; barred from
+      labelField (both directions, inbound scan)/email templates (incl. workflow
+      actions)/ownerField/org.field/checkout.priceField/computed-sources, **and
+      barred from `searchable`** (E×J conflict). Closed the spec gap J4 found:
+      `?expand=`/`?include=` embeds now flatten target/child localized fields.
+      J3's confirm-gate + purge smoke landed here as planned. ✅ 2026-07-09,
+      46-localized-fields smoke (13), full suite 392/392.
 - [ ] 18.6 `J6` (S) — delivery `?locale=` with defaultLocale fallback.
 - [ ] 18.7 `J7` (M) — admin locale switcher on entry forms.
 - [ ] 18.8 `J8` (M) — localize/delocalize populated fields via wrap-backfill

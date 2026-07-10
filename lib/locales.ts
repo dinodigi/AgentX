@@ -230,17 +230,19 @@ export async function setLocales(
         .limit(1);
       if (!col) continue;
       for (const table of [entries, entriesTrash] as const) {
-        const variantMap = sql`${table.data} -> ${v.field}`;
+        // ::text casts on EVERY bound param: inside .set() drizzle types params
+        // from the jsonb column context, making `-> $n` / `- $n` jsonb-jsonb.
+        const variantMap = sql`${table.data} -> ${v.field}::text`;
         await db
           .update(table)
           .set({
-            data: sql`jsonb_set(${table.data}, ARRAY[${v.field}], ${variantMap} - ${v.locale})`,
+            data: sql`jsonb_set(${table.data}, ARRAY[${v.field}::text], (${variantMap}) - ${v.locale}::text)`,
           })
           .where(
             and(
               eq(table.collectionId, col.id),
               sql`jsonb_typeof(${variantMap}) = 'object'`,
-              sql`jsonb_exists(${variantMap}, ${v.locale})`,
+              sql`jsonb_exists(${variantMap}, ${v.locale}::text)`,
             ),
           );
       }

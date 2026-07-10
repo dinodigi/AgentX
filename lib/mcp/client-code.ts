@@ -1,5 +1,5 @@
 import type { Collection } from "@/db/schema";
-import type { FieldDef } from "@/lib/field-types";
+import { fieldLocalized, type FieldDef } from "@/lib/field-types";
 
 /**
  * get_client_code generator: a typed, dependency-free TS client for the
@@ -17,7 +17,8 @@ import type { FieldDef } from "@/lib/field-types";
 // (its only operator is `contains`, which the delivery API doesn't expose yet).
 // Subsystem 04 extends this table.
 function filterable(f: FieldDef): boolean {
-  return f.type !== "richtext";
+  // J5: localized fields have no single comparable value — the API 422s them.
+  return f.type !== "richtext" && !fieldLocalized(f);
 }
 
 function pascal(slug: string): string {
@@ -51,6 +52,9 @@ function readType(f: FieldDef): string {
 /** TS type of a field as it is WRITTEN (asset/relation values are ids). */
 function writeType(f: FieldDef): string {
   if (f.type === "asset" || f.type === "relation") return "string";
+  // J5: localized fields are WRITTEN as {locale: value} variant maps; reads
+  // stay flat strings (the API serves the default locale's variant).
+  if (fieldLocalized(f)) return "{ [locale: string]: string }";
   return readType(f);
 }
 

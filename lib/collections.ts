@@ -9,7 +9,8 @@ import { recordChangesStrict } from "./changes";
 import { ValidationError } from "./validation";
 import { validateFieldDefs, collectionNameSchema } from "./validation";
 import { buildWhere, type WhereItem } from "./query";
-import { fieldMin, fieldMax, fieldPattern, fieldInteger, type FieldDef } from "./field-types";
+import { fieldMin, fieldMax, fieldPattern, fieldInteger, fieldLocalized, type FieldDef } from "./field-types";
+import { getLocales } from "./locales";
 import { publicSearchableFields, searchVectorText } from "./search";
 
 /**
@@ -99,6 +100,31 @@ export interface DefineCollectionInput {
 const READ_RULES = ["public", "authenticated", "owner"] as const;
 const WRITE_RULES = ["none", "authenticated", "owner"] as const;
 
+/**
+ * J5: interpolate() renders {{field}} tokens with String(value) — a localized
+ * variant map would put "[object Object]" (or raw JSON) into an email header or
+ * body. Rejected at define time with the fix named; interpolate stays untouched.
+ * Only LOCALIZED references are rejected — unknown-field references keep their
+ * pre-existing (silent) behavior, deliberately not tightened here.
+ */
+function assertNoLocalizedTemplateRefs(
+  fields: FieldDef[],
+  action: { to?: string; subject?: string; body?: string },
+  context: string,
+): void {
+  for (const [part, source] of Object.entries({ to: action.to, subject: action.subject, body: action.body })) {
+    if (!source) continue;
+    for (const m of source.matchAll(/\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}/gi)) {
+      const rf = fields.find((x) => x.name === m[1]);
+      if (rf && fieldLocalized(rf)) {
+        throw new ValidationError(
+          `${context}: email ${part} references localized field "{{${m[1]}}}" — templates render one raw value; reference a non-localized field`,
+        );
+      }
+    }
+  }
+}
+
 async function validateAccessAndEvents(
   projectId: string,
   fields: FieldDef[],
@@ -139,6 +165,11 @@ async function validateAccessAndEvents(
       if (f.type !== "text") {
         throw new ValidationError(`access.ownerField "${access.ownerField}" must be a text field (holds the user id)`);
       }
+      if (fieldLocalized(f)) {
+        throw new ValidationError(
+          `access.ownerField "${access.ownerField}" cannot be localized — it holds one server-stamped user id`,
+        );
+      }
     }
     // Anonymous write = the only write path is publicWrite with no signed-in
     // create. Such a create has no verified identity, so it can never be
@@ -156,6 +187,11 @@ async function validateAccessAndEvents(
       if (!orgField || orgField.type !== "text") {
         throw new ValidationError(
           `access.org.field "${access.org.field}" must name an existing text field (holds the org id)`,
+        );
+      }
+      if (fieldLocalized(orgField)) {
+        throw new ValidationError(
+          `access.org.field "${access.org.field}" cannot be localized — it holds one server-stamped org id`,
         );
       }
       if (readList.includes("public")) {
@@ -178,6 +214,7 @@ async function validateAccessAndEvents(
         if (!/^https?:\/\//.test(a.url)) throw new ValidationError("events: webhook url must be http(s)");
       } else if (a.type === "email") {
         if (!a.to || !a.subject) throw new ValidationError("events: email actions need to + subject");
+        assertNoLocalizedTemplateRefs(fields, a, "events");
       } else {
         throw new ValidationError('events: action type must be "webhook" or "email"');
       }
@@ -217,6 +254,11 @@ async function validateCheckout(
   if (!priceField || priceField.type !== "text") {
     throw new ValidationError(
       `checkout.priceField "${checkout.priceField}" must name an existing text field holding a Stripe Price id (price_…)`,
+    );
+  }
+  if (fieldLocalized(priceField)) {
+    throw new ValidationError(
+      `checkout.priceField "${checkout.priceField}" cannot be localized — a Price id is one value, not a translation`,
     );
   }
   for (const key of ["successUrl", "cancelUrl"] as const) {
@@ -751,6 +793,71 @@ async function scanConstraintTightening(
 }
 
 /**
+ * J5: collection-level localized-field rules — everything the meta-schema
+ * can't see because it needs the project registry or sibling collections.
+ * (a) the knob needs set_locales; (b) a relation may not point at a localized
+ * labelField (resolveRelations/aggregate labels stringify ONE value); (c) a
+ * field that is an inbound relation's labelField may not become localized;
+ * (d) toggling localized on a populated field waits for the backfill increment.
+ */
+async function validateLocalizedFields(
+  projectId: string,
+  name: string,
+  fields: FieldDef[],
+  existing: Collection[],
+  current: Collection | undefined,
+  renames: { from: string; to: string }[],
+): Promise<void> {
+  const localized = fields.filter(fieldLocalized);
+  if (localized.length > 0 && !(await getLocales(projectId))) {
+    throw new ValidationError(
+      "localized fields need the project's locale registry — call set_locales {default, supported} first",
+    );
+  }
+  for (const f of fields) {
+    if (f.type !== "relation") continue;
+    const targetFields =
+      f.targetCollection === name
+        ? fields
+        : (existing.find((c) => c.name === f.targetCollection)?.fields as FieldDef[] | undefined);
+    const label = targetFields?.find((x) => x.name === f.labelField);
+    if (label && fieldLocalized(label)) {
+      throw new ValidationError(
+        `relation "${f.name}": labelField "${f.labelField}" on "${f.targetCollection}" is localized — a label is one printable value; pick a non-localized labelField`,
+      );
+    }
+  }
+  for (const lf of localized) {
+    const refs = existing
+      .filter((c) => c.name !== name)
+      .flatMap((c) =>
+        (c.fields as FieldDef[])
+          .filter((x) => x.type === "relation" && x.targetCollection === name && x.labelField === lf.name)
+          .map((x) => `${c.name}.${x.name}`),
+      );
+    if (refs.length > 0) {
+      throw new ValidationError(
+        `"${lf.name}" cannot be localized — it is the labelField of inbound relation(s) ${refs.join(", ")}; point those at a non-localized field first`,
+      );
+    }
+  }
+  if (current) {
+    const renamedFrom = new Map(renames.map((r) => [r.to, r.from]));
+    for (const f of fields) {
+      const oldName = renamedFrom.get(f.name) ?? f.name;
+      const old = (current.fields as FieldDef[]).find((x) => x.name === oldName);
+      if (!old || fieldLocalized(old) === fieldLocalized(f)) continue;
+      const n = await countEntriesWithKeys(current.id, [oldName]);
+      if (n > 0) {
+        throw new ValidationError(
+          `cannot ${fieldLocalized(f) ? "localize" : "delocalize"} "${f.name}" — ${n} entr(ies) hold a value; toggling localized on populated fields ships in a later increment (empty fields only for now)`,
+        );
+      }
+    }
+  }
+}
+
+/**
  * Create or update a collection definition. Field defs are meta-validated
  * first; relation targets must exist. Destructive redefinitions (dropped or
  * retyped fields) return a plan and require confirm — Terraform-style, so an
@@ -776,6 +883,7 @@ export async function defineCollection(
           if (!/^https?:\/\//.test(a.url)) throw new ValidationError("workflow action: webhook url must be http(s)");
         } else if (a.type === "email") {
           if (!a.to || !a.subject) throw new ValidationError("workflow action: email actions need to + subject");
+          assertNoLocalizedTemplateRefs(fields, a, "workflow action");
         } else {
           throw new ValidationError('workflow action: type must be "webhook" or "email"');
         }
@@ -835,6 +943,7 @@ export async function defineCollection(
   const current = existing.find((c) => c.name === name);
   const renames = input.renames ?? [];
   validateRenames(current, fields, renames);
+  await validateLocalizedFields(projectId, name, fields, existing, current, renames);
   let diff: SchemaDiff | undefined;
   if (current) {
     const structural = diffFields(current.fields, fields, renames);

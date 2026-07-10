@@ -66,8 +66,9 @@ const BOUNDARIES =
   "Custom validation runs on YOUR endpoint via collection before-write hooks (define " +
   "hooks.beforeCreate) — AgentX signs and calls it, never hosts code. It " +
   "does NOT do authorization/row-level rules beyond presets (those live in the app " +
-  "layer) or i18n. Public-read visibility is per-field (set publicRead on each field). " +
-  "Public-write is per-collection.";
+  "layer). i18n = per-field variant maps: set_locales, then localized:true on " +
+  "text/richtext fields (delivery serves the default locale flat). Public-read " +
+  "visibility is per-field (set publicRead on each field). Public-write is per-collection.";
 
 export interface ToolDef {
   name: string;
@@ -193,7 +194,10 @@ export const TOOL_DEFS: ToolDef[] = [
       "Tightening a constraint on existing data applies immediately and returns " +
       "constraintWarnings[] (violation counts) — old rows stay readable, new writes must comply. " +
       "To RENAME a field, pass renames: [{from, to}] with the new name in fields — entry " +
-      `data is backfilled, no confirm needed; without renames a rename is a destructive drop+add. ${BOUNDARIES}`,
+      "data is backfilled, no confirm needed; without renames a rename is a destructive drop+add. " +
+      "localized:true (text/richtext, needs set_locales) stores {locale: value} variant maps — " +
+      "empty fields only for now, and not for unique/searchable/computed/labelField/email-template " +
+      `fields; see list_field_types. ${BOUNDARIES}`,
     inputSchema: {
       type: "object",
       properties: {
@@ -446,7 +450,9 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "update_entry",
     description:
       "Partially update one entry by id. Provided fields are validated and merged. " +
-      "Set a field to null to UNSET it (remove the key) — required fields reject null.",
+      "Set a field to null to UNSET it (remove the key) — required fields reject null. " +
+      "A localized field's variant map MERGES per locale ({de:...} preserves the stored en); " +
+      "null unsets the WHOLE field — there is no per-variant unset.",
     inputSchema: {
       type: "object",
       properties: {
@@ -473,7 +479,8 @@ export const TOOL_DEFS: ToolDef[] = [
       "field being unset, or the increment breaching min/max. Re-read and retry. Book-a-seat: " +
       '{if:[{field:"seats",op:"gt",value:0}], increment:{field:"seats",by:-1}}. ' +
       "Does NOT run before-write hooks OR recompute computed fields — its value is a single atomic " +
-      "statement with no pre-read, which a synchronous external consult (or a source-diff) would defeat.",
+      "statement with no pre-read, which a synchronous external consult (or a source-diff) would defeat. " +
+      "Localized fields are rejected here (no in-statement variant merge) — use update_entry.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1308,7 +1315,10 @@ export async function callTool(
           locales: project.locales ?? null,
           ...(project.locales
             ? {}
-            : { localesHint: "no locales configured — set_locales registers {default, supported}" }),
+            : {
+                localesHint:
+                  "no locales configured — call set_locales {default, supported} to enable localized fields",
+              }),
           urls: {
             deliveryBase: `${ctx.baseUrl}/api/v1`,
             admin: `${ctx.baseUrl}/admin/${projectId}`,

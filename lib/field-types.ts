@@ -205,4 +205,11 @@ export const COMMON_FIELD_CONFIG = [
     "can't be required; references must be plain (non-computed) siblings. Stamped at create; on " +
     "UPDATE slugify/template recompute when a source field changes and now:'always' restamps, " +
     "while uuid + now:'create' stay frozen (update_entry_if/CAS never recomputes).",
+  "localized?: boolean (text/richtext; requires set_locales first) — the value is a " +
+    "{locale: string} variant map validated against the project's supported locales; required = " +
+    "the default locale's variant present at create. Delivery serves ONE flat string (the default " +
+    "locale); MCP reads return the raw map. update_entry MERGES variant maps ({de:...} preserves " +
+    "en; there is no per-variant unset). Localized fields can't be unique/searchable/computed, " +
+    "can't be filtered or sorted, can't back a relation labelField or an email template, and " +
+    "can't toggle on a populated field (yet).",
 ];

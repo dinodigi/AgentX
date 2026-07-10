@@ -71,14 +71,13 @@ describe("localized read-side plumbing (J4)", () => {
     await p.destroy();
   });
 
-  it("define_collection still rejects localized:true (write side is J5)", async () => {
+  it("define_collection accepts localized:true since J5 (locales configured)", async () => {
     const r = await mcp(p.mcpToken, "define_collection", {
       name: "articles",
       displayName: "Articles",
       fields: [{ name: "t", label: "T", type: "text", localized: true }],
     });
-    assert.ok(!r.ok);
-    assert.match(r.errorText, /localized fields are not yet enabled/);
+    assert.ok(r.ok, r.errorText);
   });
 
   it("delivery list GET serves flat default-locale strings", async () => {
