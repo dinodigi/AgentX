@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Globe, Lock } from "lucide-react";
-import type { FieldDef } from "@/lib/field-types";
+import { fieldLocalized, type FieldDef } from "@/lib/field-types";
 import { AssetInput } from "./AssetInput";
 import { RelationCombobox } from "./RelationCombobox";
 import { RichtextInput } from "./RichtextInput";
@@ -29,6 +29,7 @@ export function EntryForm({
   initial,
   action,
   enumOptionOverrides,
+  defaultLocale,
 }: {
   projectId: string;
   fields: FieldDef[];
@@ -39,6 +40,8 @@ export function EntryForm({
    * current state + admin-reachable targets are offered (new entries: initial
    * only). UX truthfulness — the entries layer remains the enforcer. */
   enumOptionOverrides?: Record<string, string[]>;
+  /** J4: localized fields edit this locale's variant (J7 adds a switcher). */
+  defaultLocale?: string | null;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -61,6 +64,7 @@ export function EntryForm({
           value={initial[f.name]}
           choices={relationChoices[f.name] ?? []}
           enumOverride={enumOptionOverrides?.[f.name]}
+          defaultLocale={defaultLocale}
         />
       ))}
       {error && (
@@ -91,7 +95,7 @@ function VisibilityPill({ publicRead }: { publicRead?: boolean }) {
   );
 }
 
-function Label({ field }: { field: FieldDef }) {
+function Label({ field, localeChip }: { field: FieldDef; localeChip?: string | null }) {
   return (
     <div className="mb-1.5 flex items-center gap-2">
       <span className="text-sm font-medium">
@@ -99,6 +103,7 @@ function Label({ field }: { field: FieldDef }) {
         {field.required ? <span className="text-red-500"> *</span> : null}
       </span>
       <VisibilityPill publicRead={field.publicRead} />
+      {localeChip ? <span className="chip chip-mute">{localeChip}</span> : null}
     </div>
   );
 }
@@ -109,13 +114,22 @@ function FieldInput({
   value,
   choices,
   enumOverride,
+  defaultLocale,
 }: {
   projectId: string;
   field: FieldDef;
   value: unknown;
   choices: RelationChoice[];
   enumOverride?: string[];
+  defaultLocale?: string | null;
 }) {
+  // J4: a localized value is a {locale: string} variant map — edit the default
+  // locale's variant (the save path wraps it back under the same locale).
+  const localized = fieldLocalized(field);
+  if (localized && value && typeof value === "object" && !Array.isArray(value)) {
+    value = (value as Record<string, unknown>)[defaultLocale ?? ""] ?? "";
+  }
+  const localeChip = localized && defaultLocale ? defaultLocale : null;
   // I3: computed fields are derived server-side — show the value read-only, with
   // NO `name`, so the form never submits them (which the API would reject).
   if (field.computed) {
@@ -134,14 +148,14 @@ function FieldInput({
     case "text":
       return (
         <div className="mb-4">
-          <Label field={field} />
+          <Label field={field} localeChip={localeChip} />
           <input type="text" name={field.name} defaultValue={str(value)} className={inputClass} />
         </div>
       );
     case "richtext":
       return (
         <div className="mb-4">
-          <Label field={field} />
+          <Label field={field} localeChip={localeChip} />
           <RichtextInput name={field.name} initialHtml={str(value)} />
         </div>
       );

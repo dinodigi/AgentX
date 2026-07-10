@@ -17,6 +17,7 @@ import {
   publicFields,
   ValidationError,
 } from "@/lib/entries";
+import { getLocales, hasLocalizedFields, localizeView } from "@/lib/locales";
 import type { WhereClause, WhereItem, OrderByClause } from "@/lib/query";
 
 /**
@@ -252,8 +253,11 @@ export async function GET(
     const reverse = includeSpecs
       ? await includeReverse(projectId, collection, resolved.map((r) => r.id), includeSpecs, "public", gate.user)
       : undefined;
+    // J4: flatten localized variant maps to the default locale AFTER the
+    // public projection (no-op until localized fields exist; J6 adds ?locale=).
+    const locales = hasLocalizedFields(collection.fields) ? await getLocales(projectId) : null;
     const data = resolved.map((e) => {
-      const view = toPublicView(collection, e);
+      const view = localizeView(toPublicView(collection, e), collection.fields, locales);
       const rel = reverse?.get(e.id);
       if (!select) return rel ? { ...view, related: rel } : view;
       const picked: Record<string, unknown> = { id: view.id };

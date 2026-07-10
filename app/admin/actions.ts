@@ -9,6 +9,7 @@ import { getCollection } from "@/lib/collections";
 import { getProjectRole, getViewer } from "@/lib/access";
 import { createEntry, updateEntry, deleteEntry, ValidationError } from "@/lib/entries";
 import { coerceFormData } from "@/lib/admin-form";
+import { getLocales } from "@/lib/locales";
 
 /**
  * Save (create or update) an entry from the auto-generated admin form.
@@ -27,7 +28,8 @@ export async function saveEntry(
   const collection = await getCollection(projectId, collectionName);
   if (!collection) return { error: "collection not found" };
 
-  const data = coerceFormData(collection.fields, formData);
+  const locales = await getLocales(projectId);
+  const data = coerceFormData(collection.fields, formData, locales?.default ?? null);
 
   const viewer = await getViewer();
   const actor = { type: "admin" as const, userId: viewer?.userId };

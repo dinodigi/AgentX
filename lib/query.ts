@@ -1,7 +1,7 @@
 import { sql, and, type SQL, type AnyColumn } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { entries } from "@/db/schema";
-import type { FieldDef } from "./field-types";
+import { fieldLocalized, type FieldDef } from "./field-types";
 import { ValidationError } from "./validation";
 
 /**
@@ -50,6 +50,13 @@ function fieldOrThrow(fields: FieldDef[], name: string, context: string): FieldD
   if (!f) {
     throw new ValidationError(
       `${context}: unknown field "${name}" — valid fields: ${fields.map((x) => x.name).join(", ")}`,
+    );
+  }
+  // J4: a localized value is a {locale: string} map — no single SQL accessor
+  // fits it, so every filter/sort path rejects it here at the shared gate.
+  if (fieldLocalized(f)) {
+    throw new ValidationError(
+      `${context}: "${name}" is a localized field — localized fields cannot be filtered or sorted; use a non-localized field`,
     );
   }
   return f;

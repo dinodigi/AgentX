@@ -15,6 +15,7 @@ import {
 import type { ConstraintIssue } from "@/lib/validation";
 import { matchesClauses } from "@/lib/query";
 import { gateRead, gateMutate, stampedIdentityFields, checkFieldWrites } from "@/lib/access-rules";
+import { getLocales, hasLocalizedFields, localizeView } from "@/lib/locales";
 import { rateLimit } from "@/lib/ratelimit";
 import { CORS_HEADERS, preflight } from "@/lib/cors";
 import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
@@ -97,7 +98,13 @@ export async function GET(req: NextRequest, { params }: Params) {
   }
 
   const [resolved] = await resolveRefsForRead(projectId, collection, [entry], gate.user);
-  const view = toPublicView(collection, resolved) as Record<string, unknown>;
+  // J4: localized variant maps flatten to the default locale (?locale= is J6).
+  const locales = hasLocalizedFields(collection.fields) ? await getLocales(projectId) : null;
+  const view = localizeView(
+    toPublicView(collection, resolved) as Record<string, unknown>,
+    collection.fields,
+    locales,
+  );
 
   const includeParam = new URL(req.url).searchParams.get("include");
   if (includeParam) {
@@ -169,7 +176,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       userSub: gate.user?.id,
     });
     const [resolved] = await resolveRefsForRead(projectId, collection, [updated], gate.user);
-    return corsJson({ data: toPublicView(collection, resolved) });
+    const locales = hasLocalizedFields(collection.fields) ? await getLocales(projectId) : null;
+    return corsJson({
+      data: localizeView(toPublicView(collection, resolved), collection.fields, locales),
+    });
   } catch (e) {
     if (e instanceof ValidationError) return err(422, e.message, undefined, e.issues);
     throw e;

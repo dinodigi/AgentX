@@ -224,6 +224,7 @@ const fieldDefSchema = z
     pattern: z.string().optional(),
     patternHint: z.string().optional(),
     searchable: z.boolean().optional(),
+    localized: z.boolean().optional(),
     writableBy: z
       .union([
         z.literal("none"),
@@ -247,6 +248,14 @@ const fieldDefSchema = z
   })
   .strict()
   .superRefine((f, ctx) => {
+    // J4: the read side is plumbed but the write side (J5) isn't — reject the
+    // knob explicitly so no localized field can enter the registry yet.
+    if (f.localized) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "localized fields are not yet enabled",
+      });
+    }
     if (f.computed) {
       const fn = f.computed.fn;
       if ((fn === "slugify" || fn === "template" || fn === "uuid") && f.type !== "text") {

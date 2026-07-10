@@ -74,6 +74,12 @@ export interface TextField extends FieldBase {
   patternHint?: string;
   /** Include this field in full-text search (search_entries / delivery ?q=). */
   searchable?: boolean;
+  /**
+   * J4/J5: value is a {locale: string} variant map validated against the
+   * project's locales; delivery serves one flat locale (default, or ?locale=).
+   * Requires set_locales; text/richtext only.
+   */
+  localized?: boolean;
 }
 export interface RichTextField extends FieldBase {
   type: "richtext";
@@ -82,6 +88,8 @@ export interface RichTextField extends FieldBase {
   max?: number;
   /** Include this field (HTML tags stripped) in full-text search. */
   searchable?: boolean;
+  /** J4/J5: {locale: value} variant map — see TextField.localized. */
+  localized?: boolean;
 }
 export interface NumberField extends FieldBase {
   type: "number";
@@ -134,6 +142,8 @@ export const fieldMax = (f: FieldDef): number | string | undefined => ("max" in 
 export const fieldPattern = (f: FieldDef): string | undefined => (f.type === "text" ? f.pattern : undefined);
 export const fieldInteger = (f: FieldDef): boolean | undefined => (f.type === "number" ? f.integer : undefined);
 export const fieldComputed = (f: FieldDef): ComputedSpec | undefined => f.computed;
+export const fieldLocalized = (f: FieldDef): boolean =>
+  (f.type === "text" || f.type === "richtext") && f.localized === true;
 
 /**
  * Terse, machine-readable description of each primitive and its config knobs.

@@ -8,6 +8,7 @@ import { getCollection } from "@/lib/collections";
 import { listAuditLog } from "@/lib/audit";
 import { listEntryVersions } from "@/lib/versions";
 import { loadRelationChoices } from "@/lib/admin";
+import { getLocales } from "@/lib/locales";
 import { publicFields } from "@/lib/entries";
 import { allowedTargets } from "@/lib/workflow";
 import { EntryForm } from "@/components/EntryForm";
@@ -39,7 +40,7 @@ export default async function EditEntry({
   const collection = await getCollection(projectId, name);
   if (!collection) notFound();
 
-  const [entry, relationChoices, audit, versionsPage] = await Promise.all([
+  const [entry, relationChoices, audit, versionsPage, locales] = await Promise.all([
     db
       .select()
       .from(entries)
@@ -49,6 +50,7 @@ export default async function EditEntry({
     loadRelationChoices(projectId, collection.fields),
     listAuditLog(projectId, { entryId, limit: 8, offset: 0 }),
     listEntryVersions(projectId, entryId, { limit: 10 }),
+    getLocales(projectId),
   ]);
   if (!entry) notFound();
   const versions = versionsPage.versions;
@@ -87,6 +89,7 @@ export default async function EditEntry({
             initial={entry.data}
             action={saveEntry.bind(null, projectId, name, entryId)}
             enumOptionOverrides={enumOptionOverrides}
+            defaultLocale={locales?.default ?? null}
           />
         </div>
         <aside>

@@ -8,7 +8,7 @@ import {
   entriesTrash,
   type ProjectLocales,
 } from "@/db/schema";
-import type { FieldDef } from "./field-types";
+import { fieldLocalized, type FieldDef } from "./field-types";
 import { ValidationError } from "./validation";
 
 /**
@@ -84,7 +84,37 @@ function normalizeLocales(input: ProjectLocales): ProjectLocales {
 
 /** Fields storing {locale: value} variant maps. None can exist before J5 ships. */
 function localizedFields(fields: FieldDef[]): FieldDef[] {
-  return fields.filter((f) => (f as { localized?: boolean }).localized === true);
+  return fields.filter(fieldLocalized);
+}
+
+export function hasLocalizedFields(fields: FieldDef[]): boolean {
+  return fields.some(fieldLocalized);
+}
+
+/**
+ * Flatten localized values in a delivery view to ONE locale's plain value —
+ * runs strictly on toPublicView's output, so it can widen nothing. The
+ * requested locale falls back to the default variant; neither present = the
+ * key is omitted (an absent optional field). Non-object values pass through
+ * unchanged — pre-localization strings and the J8 backfill window stay safe.
+ */
+export function localizeView(
+  view: Record<string, unknown>,
+  fields: FieldDef[],
+  locales: ProjectLocales | null,
+  requested?: string,
+): Record<string, unknown> {
+  if (!locales) return view;
+  for (const f of fields) {
+    if (!fieldLocalized(f) || !(f.name in view)) continue;
+    const v = view[f.name];
+    if (typeof v !== "object" || v === null || Array.isArray(v)) continue;
+    const variants = v as Record<string, unknown>;
+    const picked = variants[requested ?? locales.default] ?? variants[locales.default];
+    if (picked === undefined) delete view[f.name];
+    else view[f.name] = picked;
+  }
+  return view;
 }
 
 /**

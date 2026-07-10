@@ -3,7 +3,8 @@ import { notFound } from "next/navigation";
 import { Check, Download, Plus, Undo2 } from "lucide-react";
 import { getCollection } from "@/lib/collections";
 import { queryEntries, countEntries, resolveRefsForRead } from "@/lib/entries";
-import type { FieldDef } from "@/lib/field-types";
+import { getLocales } from "@/lib/locales";
+import { fieldLocalized, type FieldDef } from "@/lib/field-types";
 import { toggleHandledAction } from "../../actions";
 
 const PAGE_SIZE = 50;
@@ -22,17 +23,22 @@ export default async function CollectionEntries({
   if (!collection) notFound();
 
   const page = Math.max(1, Number(pageParam ?? 1) || 1);
-  // Quick filter: contains on the first text-ish field.
-  const searchField = collection.fields.find((f) => f.type === "text" || f.type === "richtext");
+  // Quick filter: contains on the first text-ish field (localized fields have
+  // no single-string accessor, so they can't back the quick search — J4).
+  const searchField = collection.fields.find(
+    (f) => (f.type === "text" || f.type === "richtext") && !fieldLocalized(f),
+  );
   const where =
     q && searchField ? [{ field: searchField.name, op: "contains" as const, value: q }] : [];
 
-  const [rows, total] = await Promise.all([
+  const [rows, total, locales] = await Promise.all([
     queryEntries(collection, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, where }).then(
       (r) => resolveRefsForRead(projectId, collection, r, "trusted"),
     ),
     countEntries(collection, where),
+    getLocales(projectId),
   ]);
+  const defaultLocale = locales?.default ?? null;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   // First 4 fields as columns keeps the table readable at any schema size.
   const cols = collection.fields.slice(0, 4);
@@ -150,10 +156,10 @@ export default async function CollectionEntries({
                           href={`/admin/${projectId}/${name}/${r.id}`}
                           className="font-medium hover:text-brand-strong"
                         >
-                          <Cell field={f} value={r.data[f.name]} />
+                          <Cell field={f} value={r.data[f.name]} defaultLocale={defaultLocale} />
                         </Link>
                       ) : (
-                        <Cell field={f} value={r.data[f.name]} />
+                        <Cell field={f} value={r.data[f.name]} defaultLocale={defaultLocale} />
                       )}
                     </td>
                   ))}
@@ -189,7 +195,20 @@ export default async function CollectionEntries({
 }
 
 /** Type-aware cell rendering — one representation per primitive. */
-function Cell({ field, value }: { field: FieldDef; value: unknown }) {
+function Cell({
+  field,
+  value,
+  defaultLocale,
+}: {
+  field: FieldDef;
+  value: unknown;
+  defaultLocale?: string | null;
+}) {
+  // J4: a localized value is a {locale: string} variant map — show the default
+  // locale's variant, never "[object Object]".
+  if (fieldLocalized(field) && value && typeof value === "object" && !Array.isArray(value)) {
+    value = (value as Record<string, unknown>)[defaultLocale ?? ""] ?? null;
+  }
   if (value == null || value === "") return <span className="text-[--color-line-strong]">—</span>;
 
   switch (field.type) {

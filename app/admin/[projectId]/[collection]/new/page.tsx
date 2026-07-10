@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getCollection } from "@/lib/collections";
 import { loadRelationChoices } from "@/lib/admin";
+import { getLocales } from "@/lib/locales";
 import { EntryForm } from "@/components/EntryForm";
 import { saveEntry } from "../../../actions";
 
@@ -15,7 +16,10 @@ export default async function NewEntry({
   const collection = await getCollection(projectId, name);
   if (!collection) notFound();
 
-  const relationChoices = await loadRelationChoices(projectId, collection.fields);
+  const [relationChoices, locales] = await Promise.all([
+    loadRelationChoices(projectId, collection.fields),
+    getLocales(projectId),
+  ]);
   const action = saveEntry.bind(null, projectId, name, null);
 
   // G5: a new entry's workflow field is pinned to the initial state — the
@@ -39,6 +43,7 @@ export default async function NewEntry({
           initial={{}}
           action={action}
           enumOptionOverrides={enumOptionOverrides}
+          defaultLocale={locales?.default ?? null}
         />
       </div>
     </>

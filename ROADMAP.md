@@ -519,8 +519,13 @@ site needs srcsets.
       the confirm-gate smoke honestly deferred to J5 when variants can exist (#6).
       ✅ 2026-07-09, 44-locales smoke (7), full suite 373/373. *(locales column applied
       by hand — db:push still broken vs Neon PG18.)*
-- [ ] 18.4 `J4` (M) — read-side localization plumbing, shipped inert (variant-map-safe
-      delivery/admin/query before any localized field can exist).
+- [x] 18.4 `J4` (M) — read-side localization plumbing, shipped inert (variant-map-safe
+      delivery/admin/query before any localized field can exist): `localized` type knob
+      (define-time rejected until J5), `localizeView` after toPublicView in delivery
+      list/single/PATCH views, admin form+cells+quick-search default-locale fallback,
+      filter/sort rejection at the shared `fieldOrThrow` gate. Found a spec gap for J5:
+      `?expand=`/`?include=` embed target views unlocalized — logged to close with J5.
+      ✅ 2026-07-09, 45-localized-readside smoke (6, SQL-seeded variant maps), 379/379.
 - [ ] 18.5 `J5` (M) — `localized: true` goes live: strict per-locale validation,
       barred from labelField/templates/publicFilter/ownerField, **and barred from
       combining with `searchable` until search is locale-aware** (E×J conflict).
