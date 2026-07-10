@@ -35,7 +35,7 @@ export default function HostileAgent() {
           className="pointer-events-none absolute left-0 right-0 h-[120px]"
           style={{ background: "linear-gradient(180deg, transparent, rgba(67,222,131,0.05), transparent)", animation: "scan 7s linear infinite" }}
         />
-        <div className="relative mx-auto flex max-w-[900px] flex-col items-center gap-6 px-8 pb-[88px] pt-[104px] text-center">
+        <div className="enter relative mx-auto flex max-w-[900px] flex-col items-center gap-6 px-8 pb-[88px] pt-[104px] text-center">
           <div className="flex items-center gap-3">
             <span className="font-mono text-xs tracking-[0.14em]" style={{ color: C.mute }}>
               HOSTILE AGENT <span style={{ color: C.faint }}>· BY PLUGGIE</span>

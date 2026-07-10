@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { C, Eyebrow } from "./atoms";
+import { HeroBackdrop } from "./HeroBackdrop";
 
 /**
  * Solutions by use case (Solutions.dc.html). Tab row + a two-column body that
@@ -140,11 +141,12 @@ export function SolutionsBrowser() {
 
   return (
     <>
-      <section className="border-b" style={{ borderColor: C.line }}>
-        <div className="mx-auto flex max-w-[1200px] flex-col gap-5 px-8 pb-0 pt-20">
+      <section className="relative overflow-hidden border-b" style={{ borderColor: C.line }}>
+        <HeroBackdrop align="right" />
+        <div className="enter relative mx-auto flex max-w-[1200px] flex-col gap-5 px-8 pb-0 pt-24">
           <Eyebrow>SOLUTIONS</Eyebrow>
           <h1 className="m-0 max-w-[700px] text-[clamp(36px,4.5vw,54px)] font-bold leading-[1.05] tracking-[-0.03em]">
-            By use case, not by feature.
+            By <span className="grad-accent">use case</span>, not by feature.
           </h1>
           <p className="mb-10 mt-0 max-w-[560px] text-[17px] leading-[1.6]" style={{ color: C.mute }}>
             Everything below is what AgentX genuinely serves today — every claim maps to a shipped capability.
@@ -195,13 +197,14 @@ export function SolutionsBrowser() {
             </Link>
           </div>
           <div
-            className="overflow-hidden rounded-lg lg:sticky lg:top-24"
+            className="lift relative overflow-hidden rounded-lg lg:sticky lg:top-24"
             style={{ background: C.panel, border: `1px solid rgba(255,255,255,0.1)` }}
           >
-            <div className="px-4 py-2.5 font-mono text-[11px]" style={{ borderBottom: `1px solid ${C.line}`, color: C.faint }}>
+            <span className="sweep-line" />
+            <div className="relative px-4 py-2.5 font-mono text-[11px]" style={{ borderBottom: `1px solid ${C.line}`, color: C.faint }}>
               {d.mechLabel}
             </div>
-            <div className="whitespace-pre-wrap p-5 font-mono text-xs leading-[1.9]" style={{ color: C.mute }}>
+            <div className="relative whitespace-pre-wrap p-5 font-mono text-xs leading-[1.9]" style={{ color: C.mute }}>
               {d.mech}
             </div>
           </div>

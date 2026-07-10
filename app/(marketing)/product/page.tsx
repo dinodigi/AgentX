@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { C, Eyebrow, CTA, StatusBadge } from "@/components/marketing/atoms";
+import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
+import { Reveal } from "@/components/marketing/Reveal";
 
 export const metadata = {
   title: "AgentX — the backend your agent builds over MCP | Pluggie",
@@ -40,19 +42,18 @@ export default function AgentXHub() {
   return (
     <>
       {/* HERO */}
-      <section
-        className="border-b"
-        style={{ borderColor: C.line, background: "radial-gradient(ellipse 55% 60% at 30% 0%, rgba(67,222,131,0.06), transparent 70%)" }}
-      >
-        <div className="mx-auto flex max-w-[1200px] flex-col gap-[22px] px-8 pb-[72px] pt-[88px]">
+      <section className="relative overflow-hidden border-b" style={{ borderColor: C.line }}>
+        <HeroBackdrop align="right" />
+        <div className="enter relative mx-auto flex max-w-[1200px] flex-col gap-[22px] px-8 pb-[80px] pt-28">
           <div className="flex items-center gap-3">
             <span className="font-mono text-xs tracking-[0.14em]" style={{ color: C.mute }}>
               AGENTX <span style={{ color: C.faint }}>· BY PLUGGIE</span>
             </span>
             <StatusBadge kind="live" />
           </div>
-          <h1 className="m-0 max-w-[800px] text-[clamp(38px,5vw,60px)] font-bold leading-[1.05] tracking-[-0.03em]">
-            The backend your agent builds over MCP.
+          <h1 className="m-0 max-w-[820px] text-[clamp(38px,5vw,60px)] font-bold leading-[1.04] tracking-[-0.035em]">
+            The backend your agent builds over{" "}
+            <span className="grad-accent">MCP</span>.
           </h1>
           <p className="m-0 max-w-[620px] text-[17px] leading-[1.65]" style={{ color: C.mute }}>
             Point an agent at AgentX and describe the project. It defines the schema with 42 self-describing
@@ -95,17 +96,21 @@ export default function AgentXHub() {
               <Link
                 key={a.slug}
                 href={`/product/capabilities#${a.slug}`}
-                className="flex flex-wrap items-baseline gap-x-5 gap-y-1.5 px-4 py-[22px] hover:bg-[#0E1013]"
+                className="group relative flex flex-wrap items-baseline gap-x-5 gap-y-1.5 px-4 py-[22px] transition-colors hover:bg-[#0E1013]"
                 style={{
                   borderTop: `1px solid ${C.line}`,
                   borderBottom: i === AREAS.length - 1 ? `1px solid ${C.line}` : undefined,
                   color: C.ink,
                 }}
               >
-                <span className="font-mono text-xs" style={{ color: C.faint }}>{a.n}</span>
+                <span
+                  className="absolute left-0 top-0 h-full w-[2px] origin-top scale-y-0 transition-transform duration-300 group-hover:scale-y-100"
+                  style={{ background: C.accent }}
+                />
+                <span className="font-mono text-xs transition-colors group-hover:text-[#43DE83]" style={{ color: C.faint }}>{a.n}</span>
                 <span className="min-w-[180px] text-[17px] font-semibold">{a.title}</span>
                 <span className="min-w-[min(100%,280px)] flex-1 text-[13.5px]" style={{ color: C.mute }}>{a.desc}</span>
-                <span style={{ color: C.accent }}>→</span>
+                <span className="transition-transform duration-300 group-hover:translate-x-1" style={{ color: C.accent }}>→</span>
               </Link>
             ))}
           </div>

@@ -186,8 +186,8 @@ body {
   100% { transform: translateX(340%) skewX(-12deg); }
 }
 @keyframes node-pulse {
-  0%, 100% { opacity: 0.3; r: 2; }
-  50% { opacity: 1; r: 3.4; }
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.5); }
 }
 @keyframes dash-flow {
   to { stroke-dashoffset: -1000; }

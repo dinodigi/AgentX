@@ -53,7 +53,11 @@ export function HeroBackdrop({ align = "right" }: { align?: "right" | "center" }
             cy={y}
             r={2.4}
             fill={i % 3 === 0 ? "#43DE83" : "rgba(231,234,232,0.5)"}
-            style={{ animation: `node-pulse ${5 + (i % 4)}s ease-in-out ${i * 0.4}s infinite` }}
+            style={{
+              transformBox: "fill-box",
+              transformOrigin: "center",
+              animation: `node-pulse ${5 + (i % 4)}s ease-in-out ${i * 0.4}s infinite`,
+            }}
           />
         ))}
       </svg>

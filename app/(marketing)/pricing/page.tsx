@@ -1,5 +1,6 @@
 import { C, Eyebrow } from "@/components/marketing/atoms";
 import { BetaRequestForm } from "@/components/marketing/BetaRequestForm";
+import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
 
 export const metadata = {
   title: "Private beta — request a spot | Pluggie",
@@ -16,8 +17,9 @@ const PERKS: { glyph: string; tone: string; text: string }[] = [
 export default function Pricing() {
   return (
     <>
-      <section className="border-b" style={{ borderColor: C.line }}>
-        <div className="mx-auto flex max-w-[900px] flex-col items-center gap-5 px-8 pb-[72px] pt-[88px] text-center">
+      <section className="relative overflow-hidden border-b" style={{ borderColor: C.line }}>
+        <HeroBackdrop align="center" />
+        <div className="enter relative mx-auto flex max-w-[900px] flex-col items-center gap-5 px-8 pb-[72px] pt-[92px] text-center">
           <Eyebrow>PRIVATE BETA</Eyebrow>
           <h1 className="m-0 text-[clamp(36px,4.5vw,54px)] font-bold leading-[1.05] tracking-[-0.03em]">
             No pricing page theater.

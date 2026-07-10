@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { C, Eyebrow, StatusBadge } from "@/components/marketing/atoms";
+import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
 
 export const metadata = {
   title: "Products — Pluggie",
@@ -13,11 +14,13 @@ const snippet = "rounded-lg p-5 font-mono text-xs leading-[1.9]";
 export default function Products() {
   return (
     <>
-      <section className="border-b" style={{ borderColor: C.line }}>
-        <div className="mx-auto flex max-w-[1200px] flex-col gap-5 px-8 pb-[72px] pt-[88px]">
+      <section className="relative overflow-hidden border-b" style={{ borderColor: C.line }}>
+        <HeroBackdrop align="right" />
+        <div className="enter relative mx-auto flex max-w-[1200px] flex-col gap-5 px-8 pb-[72px] pt-28">
           <Eyebrow>PRODUCTS</Eyebrow>
-          <h1 className="m-0 max-w-[720px] text-[clamp(36px,4.5vw,56px)] font-bold leading-[1.05] tracking-[-0.03em]">
-            Tools for teams who build with agents.
+          <h1 className="m-0 max-w-[720px] text-[clamp(36px,4.5vw,56px)] font-bold leading-[1.04] tracking-[-0.035em]">
+            Tools for teams who build with{" "}
+            <span className="grad-accent">agents</span>.
           </h1>
           <p className="m-0 max-w-[560px] text-[17px] leading-[1.6]" style={{ color: C.mute }}>
             One shipping, one on the bench. Both built on the same conviction: agents do the building,
@@ -30,7 +33,7 @@ export default function Products() {
         <div className="mx-auto flex max-w-[1200px] flex-col gap-8 px-8 pb-24 pt-[72px]">
           <Link
             href="/product"
-            className={`${cardBase} hover:border-[rgba(67,222,131,0.5)]`}
+            className={`${cardBase} lift`}
             style={{ background: C.panel, border: `1px solid rgba(255,255,255,0.1)`, color: C.ink }}
           >
             <div className="flex flex-col gap-[18px]">
@@ -60,7 +63,7 @@ export default function Products() {
 
           <Link
             href="/hostile-agent"
-            className={`${cardBase} hover:border-[rgba(255,255,255,0.3)]`}
+            className={`${cardBase} lift`}
             style={{ background: C.panel, border: `1px solid rgba(255,255,255,0.1)`, color: C.ink }}
           >
             <div className="flex flex-col gap-[18px]">

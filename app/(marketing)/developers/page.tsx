@@ -1,4 +1,5 @@
 import { C, Eyebrow } from "@/components/marketing/atoms";
+import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
 
 export const metadata = {
   title: "Developers — the MCP tool surface | Pluggie",
@@ -51,11 +52,12 @@ const CONVENTIONS: { title: string; body: React.ReactNode }[] = [
 export default function Developers() {
   return (
     <>
-      <section className="border-b" style={{ borderColor: C.line }}>
-        <div className="mx-auto flex max-w-[1200px] flex-col gap-5 px-8 pb-16 pt-20">
+      <section className="relative overflow-hidden border-b" style={{ borderColor: C.line }}>
+        <HeroBackdrop align="right" />
+        <div className="enter relative mx-auto flex max-w-[1200px] flex-col gap-5 px-8 pb-16 pt-24">
           <Eyebrow>DEVELOPERS</Eyebrow>
           <h1 className="m-0 text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.05] tracking-[-0.03em]">
-            Docs for humans. And their agents.
+            Docs for humans. And their <span className="grad-accent">agents</span>.
           </h1>
           <p className="m-0 max-w-[580px] text-[16.5px] leading-[1.6]" style={{ color: C.mute }}>
             The tool surface is self-describing — most of what&apos;s below, an agent discovers on its own.

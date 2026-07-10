@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { C, Eyebrow } from "@/components/marketing/atoms";
+import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
 
 export const metadata = {
   title: "Company — Pluggie",
@@ -9,8 +10,9 @@ export const metadata = {
 export default function Company() {
   return (
     <>
-      <section className="border-b" style={{ borderColor: C.line }}>
-        <div className="mx-auto flex max-w-[800px] flex-col gap-6 px-8 pb-[72px] pt-[88px]">
+      <section className="relative overflow-hidden border-b" style={{ borderColor: C.line }}>
+        <HeroBackdrop align="right" />
+        <div className="enter relative mx-auto flex max-w-[800px] flex-col gap-6 px-8 pb-[72px] pt-[92px]">
           <Eyebrow>COMPANY</Eyebrow>
           <h1 className="m-0 text-[clamp(36px,4.5vw,52px)] font-bold leading-[1.08] tracking-[-0.03em]">
             Built by an agency that got tired of building the same backend.
