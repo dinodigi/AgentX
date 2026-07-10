@@ -9,6 +9,7 @@ import { listAuditLog } from "@/lib/audit";
 import { listEntryVersions } from "@/lib/versions";
 import { loadRelationChoices } from "@/lib/admin";
 import { getLocales } from "@/lib/locales";
+import { fieldLocalized } from "@/lib/field-types";
 import { publicFields } from "@/lib/entries";
 import { allowedTargets } from "@/lib/workflow";
 import { EntryForm } from "@/components/EntryForm";
@@ -33,10 +34,13 @@ function actorLabel(actor: AuditActor): string {
 /** Edit an existing entry: auto-generated form + metadata/visibility panel. */
 export default async function EditEntry({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string; collection: string; entryId: string }>;
+  searchParams: Promise<{ locale?: string }>;
 }) {
   const { projectId, collection: name, entryId } = await params;
+  const { locale: localeParam } = await searchParams;
   const collection = await getCollection(projectId, name);
   if (!collection) notFound();
 
@@ -66,6 +70,15 @@ export default async function EditEntry({
 
   const pub = publicFields(collection).length;
 
+  // J7: which locale's variants the form edits — ?locale=xx, validated against
+  // the registry (unknown falls back to the default). Switcher shown only when
+  // this collection actually has localized fields.
+  const hasLocalized = collection.fields.some(fieldLocalized);
+  const activeLocale =
+    locales && localeParam && locales.supported.includes(localeParam.toLowerCase())
+      ? localeParam.toLowerCase()
+      : (locales?.default ?? null);
+
   return (
     <>
       <p className="mb-2 text-sm text-[--color-ink-mute]">
@@ -82,6 +95,21 @@ export default async function EditEntry({
 
       <div className="grid grid-cols-1 gap-8 md:grid-cols-[1.7fr_1fr]">
         <div>
+          {hasLocalized && locales && (
+            <div className="mb-4 flex items-center gap-1.5">
+              <span className="section-label mr-1">Locale</span>
+              {locales.supported.map((l) => (
+                <Link
+                  key={l}
+                  href={`/admin/${projectId}/${name}/${entryId}?locale=${l}`}
+                  className={l === activeLocale ? "chip chip-brand" : "chip chip-mute"}
+                >
+                  {l}
+                  {l === locales.default ? " (default)" : ""}
+                </Link>
+              ))}
+            </div>
+          )}
           <EntryForm
             projectId={projectId}
             fields={collection.fields}
@@ -89,7 +117,8 @@ export default async function EditEntry({
             initial={entry.data}
             action={saveEntry.bind(null, projectId, name, entryId)}
             enumOptionOverrides={enumOptionOverrides}
-            defaultLocale={locales?.default ?? null}
+            locales={locales}
+            activeLocale={activeLocale}
           />
         </div>
         <aside>

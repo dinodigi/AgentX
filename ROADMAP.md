@@ -542,7 +542,14 @@ site needs srcsets.
       reserved in the filter loop). Generated client gains `locale` opts only on
       collections with localized public fields. ✅ 2026-07-10, 47-delivery-locale
       smoke (7), full suite 399/399.
-- [ ] 18.7 `J7` (M) — admin locale switcher on entry forms.
+- [x] 18.7 `J7` (M) — admin locale switcher: pill-row on entry edit (?locale=xx,
+      shown only when the collection has localized fields), per-field
+      `xx · n/N translated` chips, hidden `__locale` carried to saveEntry (a
+      since-removed locale ERRORS rather than saving under the default —
+      translation-integrity), new entries pinned to the default locale.
+      Admin is Clerk-gated → compile-verified per precedent (entries layer
+      already smoke-covered). ✅ 2026-07-10, full suite 399/399.
+      **USER: eyeball the switcher visually before next client handoff.**
 - [ ] 18.8 `J8` (M) — localize/delocalize populated fields via wrap-backfill
       (delocalize = plan + confirm).
 

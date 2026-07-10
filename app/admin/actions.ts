@@ -28,8 +28,19 @@ export async function saveEntry(
   const collection = await getCollection(projectId, collectionName);
   if (!collection) return { error: "collection not found" };
 
+  // J7: the form says which locale its localized inputs belong to. A locale
+  // that is no longer supported errors rather than silently saving the text
+  // under the default locale (which would corrupt translations).
   const locales = await getLocales(projectId);
-  const data = coerceFormData(collection.fields, formData, locales?.default ?? null);
+  const requested = formData.get("__locale");
+  let wrapLocale = locales?.default ?? null;
+  if (typeof requested === "string" && requested !== "") {
+    if (!locales || !locales.supported.includes(requested)) {
+      return { error: `locale "${requested}" is no longer supported — reload the form` };
+    }
+    wrapLocale = requested;
+  }
+  const data = coerceFormData(collection.fields, formData, wrapLocale);
 
   const viewer = await getViewer();
   const actor = { type: "admin" as const, userId: viewer?.userId };

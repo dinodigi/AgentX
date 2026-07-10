@@ -43,7 +43,10 @@ export default async function NewEntry({
           initial={{}}
           action={action}
           enumOptionOverrides={enumOptionOverrides}
-          defaultLocale={locales?.default ?? null}
+          // J7: new entries are pinned to the default locale — required
+          // localized fields need the default variant; translate after create.
+          locales={locales}
+          activeLocale={locales?.default ?? null}
         />
       </div>
     </>

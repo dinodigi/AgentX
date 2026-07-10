@@ -29,7 +29,8 @@ export function EntryForm({
   initial,
   action,
   enumOptionOverrides,
-  defaultLocale,
+  locales,
+  activeLocale,
 }: {
   projectId: string;
   fields: FieldDef[];
@@ -40,8 +41,10 @@ export function EntryForm({
    * current state + admin-reachable targets are offered (new entries: initial
    * only). UX truthfulness — the entries layer remains the enforcer. */
   enumOptionOverrides?: Record<string, string[]>;
-  /** J4: localized fields edit this locale's variant (J7 adds a switcher). */
-  defaultLocale?: string | null;
+  /** J7: project locale registry; localized fields edit activeLocale's variant
+   * (carried to the save action via the hidden __locale input). */
+  locales?: { default: string; supported: string[] } | null;
+  activeLocale?: string | null;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -54,8 +57,14 @@ export function EntryForm({
     if (res && "error" in res && res.error) setError(res.error);
   }
 
+  const editLocale = activeLocale ?? locales?.default ?? null;
+  const hasLocalized = fields.some(fieldLocalized);
+
   return (
     <form action={onSubmit}>
+      {/* J7: which locale's variants this form edits — the save action wraps
+          localized inputs under it (and rejects it if no longer supported). */}
+      {hasLocalized && editLocale ? <input type="hidden" name="__locale" value={editLocale} /> : null}
       {fields.map((f) => (
         <FieldInput
           key={f.name}
@@ -64,7 +73,8 @@ export function EntryForm({
           value={initial[f.name]}
           choices={relationChoices[f.name] ?? []}
           enumOverride={enumOptionOverrides?.[f.name]}
-          defaultLocale={defaultLocale}
+          activeLocale={editLocale}
+          supportedCount={locales?.supported.length ?? 0}
         />
       ))}
       {error && (
@@ -114,22 +124,33 @@ function FieldInput({
   value,
   choices,
   enumOverride,
-  defaultLocale,
+  activeLocale,
+  supportedCount,
 }: {
   projectId: string;
   field: FieldDef;
   value: unknown;
   choices: RelationChoice[];
   enumOverride?: string[];
-  defaultLocale?: string | null;
+  activeLocale?: string | null;
+  supportedCount?: number;
 }) {
-  // J4: a localized value is a {locale: string} variant map — edit the default
-  // locale's variant (the save path wraps it back under the same locale).
+  // J7: a localized value is a {locale: string} variant map — edit the ACTIVE
+  // locale's variant (the save path wraps the input back under that locale,
+  // and updateEntry's merge preserves the others).
   const localized = fieldLocalized(field);
-  if (localized && value && typeof value === "object" && !Array.isArray(value)) {
-    value = (value as Record<string, unknown>)[defaultLocale ?? ""] ?? "";
+  let localeChip: string | null = null;
+  if (localized && activeLocale) {
+    localeChip = activeLocale;
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const map = value as Record<string, unknown>;
+      const translated = Object.keys(map).length;
+      if (supportedCount && supportedCount > 1) {
+        localeChip = `${activeLocale} · ${translated}/${supportedCount} translated`;
+      }
+      value = map[activeLocale] ?? "";
+    }
   }
-  const localeChip = localized && defaultLocale ? defaultLocale : null;
   // I3: computed fields are derived server-side — show the value read-only, with
   // NO `name`, so the form never submits them (which the API would reject).
   if (field.computed) {
