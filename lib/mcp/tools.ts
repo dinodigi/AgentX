@@ -29,6 +29,7 @@ import {
   transact,
   TransactError,
   restoreEntryVersion,
+  dryRunHook,
   ValidationError,
 } from "@/lib/entries";
 import { restoreEntry, listTrash, purgeEntry, emptyTrash } from "@/lib/trash";
@@ -884,6 +885,29 @@ export const TOOL_DEFS: ToolDef[] = [
         limit: { type: "number" },
         offset: { type: "number" },
       },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "test_hook",
+    description:
+      "Dry-run a collection's before-write hook against sample data WITHOUT writing anything — " +
+      "the self-repair loop to run before wiring a hook to production writes. Validates `data` " +
+      "against the schema (partial for beforeUpdate, which also needs `entryId` to load the row " +
+      "it targets), then calls your configured endpoint exactly as a real write would (SAME " +
+      "signature, so this DOES hit your endpoint; logged as event 'hook.test'). Returns " +
+      "{verdict: proceed|replaced|rejected|unavailable, hookResponse, finalData?, " +
+      "validationOfFinalData?} — for a transform, finalData is what would be written and " +
+      "validationOfFinalData reports whether it passes the schema. AgentX writes nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        stage: { type: "string", enum: ["beforeCreate", "beforeUpdate"] },
+        data: { type: "object", description: "the candidate (create) or patch (update) to test" },
+        entryId: { type: "string", description: "required for beforeUpdate — the row the update targets" },
+      },
+      required: ["collection", "stage", "data"],
       additionalProperties: false,
     },
   },
@@ -1860,6 +1884,26 @@ export async function callTool(
           hasMore,
           nextOffset: hasMore ? offset + limit : null,
         });
+      }
+
+      case "test_hook": {
+        const a = z
+          .object({
+            collection: z.string(),
+            stage: z.enum(["beforeCreate", "beforeUpdate"]),
+            data: z.record(z.unknown()),
+            entryId: z.string().optional(),
+          })
+          .parse(rawArgs);
+        const collection = await mustCollection(projectId, a.collection);
+        let current: Record<string, unknown> | undefined;
+        if (a.stage === "beforeUpdate") {
+          if (!a.entryId) return err("beforeUpdate test needs entryId — the row the update targets", "E_VALIDATION");
+          const row = await getEntry(collection, a.entryId);
+          if (!row) return err(`no entry ${a.entryId} in "${a.collection}"`, "E_NOT_FOUND");
+          current = row.data;
+        }
+        return ok(await dryRunHook(projectId, collection, a.stage, a.data, current));
       }
 
       case "get_client_code": {

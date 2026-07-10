@@ -32,7 +32,7 @@ import {
   type RelatedContextMap,
 } from "./query";
 import { emitEntryEvent, runEventAction, type EntryEvent } from "./events";
-import { callWriteHook } from "./hooks";
+import { callWriteHook, type HookEnvelope } from "./hooks";
 import { stampIdentity, stampedIdentityFields } from "./access-rules";
 import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workflow";
 import { recordChange, recordChanges, type ChangeInput } from "./changes";
@@ -577,6 +577,68 @@ export async function updateEntry(
     changedFields: Object.keys(patch),
   });
   return entry;
+}
+
+export interface HookTestResult {
+  verdict: "proceed" | "replaced" | "rejected" | "unavailable";
+  /** The (parsed) response the endpoint gave. */
+  hookResponse: Record<string, unknown>;
+  /** For a transform: what WOULD be written (before ownership re-stamp). */
+  finalData?: Record<string, unknown>;
+  validationOfFinalData?: { ok: boolean; error?: string };
+}
+
+/**
+ * I2: consult a collection's hook for `data` WITHOUT writing anything — the
+ * self-repair loop an agent runs before pointing production writes at an
+ * endpoint. Side-effect-free on AgentX (no insert/update), but it DOES call the
+ * tenant endpoint (logged as 'hook.test'). Ownership re-stamp is NOT applied —
+ * this shows the endpoint's RAW verdict; the write path re-stamps regardless.
+ */
+export async function dryRunHook(
+  projectId: string,
+  collection: Collection,
+  stage: "beforeCreate" | "beforeUpdate",
+  data: unknown,
+  current?: Record<string, unknown>,
+): Promise<HookTestResult> {
+  const hook = collection.hooks?.[stage];
+  if (!hook) throw new ValidationError(`"${collection.name}" has no ${stage} hook configured — define one first`);
+
+  let envelope: HookEnvelope;
+  if (stage === "beforeCreate") {
+    const clean = validate(collection.fields, data, false);
+    applyWorkflowOnCreate(collection, clean);
+    envelope = { event: "entry.before_create", collection: collection.name, candidate: { data: clean } };
+  } else {
+    if (!current) throw new ValidationError("beforeUpdate test needs entryId — the row the update targets");
+    const patch = validate(collection.fields, data, true);
+    envelope = {
+      event: "entry.before_update",
+      collection: collection.name,
+      candidate: { data: mergePatch(current, patch) },
+      current: { data: current },
+    };
+  }
+
+  const outcome = await callWriteHook(projectId, collection, hook, envelope, "hook.test");
+  if (outcome.kind === "reject") {
+    return { verdict: "rejected", hookResponse: { ok: false, error: outcome.error, ...(outcome.code ? { code: outcome.code } : {}) } };
+  }
+  if (outcome.kind === "unavailable") {
+    return { verdict: "unavailable", hookResponse: { error: outcome.reason } };
+  }
+  if (outcome.kind === "replace") {
+    let validationOfFinalData: { ok: boolean; error?: string };
+    try {
+      validate(collection.fields, outcome.data, false);
+      validationOfFinalData = { ok: true };
+    } catch (e) {
+      validationOfFinalData = { ok: false, error: e instanceof ValidationError ? e.message : String(e) };
+    }
+    return { verdict: "replaced", hookResponse: { ok: true, data: outcome.data }, finalData: outcome.data, validationOfFinalData };
+  }
+  return { verdict: "proceed", hookResponse: { ok: true } };
 }
 
 export interface UpdateIfOpts {

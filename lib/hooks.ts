@@ -70,6 +70,8 @@ export async function callWriteHook(
   collection: Collection,
   hook: WriteHook,
   envelope: HookEnvelope,
+  /** Override the logged delivery event — test_hook (I2) logs 'hook.test'. */
+  logEvent?: string,
 ): Promise<HookOutcome> {
   const [proj] = await db
     .select({ secret: projects.webhookSigningSecret })
@@ -135,7 +137,7 @@ export async function callWriteHook(
       projectId,
       collectionId: collection.id,
       url: hook.url,
-      event: `hook.${stage}`,
+      event: logEvent ?? `hook.${stage}`,
       payload: { envelope, response: responseSummary },
       status: outcome.kind === "unavailable" ? "failed" : "success",
       attempts: "1",

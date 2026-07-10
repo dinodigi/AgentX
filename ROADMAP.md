@@ -411,7 +411,10 @@ the spec file where they disagree.*
       re-validate FULL). Adversarial review fixed 5 (HIGH: transform beforeUpdate
       failed edits of source-only-workflow-state rows; MED: checkout could stamp
       order ownership via a transform; +transact $ref, [::1] loopback).
-- [ ] 16.3 `I2` (S) — `test_hook` dry-run MCP tool.
+- [x] 16.3 `I2` (S) — `test_hook` dry-run MCP tool: consults the collection's hook
+      against sample data WITHOUT writing (side-effect-free on AgentX; DOES call the
+      tenant endpoint, logged 'hook.test'); returns verdict + finalData +
+      validationOfFinalData. ✅ 2026-07-09, 41-test-hook smoke (6).
 - [ ] 16.4 `I3` (M) — computed fields, closed vocabulary (slugify | template | now | uuid):
       **two explicit schema modes** — INPUT (rejects computed keys, applied to all
       untrusted input) vs STORAGE (post-stamp) — stamped in createEntry core
