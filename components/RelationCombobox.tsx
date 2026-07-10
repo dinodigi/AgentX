@@ -56,7 +56,7 @@ export function RelationCombobox({
               setQuery("");
               setOpen(true);
             }}
-            className="shrink-0 text-[--color-ink-mute] transition-colors hover:text-[--color-ink]"
+            className="shrink-0 text-ink-mute transition-colors hover:text-ink"
           >
             <X className="h-4 w-4" />
           </button>
@@ -74,14 +74,14 @@ export function RelationCombobox({
             }}
             className="field-input pr-8"
           />
-          <ChevronsUpDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[--color-ink-mute]" />
+          <ChevronsUpDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-mute" />
         </div>
       )}
 
       {open && !selected && (
-        <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-[--color-line] bg-[--color-card] shadow-lg">
+        <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-line bg-card shadow-lg">
           {filtered.length === 0 ? (
-            <p className="px-3 py-2.5 text-sm text-[--color-ink-mute]">No matches.</p>
+            <p className="px-3 py-2.5 text-sm text-ink-mute">No matches.</p>
           ) : (
             filtered.map((c) => (
               <button
@@ -91,14 +91,14 @@ export function RelationCombobox({
                   setSelected(c);
                   setOpen(false);
                 }}
-                className="block w-full truncate px-3 py-2 text-left text-sm transition-colors hover:bg-[--color-brand-wash]"
+                className="block w-full truncate px-3 py-2 text-left text-sm transition-colors hover:bg-brand-wash"
               >
                 {c.label}
               </button>
             ))
           )}
           {choices.length >= 500 && (
-            <p className="border-t border-[--color-line] px-3 py-2 text-xs text-[--color-ink-mute]">
+            <p className="border-t border-line px-3 py-2 text-xs text-ink-mute">
               Showing the first 500 entries — narrow by typing if yours is missing.
             </p>
           )}

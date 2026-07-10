@@ -81,8 +81,8 @@ export default async function EditEntry({
 
   return (
     <>
-      <p className="mb-2 text-sm text-[--color-ink-mute]">
-        <Link href={`/admin/${projectId}/${name}`} className="hover:text-[--color-ink-soft]">
+      <p className="mb-2 text-sm text-ink-mute">
+        <Link href={`/admin/${projectId}/${name}`} className="hover:text-ink-soft">
           ← {collection.displayName}
         </Link>
       </p>
@@ -122,41 +122,41 @@ export default async function EditEntry({
           />
         </div>
         <aside>
-          <div className="rounded-xl border border-[--color-line] bg-[--color-paper] p-4 text-sm">
+          <div className="rounded-xl border border-line bg-paper p-4 text-sm">
             <dl className="space-y-1.5">
               <div className="flex justify-between">
-                <dt className="text-[--color-ink-mute]">Created</dt>
+                <dt className="text-ink-mute">Created</dt>
                 <dd>{entry.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-[--color-ink-mute]">Updated</dt>
+                <dt className="text-ink-mute">Updated</dt>
                 <dd>{entry.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</dd>
               </div>
               <div className="flex justify-between">
-                <dt className="text-[--color-ink-mute]">ID</dt>
-                <dd className="font-mono text-xs text-[--color-ink-soft]">{entry.id.slice(0, 8)}…</dd>
+                <dt className="text-ink-mute">ID</dt>
+                <dd className="font-mono text-xs text-ink-soft">{entry.id.slice(0, 8)}…</dd>
               </div>
             </dl>
-            <div className="my-3 border-t border-[--color-line]" />
+            <div className="my-3 border-t border-line" />
             <div className="flex items-center gap-1.5 font-medium">
-              <Globe className="h-4 w-4 text-[--color-ink-mute]" />
+              <Globe className="h-4 w-4 text-ink-mute" />
               Visibility
             </div>
-            <p className="mt-1 text-[--color-ink-mute]">
+            <p className="mt-1 text-ink-mute">
               {pub} of {collection.fields.length} fields are public and served by{" "}
               <code className="font-mono text-xs">GET /v1/{name}</code>.
             </p>
             {audit.length > 0 && (
               <>
-                <div className="my-3 border-t border-[--color-line]" />
+                <div className="my-3 border-t border-line" />
                 <div className="flex items-center gap-1.5 font-medium">
-                  <History className="h-4 w-4 text-[--color-ink-mute]" />
+                  <History className="h-4 w-4 text-ink-mute" />
                   History
                 </div>
                 <ul className="mt-1.5 space-y-1.5">
                   {audit.slice(0, 8).map((row, i) => (
-                    <li key={i} className="text-xs leading-relaxed text-[--color-ink-mute]">
-                      <span className="font-medium text-[--color-ink-soft]">
+                    <li key={i} className="text-xs leading-relaxed text-ink-mute">
+                      <span className="font-medium text-ink-soft">
                         {row.action === "create"
                           ? "Created"
                           : row.action === "delete"
@@ -171,7 +171,7 @@ export default async function EditEntry({
                       {row.action === "update" && row.changedFields?.length
                         ? ` — ${row.changedFields.join(", ")}`
                         : ""}
-                      <span className="text-[--color-line-strong]">
+                      <span className="text-line-strong">
                         {" · "}
                         {row.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}{" "}
                         {row.createdAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
@@ -183,22 +183,22 @@ export default async function EditEntry({
             )}
             {versions.length > 0 && (
               <>
-                <div className="my-3 border-t border-[--color-line]" />
+                <div className="my-3 border-t border-line" />
                 <div className="flex items-center gap-1.5 font-medium">
-                  <RotateCcw className="h-4 w-4 text-[--color-ink-mute]" />
+                  <RotateCcw className="h-4 w-4 text-ink-mute" />
                   Versions
                 </div>
-                <p className="mt-1 text-xs text-[--color-ink-mute]">
+                <p className="mt-1 text-xs text-ink-mute">
                   Restore rolls this entry back to a past state (itself undoable).
                 </p>
                 <ul className="mt-1.5 space-y-2">
                   {versions.map((v) => (
                     <li key={v.versionId} className="flex items-center justify-between gap-2">
-                      <span className="text-xs leading-relaxed text-[--color-ink-mute]">
+                      <span className="text-xs leading-relaxed text-ink-mute">
                         {new Date(v.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}{" "}
                         {new Date(v.createdAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                         {v.changedFields?.length ? (
-                          <span className="text-[--color-line-strong]"> · {v.changedFields.join(", ")}</span>
+                          <span className="text-line-strong"> · {v.changedFields.join(", ")}</span>
                         ) : null}
                       </span>
                       <ConfirmButton

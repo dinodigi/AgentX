@@ -36,13 +36,13 @@ export function McpSnippet({ token }: { token: string }) {
 
   return (
     <div>
-      <p className="mb-1.5 text-sm text-[--color-ink-mute]">MCP endpoint</p>
-      <div className="mb-3 flex items-center gap-2 rounded-lg border border-[--color-line] bg-[--color-paper] px-3 py-2">
+      <p className="mb-1.5 text-sm text-ink-mute">MCP endpoint</p>
+      <div className="mb-3 flex items-center gap-2 rounded-lg border border-line bg-paper px-3 py-2">
         <code className="min-w-0 flex-1 truncate font-mono text-sm">{url}</code>
         <button
           type="button"
           onClick={() => copy("url", url)}
-          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[--color-line] px-2 py-1 text-xs hover:bg-[--color-paper]"
+          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-2 py-1 text-xs hover:bg-paper"
         >
           {copied === "url" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied === "url" ? "Copied" : "Copy"}
@@ -50,20 +50,20 @@ export function McpSnippet({ token }: { token: string }) {
       </div>
 
       <div className="mb-1.5 flex items-center">
-        <p className="text-sm text-[--color-ink-mute]">
+        <p className="text-sm text-ink-mute">
           Save as <code className="font-mono text-xs">.mcp.json</code> in the site&apos;s repo,
           then restart Claude Code
         </p>
         <button
           type="button"
           onClick={() => copy("json", snippet)}
-          className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md border border-[--color-line] px-2 py-1 text-xs hover:bg-[--color-paper]"
+          className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-2 py-1 text-xs hover:bg-paper"
         >
           {copied === "json" ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied === "json" ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="overflow-x-auto rounded-lg bg-[--color-paper] p-3 font-mono text-xs leading-relaxed text-[--color-ink-soft]">
+      <pre className="overflow-x-auto rounded-lg bg-paper p-3 font-mono text-xs leading-relaxed text-ink-soft">
         {snippet}
       </pre>
     </div>

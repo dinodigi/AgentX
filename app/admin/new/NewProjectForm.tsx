@@ -36,8 +36,8 @@ export function NewProjectForm() {
           <p className="font-medium">Project created</p>
         </div>
 
-        <p className="mb-1.5 text-sm text-[--color-ink-mute]">MCP token</p>
-        <div className="mb-3 flex items-center gap-2 rounded-lg border border-[--color-line] bg-[--color-paper] px-3 py-2">
+        <p className="mb-1.5 text-sm text-ink-mute">MCP token</p>
+        <div className="mb-3 flex items-center gap-2 rounded-lg border border-line bg-paper px-3 py-2">
           <code className="min-w-0 flex-1 truncate font-mono text-sm">{result.token}</code>
           <button
             type="button"
@@ -46,7 +46,7 @@ export function NewProjectForm() {
               setCopied(true);
               setTimeout(() => setCopied(false), 1500);
             }}
-            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[--color-line] px-2 py-1 text-xs hover:bg-[--color-paper]"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-2 py-1 text-xs hover:bg-paper"
           >
             {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
             {copied ? "Copied" : "Copy"}
@@ -103,7 +103,7 @@ export function NewProjectForm() {
           type="color"
           value={color}
           onChange={(e) => setColor(e.target.value)}
-          className="h-7 w-9 cursor-pointer rounded border border-[--color-line]"
+          className="h-7 w-9 cursor-pointer rounded border border-line"
           aria-label="Custom color"
         />
       </div>

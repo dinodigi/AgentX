@@ -20,7 +20,7 @@ export default async function ConnectorsPage({
     <>
       <p className="eyebrow mb-1">Project</p>
       <h1 className="display mb-1 text-xl font-semibold">Connectors</h1>
-      <p className="mb-6 max-w-md text-sm text-[--color-ink-mute]">
+      <p className="mb-6 max-w-md text-sm text-ink-mute">
         Bring your own infrastructure. Clerk powers end-user sign-in and access
         rules; Resend powers email actions; Stripe powers checkout. Secrets are
         encrypted at rest and never exposed to agents.

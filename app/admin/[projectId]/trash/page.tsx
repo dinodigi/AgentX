@@ -40,20 +40,20 @@ export default async function TrashPage({
     <>
       <div className="mb-5 flex items-center gap-3">
         <h1 className="display text-xl font-semibold">Trash</h1>
-        <span className="text-sm text-[--color-ink-mute]">
+        <span className="text-sm text-ink-mute">
           {rows.length} {rows.length === 1 ? "item" : "items"}
         </span>
       </div>
 
       {rows.length === 0 ? (
-        <div className="card p-10 text-center text-sm text-[--color-ink-mute]">
+        <div className="card p-10 text-center text-sm text-ink-mute">
           Trash is empty. Deleted entries land here and stay restorable for ~30 days.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-[--color-line]">
+        <div className="overflow-hidden rounded-xl border border-line">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-[--color-line] bg-[--color-paper] text-left text-xs text-[--color-ink-mute]">
+              <tr className="border-b border-line bg-paper text-left text-xs text-ink-mute">
                 <th className="px-4 py-2 font-medium">Collection</th>
                 <th className="px-4 py-2 font-medium">Preview</th>
                 <th className="px-4 py-2 font-medium">Deleted</th>
@@ -62,10 +62,10 @@ export default async function TrashPage({
             </thead>
             <tbody>
               {rows.map((r) => (
-                <tr key={r.id} className="border-b border-[--color-line] last:border-0">
-                  <td className="px-4 py-2.5 font-medium text-[--color-ink-soft]">{r.collection}</td>
-                  <td className="px-4 py-2.5 text-[--color-ink-mute]">{preview(r.data)}</td>
-                  <td className="px-4 py-2.5 text-xs text-[--color-ink-mute]">
+                <tr key={r.id} className="border-b border-line last:border-0">
+                  <td className="px-4 py-2.5 font-medium text-ink-soft">{r.collection}</td>
+                  <td className="px-4 py-2.5 text-ink-mute">{preview(r.data)}</td>
+                  <td className="px-4 py-2.5 text-xs text-ink-mute">
                     {new Date(r.deletedAt).toLocaleDateString("en-US", {
                       month: "short",
                       day: "numeric",

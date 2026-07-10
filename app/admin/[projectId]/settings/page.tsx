@@ -66,7 +66,7 @@ export default async function SettingsPage({
 
       <section className="mb-9">
         <h2 className="section-label mb-1">MCP tokens</h2>
-        <p className="mb-3 max-w-md text-sm text-[--color-ink-mute]">
+        <p className="mb-3 max-w-md text-sm text-ink-mute">
           Bearer tokens scoping the MCP server and delivery API to this project.
           Only hashes are stored — a token is visible once, when minted.
         </p>
@@ -84,7 +84,7 @@ export default async function SettingsPage({
 
       <section className="mb-9">
         <h2 className="section-label mb-1">Webhook signing secret</h2>
-        <p className="mb-3 max-w-md text-sm text-[--color-ink-mute]">
+        <p className="mb-3 max-w-md text-sm text-ink-mute">
           Outgoing webhooks carry <code className="font-mono text-xs">X-AgentX-Signature</code> —
           receivers verify with this secret (see the API reference).
         </p>
@@ -93,12 +93,12 @@ export default async function SettingsPage({
 
       <section className="mb-9">
         <h2 className="section-label mb-1">Webhooks</h2>
-        <p className="mb-3 max-w-md text-sm text-[--color-ink-mute]">
+        <p className="mb-3 max-w-md text-sm text-ink-mute">
           Fired when a public form receives a submission. One per public-write
           collection.
         </p>
         {formCollections.length === 0 ? (
-          <p className="card max-w-md p-4 text-sm text-[--color-ink-mute]">
+          <p className="card max-w-md p-4 text-sm text-ink-mute">
             No public-write collections yet.
           </p>
         ) : (
@@ -118,31 +118,31 @@ export default async function SettingsPage({
 
       <section className="mb-9">
         <h2 className="section-label mb-1">Delivery log</h2>
-        <p className="mb-3 max-w-md text-sm text-[--color-ink-mute]">
+        <p className="mb-3 max-w-md text-sm text-ink-mute">
           Outcome of every webhook and email action — a lost lead is always
           visible here.
         </p>
         {deliveries.length === 0 ? (
-          <p className="card max-w-md p-4 text-sm text-[--color-ink-mute]">No deliveries yet.</p>
+          <p className="card max-w-md p-4 text-sm text-ink-mute">No deliveries yet.</p>
         ) : (
           <div className="card max-w-2xl overflow-x-auto">
             <table className="w-full text-sm">
               <tbody>
                 {deliveries.map((d) => (
-                  <tr key={d.id} className="border-b border-[--color-line] last:border-0">
+                  <tr key={d.id} className="border-b border-line last:border-0">
                     <td className="px-4 py-2.5">
                       <span className={`chip ${d.status === "success" ? "chip-ok" : "chip-bad"}`}>
                         {d.status}
                       </span>
                     </td>
                     <td className="px-3 py-2.5 font-mono text-xs">{d.event}</td>
-                    <td className="max-w-48 truncate px-3 py-2.5 font-mono text-xs text-[--color-ink-mute]">
+                    <td className="max-w-48 truncate px-3 py-2.5 font-mono text-xs text-ink-mute">
                       {d.url}
                     </td>
-                    <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
+                    <td className="px-3 py-2.5 text-xs text-ink-mute">
                       {d.createdAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                     </td>
-                    <td className="max-w-40 truncate px-3 py-2.5 text-xs text-[--color-err]">
+                    <td className="max-w-40 truncate px-3 py-2.5 text-xs text-err">
                       {d.lastError}
                     </td>
                     <td className="px-3 py-2.5">
@@ -168,12 +168,12 @@ export default async function SettingsPage({
 
       <section className="mb-9">
         <h2 className="section-label mb-1">Automation</h2>
-        <p className="mb-3 max-w-md text-sm text-[--color-ink-mute]">
+        <p className="mb-3 max-w-md text-sm text-ink-mute">
           Background work: delayed event actions and recurring schedules. Job
           outcomes (webhooks/emails) land in the delivery log above.
         </p>
         {schedules.length === 0 && automationJobs.length === 0 ? (
-          <p className="card max-w-md p-4 text-sm text-[--color-ink-mute]">
+          <p className="card max-w-md p-4 text-sm text-ink-mute">
             No schedules or queued jobs — agents create them via define_schedule
             and events with <code className="font-mono text-xs">after</code>.
           </p>
@@ -184,18 +184,18 @@ export default async function SettingsPage({
                 <table className="w-full text-sm">
                   <tbody>
                     {schedules.map((s) => (
-                      <tr key={s.id} className="border-b border-[--color-line] last:border-0">
+                      <tr key={s.id} className="border-b border-line last:border-0">
                         <td className="px-4 py-2.5 font-medium">{s.name}</td>
-                        <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
+                        <td className="px-3 py-2.5 text-xs text-ink-mute">
                           {s.recurrence.frequency}
                           {s.recurrence.at ? ` at ${s.recurrence.at}` : ""}
                           {s.recurrence.weekday ? ` (${s.recurrence.weekday})` : ""}
                           {s.recurrence.dayOfMonth ? ` (day ${s.recurrence.dayOfMonth})` : ""}
                         </td>
-                        <td className="px-3 py-2.5 font-mono text-xs text-[--color-ink-mute]">
+                        <td className="px-3 py-2.5 font-mono text-xs text-ink-mute">
                           {s.action.type === "webhook" ? "webhook" : `email:${s.action.to}`}
                         </td>
-                        <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
+                        <td className="px-3 py-2.5 text-xs text-ink-mute">
                           {s.enabled
                             ? `next ${s.nextRunAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`
                             : "paused"}
@@ -226,20 +226,20 @@ export default async function SettingsPage({
                 <table className="w-full text-sm">
                   <tbody>
                     {automationJobs.map((j) => (
-                      <tr key={j.id} className="border-b border-[--color-line] last:border-0">
+                      <tr key={j.id} className="border-b border-line last:border-0">
                         <td className="px-4 py-2.5">
                           <span className={`chip ${j.status === "failed" ? "chip-bad" : "chip-mute"}`}>
                             {j.status}
                           </span>
                         </td>
                         <td className="px-3 py-2.5 font-mono text-xs">{j.kind}</td>
-                        <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
+                        <td className="px-3 py-2.5 text-xs text-ink-mute">
                           {j.runAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
                         </td>
-                        <td className="px-3 py-2.5 text-xs text-[--color-ink-mute]">
+                        <td className="px-3 py-2.5 text-xs text-ink-mute">
                           {j.attempts}/{j.maxAttempts}
                         </td>
-                        <td className="max-w-40 truncate px-3 py-2.5 text-xs text-[--color-err]">{j.lastError}</td>
+                        <td className="max-w-40 truncate px-3 py-2.5 text-xs text-err">{j.lastError}</td>
                         <td className="px-3 py-2.5">
                           {j.status === "pending" && (
                             <form action={cancelJobAction.bind(null, projectId, j.id)}>
@@ -265,7 +265,7 @@ export default async function SettingsPage({
 
       <section className="mb-9">
         <h2 className="section-label mb-1">Manifest</h2>
-        <p className="mb-3 max-w-md text-sm text-[--color-ink-mute]">
+        <p className="mb-3 max-w-md text-sm text-ink-mute">
           The whole project definition as one JSON doc — version it, diff it,
           replicate it via import_project.
         </p>
@@ -276,7 +276,7 @@ export default async function SettingsPage({
 
       <section>
         <h2 className="section-label mb-1">Members</h2>
-        <p className="mb-3 max-w-md text-sm text-[--color-ink-mute]">
+        <p className="mb-3 max-w-md text-sm text-ink-mute">
           Who can open this admin. Operators manage settings; clients manage
           content.
         </p>

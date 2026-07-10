@@ -30,13 +30,12 @@ export function BrandingForm({
   initial,
 }: {
   projectId: string;
-  initial: { displayName: string; primaryColor: string; logoUrl: string; theme: "dark" | "light" };
+  initial: { displayName: string; primaryColor: string; logoUrl: string };
 }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [logoUrl, setLogoUrl] = useState(initial.logoUrl);
   const [uploading, setUploading] = useState(false);
-  const [theme, setTheme] = useState<"dark" | "light">(initial.theme);
 
   async function onLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -68,35 +67,16 @@ export function BrandingForm({
         type="color"
         name="primaryColor"
         defaultValue={initial.primaryColor}
-        className="mb-3 h-9 w-14 cursor-pointer rounded border border-[--color-line]"
+        className="mb-3 h-9 w-14 cursor-pointer rounded border border-line"
       />
 
       <label className="mb-1 block text-sm font-medium">Logo</label>
       <input type="hidden" name="logoUrl" value={logoUrl} />
       <div className="mb-3 flex items-center gap-3">
-        {logoUrl && <img src={logoUrl} alt="" className="h-9 w-9 rounded-lg border border-[--color-line] object-cover" />}
-        <input type="file" accept="image/*" onChange={onLogoFile} disabled={uploading} className="text-sm text-[--color-ink-soft]" />
+        {logoUrl && <img src={logoUrl} alt="" className="h-9 w-9 rounded-lg border border-line object-cover" />}
+        <input type="file" accept="image/*" onChange={onLogoFile} disabled={uploading} className="text-sm text-ink-soft" />
       </div>
 
-      <label className="mb-1 block text-sm font-medium">Admin theme</label>
-      <input type="hidden" name="theme" value={theme} />
-      <div className="mb-1 inline-flex overflow-hidden rounded-lg border border-[--color-line]">
-        {(["dark", "light"] as const).map((t) => (
-          <button
-            key={t}
-            type="button"
-            onClick={() => setTheme(t)}
-            className={`px-3.5 py-1.5 font-mono text-xs capitalize transition-colors ${
-              theme === t ? "bg-[--color-raised] text-[--color-ink]" : "text-[--color-ink-mute] hover:text-[--color-ink]"
-            }`}
-          >
-            {t}
-          </button>
-        ))}
-      </div>
-      <p className="mb-4 text-xs text-[--color-ink-mute]">
-        The register your client&apos;s workspace uses. Dark is the default.
-      </p>
 
       <button type="submit" className={buttonClass}>
         {saved ? "Saved" : "Save branding"}
@@ -109,7 +89,7 @@ export function BrandingForm({
 export function SecretReveal({ secret }: { secret: string }) {
   const [shown, setShown] = useState(false);
   const [copied, setCopied] = useState(false);
-  if (!secret) return <p className="card max-w-md p-4 text-sm text-[--color-ink-mute]">No secret generated yet.</p>;
+  if (!secret) return <p className="card max-w-md p-4 text-sm text-ink-mute">No secret generated yet.</p>;
 
   return (
     <div className="card flex max-w-md items-center gap-2 p-3">
@@ -120,7 +100,7 @@ export function SecretReveal({ secret }: { secret: string }) {
         type="button"
         aria-label={shown ? "Hide secret" : "Show secret"}
         onClick={() => setShown(!shown)}
-        className="rounded p-1.5 text-[--color-ink-mute] hover:bg-[--color-paper]"
+        className="rounded p-1.5 text-ink-mute hover:bg-paper"
       >
         {shown ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </button>
@@ -131,7 +111,7 @@ export function SecretReveal({ secret }: { secret: string }) {
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }}
-        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[--color-line] px-2 py-1 text-xs hover:bg-[--color-paper]"
+        className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-2 py-1 text-xs hover:bg-paper"
       >
         {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
         {copied ? "Copied" : "Copy"}
@@ -170,15 +150,15 @@ export function TokensSection({
   return (
     <div className="card max-w-md p-5">
       {tokens.length === 0 ? (
-        <p className="mb-3 text-sm text-[--color-ink-mute]">No active tokens.</p>
+        <p className="mb-3 text-sm text-ink-mute">No active tokens.</p>
       ) : (
-        <ul className="mb-3 divide-y divide-[--color-line]">
+        <ul className="mb-3 divide-y divide-line">
           {tokens.map((t) => (
             <li key={t.id} className="flex items-center gap-2 py-2 text-sm">
-              <span className="font-mono text-xs text-[--color-ink-mute]">agx_••••••••</span>
+              <span className="font-mono text-xs text-ink-mute">agx_••••••••</span>
               <span className="truncate">{t.label ?? "untitled"}</span>
               <span className={`chip ${t.scope === "mcp" ? "chip-brand" : "chip-mute"}`}>{t.scope}</span>
-              <span className="ml-auto whitespace-nowrap text-xs text-[--color-ink-mute]" title="≤5 min granularity">
+              <span className="ml-auto whitespace-nowrap text-xs text-ink-mute" title="≤5 min granularity">
                 {lastUsedLabel(t.lastUsedAt)}
               </span>
               <button
@@ -188,7 +168,7 @@ export function TokensSection({
                   const res = await revokeToken(projectId, t.id);
                   setError(res.error ?? null);
                 }}
-                className="rounded p-1 text-[--color-ink-mute] transition-colors hover:text-[--color-err]"
+                className="rounded p-1 text-ink-mute transition-colors hover:text-err"
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -199,7 +179,7 @@ export function TokensSection({
 
       {revealed && (
         <div className="mb-3">
-          <div className="flex items-center gap-2 rounded-lg border border-[--color-line] bg-[--color-paper] px-3 py-2">
+          <div className="flex items-center gap-2 rounded-lg border border-line bg-paper px-3 py-2">
             <code className="min-w-0 flex-1 truncate font-mono text-sm">{revealed}</code>
             <button
               type="button"
@@ -208,7 +188,7 @@ export function TokensSection({
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1500);
               }}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-[--color-line] px-2 py-1 text-xs hover:bg-[--color-paper]"
+              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line px-2 py-1 text-xs hover:bg-paper"
             >
               {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
               {copied ? "Copied" : "Copy"}
@@ -252,7 +232,7 @@ export function TokensSection({
           Mint token
         </button>
       </div>
-      <p className="mt-2 text-xs text-[--color-ink-mute]">
+      <p className="mt-2 text-xs text-ink-mute">
         Give the site a delivery-scoped token (public read/write only) — never the
         mcp token, which can change schemas.
       </p>
@@ -350,7 +330,7 @@ export function ConnectorCard(p: ConnectorCardProps) {
         />
         <p className="text-sm font-medium">{p.label}</p>
         {p.connected && (
-          <span className="text-xs text-[--color-ink-mute]">
+          <span className="text-xs text-ink-mute">
             {p.status === "connected" ? "connected" : "error"}
           </span>
         )}
@@ -358,13 +338,13 @@ export function ConnectorCard(p: ConnectorCardProps) {
 
       {p.configFields.map((f) => (
         <div key={f.key} className="mb-3">
-          <label className="mb-1 block text-xs text-[--color-ink-mute]">{f.label}</label>
+          <label className="mb-1 block text-xs text-ink-mute">{f.label}</label>
           <input name={f.key} defaultValue={p.config[f.key] ?? ""} placeholder={f.placeholder} className={inputClass} />
         </div>
       ))}
       {p.secretLabel && (
         <div className="mb-3">
-          <label className="mb-1 block text-xs text-[--color-ink-mute]">
+          <label className="mb-1 block text-xs text-ink-mute">
             {p.secretLabel}
             {p.hasSecret ? " (stored — leave blank to keep)" : ""}
           </label>
@@ -375,7 +355,7 @@ export function ConnectorCard(p: ConnectorCardProps) {
         const stored = (p.storedSlots ?? []).includes(extra.slot);
         return (
           <div key={extra.slot} className="mb-3">
-            <label className="mb-1 block text-xs text-[--color-ink-mute]">
+            <label className="mb-1 block text-xs text-ink-mute">
               {extra.label}
               {stored ? " (stored — leave blank to keep)" : ""}
             </label>
@@ -453,11 +433,11 @@ export function ConnectorCard(p: ConnectorCardProps) {
             </button>
           </>
         )}
-        {note && <span className="text-xs text-[--color-ink-mute]">{note}</span>}
+        {note && <span className="text-xs text-ink-mute">{note}</span>}
       </div>
       {rotating && (
-        <div className="mt-3 rounded-lg border border-[--color-line] bg-[--color-paper] p-3">
-          <label className="mb-1 block text-xs text-[--color-ink-mute]">
+        <div className="mt-3 rounded-lg border border-line bg-paper p-3">
+          <label className="mb-1 block text-xs text-ink-mute">
             New {p.secretLabel?.toLowerCase()} — validated against the provider before the old
             one is replaced
           </label>
@@ -507,13 +487,13 @@ export function MembersSection({
   return (
     <div className="card max-w-md p-5">
       {members.length === 0 ? (
-        <p className="mb-3 text-sm text-[--color-ink-mute]">No members yet — only platform operators can open this project.</p>
+        <p className="mb-3 text-sm text-ink-mute">No members yet — only platform operators can open this project.</p>
       ) : (
-        <ul className="mb-3 divide-y divide-[--color-line]">
+        <ul className="mb-3 divide-y divide-line">
           {members.map((m) => (
             <li key={m.id} className="flex items-center gap-2 py-2 text-sm">
               <span className="truncate">{m.email}</span>
-              <span className="rounded-full bg-[--color-paper] px-2 py-0.5 text-xs text-[--color-ink-soft]">{m.role}</span>
+              <span className="rounded-full bg-paper px-2 py-0.5 text-xs text-ink-soft">{m.role}</span>
               <button
                 type="button"
                 aria-label="Remove member"
@@ -521,7 +501,7 @@ export function MembersSection({
                   const res = await removeMember(projectId, m.id);
                   setError(res.error ?? null);
                 }}
-                className="ml-auto rounded p-1 text-[--color-ink-mute] transition-colors hover:text-[--color-err]"
+                className="ml-auto rounded p-1 text-ink-mute transition-colors hover:text-err"
               >
                 <Trash2 className="h-4 w-4" />
               </button>

@@ -29,8 +29,8 @@ export default async function NewEntry({
 
   return (
     <>
-      <p className="mb-2 text-sm text-[--color-ink-mute]">
-        <Link href={`/admin/${projectId}/${name}`} className="hover:text-[--color-ink-soft]">
+      <p className="mb-2 text-sm text-ink-mute">
+        <Link href={`/admin/${projectId}/${name}`} className="hover:text-ink-soft">
           ← {collection.displayName}
         </Link>
       </p>

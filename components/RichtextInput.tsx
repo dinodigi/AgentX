@@ -36,15 +36,15 @@ export function RichtextInput({ name, initialHtml }: { name: string; initialHtml
   const btn = (active: boolean) =>
     `rounded p-1.5 transition-colors ${
       active
-        ? "bg-[--color-brand-wash] text-brand-strong"
-        : "text-[--color-ink-mute] hover:bg-[--color-paper] hover:text-[--color-ink]"
+        ? "bg-brand-wash text-brand-strong"
+        : "text-ink-mute hover:bg-paper hover:text-ink"
     }`;
 
   return (
-    <div className="rounded-lg border border-[--color-line] bg-[--color-card] focus-within:border-[--color-line-strong]">
+    <div className="rounded-lg border border-line bg-card focus-within:border-line-strong">
       <input type="hidden" name={name} value={html} />
       {editor && (
-        <div className="flex items-center gap-0.5 border-b border-[--color-line] px-1.5 py-1">
+        <div className="flex items-center gap-0.5 border-b border-line px-1.5 py-1">
           <button
             type="button"
             title="Bold"
@@ -61,7 +61,7 @@ export function RichtextInput({ name, initialHtml }: { name: string; initialHtml
           >
             <Italic className="h-4 w-4" />
           </button>
-          <span className="mx-1 h-4 w-px bg-[--color-line]" />
+          <span className="mx-1 h-4 w-px bg-line" />
           <button
             type="button"
             title="Heading"
@@ -78,7 +78,7 @@ export function RichtextInput({ name, initialHtml }: { name: string; initialHtml
           >
             <Heading3 className="h-4 w-4" />
           </button>
-          <span className="mx-1 h-4 w-px bg-[--color-line]" />
+          <span className="mx-1 h-4 w-px bg-line" />
           <button
             type="button"
             title="Bullet list"

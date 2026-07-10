@@ -11,11 +11,11 @@ export function EndpointField({ label, value }: { label: string; value: string }
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[--color-ink-mute]">
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-mute">
         {label}
       </span>
-      <div className="flex items-center gap-2 rounded-lg border border-[--color-line] bg-[--color-raised] px-3 py-2">
-        <code className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-[--color-ink]">{value}</code>
+      <div className="flex items-center gap-2 rounded-lg border border-line bg-raised px-3 py-2">
+        <code className="min-w-0 flex-1 truncate font-mono text-[12.5px] text-ink">{value}</code>
         <button
           type="button"
           aria-label={`Copy ${label}`}
@@ -24,7 +24,7 @@ export function EndpointField({ label, value }: { label: string; value: string }
             setCopied(true);
             setTimeout(() => setCopied(false), 1400);
           }}
-          className="shrink-0 rounded p-1 text-[--color-ink-mute] transition-colors hover:text-[--color-ink]"
+          className="shrink-0 rounded p-1 text-ink-mute transition-colors hover:text-ink"
         >
           {copied ? (
             <Check className="h-3.5 w-3.5" style={{ color: "var(--color-accent)" }} />

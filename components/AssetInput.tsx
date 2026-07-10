@@ -42,13 +42,13 @@ export function AssetInput({
         type="file"
         onChange={onFile}
         disabled={busy}
-        className="block text-sm text-[--color-ink-soft] file:mr-3 file:rounded-lg file:border-0 file:bg-brand-soft file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand-strong hover:file:opacity-80"
+        className="block text-sm text-ink-soft file:mr-3 file:rounded-lg file:border-0 file:bg-brand-soft file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-brand-strong hover:file:opacity-80"
       />
-      {busy && <p className="mt-1 text-sm text-[--color-ink-mute]">Uploading…</p>}
+      {busy && <p className="mt-1 text-sm text-ink-mute">Uploading…</p>}
       {url && url.match(/\.(png|jpe?g|gif|webp|svg)$/i) && (
-        <img src={url} alt="" className="mt-2 max-w-48 rounded-lg border border-[--color-line]" />
+        <img src={url} alt="" className="mt-2 max-w-48 rounded-lg border border-line" />
       )}
-      {assetId && !url && <p className="mt-1 text-xs text-[--color-ink-mute]">Current asset: {assetId}</p>}
+      {assetId && !url && <p className="mt-1 text-xs text-ink-mute">Current asset: {assetId}</p>}
     </div>
   );
 }

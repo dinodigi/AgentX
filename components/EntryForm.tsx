@@ -77,29 +77,34 @@ export function EntryForm({
           supportedCount={locales?.supported.length ?? 0}
         />
       ))}
-      {error && (
-        <p className="alert-error mb-3 rounded-lg px-3 py-2 text-sm">{error}</p>
-      )}
-      <button
-        type="submit"
-        disabled={pending}
-        className="btn btn-primary disabled:opacity-60"
-      >
-        {pending ? "Saving…" : "Save"}
-      </button>
+      {error && <p className="alert-error mb-3 rounded-lg px-3 py-2 text-sm">{error}</p>}
+      <div className="sticky bottom-0 z-10 -mx-1 mt-2 flex items-center gap-3 border-t border-line bg-paper/95 px-1 py-3 backdrop-blur">
+        <button type="submit" disabled={pending} className="btn btn-primary disabled:opacity-60">
+          {pending ? "Saving…" : "Save changes"}
+        </button>
+        {hasLocalized && editLocale && (
+          <span className="font-mono text-[11px] text-ink-mute">editing {editLocale}</span>
+        )}
+      </div>
     </form>
   );
 }
 
+/**
+ * Visibility is signal, not decoration. Public is the norm — a quiet globe.
+ * Admin-only is the exception worth flagging — a visible amber tag.
+ */
 function VisibilityPill({ publicRead }: { publicRead?: boolean }) {
   return publicRead ? (
-    <span className="chip chip-brand">
-      <Globe className="h-3 w-3" />
-      public
-    </span>
+    <Globe className="h-3.5 w-3.5 text-line-strong" aria-label="Public — served by the delivery API">
+      <title>Public — served by the delivery API</title>
+    </Globe>
   ) : (
-    <span className="chip chip-mute">
-      <Lock className="h-3 w-3" />
+    <span
+      className="inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.06em]"
+      style={{ color: "var(--color-warn)", borderColor: "var(--color-warn)" }}
+    >
+      <Lock className="h-2.5 w-2.5" />
       admin only
     </span>
   );
@@ -110,7 +115,7 @@ function Label({ field, localeChip }: { field: FieldDef; localeChip?: string | n
     <div className="mb-1.5 flex items-center gap-2">
       <span className="text-sm font-medium">
         {field.label}
-        {field.required ? <span className="text-[--color-err]"> *</span> : null}
+        {field.required ? <span className="text-err"> *</span> : null}
       </span>
       <VisibilityPill publicRead={field.publicRead} />
       {localeChip ? <span className="chip chip-mute">{localeChip}</span> : null}
@@ -157,7 +162,7 @@ function FieldInput({
     return (
       <div className="mb-4">
         <Label field={field} />
-        <div className={`${inputClass} bg-[--color-paper] text-[--color-ink-mute]`}>
+        <div className={`${inputClass} bg-paper text-ink-mute`}>
           {value != null && value !== "" ? str(value) : (
             <span className="italic">computed on save ({field.computed.fn})</span>
           )}

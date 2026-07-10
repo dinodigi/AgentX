@@ -1,18 +1,20 @@
-import { UserButton } from "@clerk/nextjs";
 import { count, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { collections, entries, projectConnectors } from "@/db/schema";
 import { accessibleProjects } from "@/lib/access";
 import { brandInk } from "@/lib/brand";
+import { getWorkspaceTheme } from "@/lib/theme";
 import { ProjectFleet, type FleetProject } from "@/components/admin/ProjectFleet";
+import { WorkspaceSidebar } from "@/components/admin/WorkspaceSidebar";
+import type { SwitcherProject } from "@/components/admin/ProjectSwitcher";
 
 /**
- * The studio — the operator's control plane over every client backend. Each
- * project is a live system; the fleet reports scale, connector health and its
- * last-write pulse. Data comes from grouped queries, never one-per-project.
+ * The studio — the operator's workspace over every client backend. The unified
+ * sidebar frames it (switcher + account + theme); the main area is the fleet,
+ * each project a live system with scale, connector health and a last-write pulse.
  */
 export default async function AdminHome() {
-  const projects = await accessibleProjects();
+  const [projects, theme] = await Promise.all([accessibleProjects(), getWorkspaceTheme()]);
 
   const [collectionCounts, entryCounts, connectorRows, activityRows] = await Promise.all([
     db.select({ projectId: collections.projectId, n: count() }).from(collections).groupBy(collections.projectId),
@@ -36,6 +38,12 @@ export default async function AdminHome() {
     connectorsById.set(c.projectId, list);
   }
 
+  const switcher: SwitcherProject[] = projects.map((p) => {
+    const name = p.branding?.displayName ?? p.name;
+    const brand = p.branding?.primaryColor ?? "#4f46e5";
+    return { id: p.id, name, initial: name.charAt(0).toUpperCase(), brand, brandInk: brandInk(brand), logoUrl: p.branding?.logoUrl ?? null };
+  });
+
   const fleet: FleetProject[] = projects.map((p) => {
     const brand = p.branding?.primaryColor ?? "#4f46e5";
     const name = p.branding?.displayName ?? p.name;
@@ -54,20 +62,12 @@ export default async function AdminHome() {
       createdAt: p.createdAt.toISOString(),
     };
   });
-  // Most recently active first — the operator's attention goes to live work.
   fleet.sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""));
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-[--color-line] bg-[--color-card]">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-5 py-3.5 md:px-8">
-          <span className="display text-[15px] font-semibold tracking-tight">
-            Agent<span className="text-[--color-ink-mute]">X</span>
-          </span>
-          <UserButton />
-        </div>
-      </header>
-      <div className="page-enter">
+    <div className="flex min-h-screen">
+      <WorkspaceSidebar projects={switcher} theme={theme} />
+      <div className="page-enter min-w-0 flex-1">
         <ProjectFleet projects={fleet} />
       </div>
     </div>

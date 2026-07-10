@@ -32,8 +32,8 @@ export function AssetCard({
         {isImage ? (
           <img src={url} alt={filename} className="h-32 w-full object-cover" />
         ) : (
-          <div className="flex h-32 w-full items-center justify-center bg-[--color-paper]">
-            <FileText className="h-8 w-8 text-[--color-ink-mute]" />
+          <div className="flex h-32 w-full items-center justify-center bg-paper">
+            <FileText className="h-8 w-8 text-ink-mute" />
           </div>
         )}
       </a>
@@ -42,7 +42,7 @@ export function AssetCard({
           <p className="truncate text-xs font-medium" title={filename}>
             {filename}
           </p>
-          <p className="text-[11px] text-[--color-ink-mute]">{formatBytes(size)}</p>
+          <p className="text-[11px] text-ink-mute">{formatBytes(size)}</p>
         </div>
         <button
           type="button"
@@ -63,8 +63,8 @@ export function AssetCard({
           }}
           className={`shrink-0 rounded p-1.5 transition-colors ${
             armed
-              ? "bg-[--color-err] text-white"
-              : "text-[--color-ink-mute] hover:text-[--color-err]"
+              ? "bg-err text-white"
+              : "text-ink-mute hover:text-err"
           }`}
         >
           <Trash2 className="h-3.5 w-3.5" />

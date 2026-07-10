@@ -130,8 +130,8 @@ export function BrandTile({
 export function Metric({ value, label }: { value: ReactNode; label: string }) {
   return (
     <span className="flex flex-col gap-0.5">
-      <span className="font-mono text-[15px] tabular-nums text-[--color-ink]">{value}</span>
-      <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-[--color-ink-mute]">
+      <span className="font-mono text-[15px] tabular-nums text-ink">{value}</span>
+      <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-mute">
         {label}
       </span>
     </span>

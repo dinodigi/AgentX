@@ -28,15 +28,15 @@ export default async function ApiReference({
   return (
     <>
       <h1 className="display mb-1 text-xl font-semibold">API reference</h1>
-      <p className="mb-2 text-sm text-[--color-ink-mute]">
+      <p className="mb-2 text-sm text-ink-mute">
         All requests need a project token (use a delivery-scoped one in sites):{" "}
-        <code className="rounded bg-[--color-paper] px-1.5 py-0.5 font-mono text-xs">
+        <code className="rounded bg-paper px-1.5 py-0.5 font-mono text-xs">
           Authorization: Bearer agx_…
         </code>
       </p>
-      <p className="mb-6 text-sm text-[--color-ink-mute]">
+      <p className="mb-6 text-sm text-ink-mute">
         Collections with access rules also need the signed-in user&apos;s JWT:{" "}
-        <code className="rounded bg-[--color-paper] px-1.5 py-0.5 font-mono text-xs">
+        <code className="rounded bg-paper px-1.5 py-0.5 font-mono text-xs">
           X-User-Token: &lt;jwt&gt;
         </code>{" "}
         — issued by this project&apos;s connected Clerk instance.
@@ -44,7 +44,7 @@ export default async function ApiReference({
 
       <div className="card mb-6 max-w-2xl p-4">
         <p className="mb-1 text-sm font-medium">Verifying webhooks</p>
-        <p className="text-xs leading-relaxed text-[--color-ink-mute]">
+        <p className="text-xs leading-relaxed text-ink-mute">
           Every webhook carries{" "}
           <code className="font-mono">X-AgentX-Signature: t=&lt;unix&gt;,v1=&lt;hex&gt;</code>{" "}
           where <code className="font-mono">v1 = HMAC_SHA256(secret, t + &quot;.&quot; + body)</code>.
@@ -62,9 +62,9 @@ export default async function ApiReference({
         <p className="mb-2 flex items-center gap-2">
           <span className="chip chip-ok rounded px-1.5 py-0.5 font-mono text-xs font-medium">GET</span>
           <code className="font-mono text-sm">/api/v1/changes/stream</code>{" "}
-          <span className="text-xs text-[--color-ink-mute]">(SSE)</span>
+          <span className="text-xs text-ink-mute">(SSE)</span>
         </p>
-        <p className="text-xs leading-relaxed text-[--color-ink-mute]">
+        <p className="text-xs leading-relaxed text-ink-mute">
           Poll or stream created/updated/deleted events across the whole project. Omit{" "}
           <code className="font-mono">since</code> to get an empty page + the current cursor, then
           pass it back to fetch newer changes (<code className="font-mono">ETag</code> 304 when idle).
@@ -80,7 +80,7 @@ export default async function ApiReference({
       </div>
 
       {collections.length === 0 && (
-        <p className="rounded-lg border border-[--color-line] p-4 text-sm text-[--color-ink-mute]">
+        <p className="rounded-lg border border-line p-4 text-sm text-ink-mute">
           No collections defined yet.
         </p>
       )}
@@ -162,7 +162,7 @@ function CollectionDocs({ collection }: { collection: Collection }) {
             <Method verb="GET" tone="get" />
             <code className="font-mono text-sm">/api/v1/{collection.name}</code>
           </p>
-          <p className="mb-2 text-xs text-[--color-ink-mute]">
+          <p className="mb-2 text-xs text-ink-mute">
             Public fields only{read === "owner" ? ", scoped to the signed-in user's rows" : ""}.
             Relations → <code className="font-mono">{"{id,label}"}</code>, assets →{" "}
             <code className="font-mono">{"{id,url}"}</code>. Filters:{" "}
@@ -170,17 +170,17 @@ function CollectionDocs({ collection }: { collection: Collection }) {
             <code className="font-mono">?sort={pub[0]?.name}:asc</code> · paging:{" "}
             <code className="font-mono">?limit=&offset=</code>
           </p>
-          <pre className="overflow-x-auto rounded-lg bg-[--color-paper] p-3 font-mono text-xs leading-relaxed text-[--color-ink-soft]">
+          <pre className="overflow-x-auto rounded-lg bg-paper p-3 font-mono text-xs leading-relaxed text-ink-soft">
             {sampleResponse(pub)}
           </pre>
-          <p className="mt-1.5 text-xs text-[--color-ink-mute]">
+          <p className="mt-1.5 text-xs text-ink-mute">
             <Method verb="GET" tone="get" />
             <code className="font-mono">/api/v1/{collection.name}/{"{id}"}</code> — single entry,
             same rules.
           </p>
         </div>
       ) : (
-        <p className="mb-4 text-xs text-[--color-ink-mute]">
+        <p className="mb-4 text-xs text-ink-mute">
           No public fields — this collection is not readable from the delivery API.
         </p>
       )}
@@ -191,7 +191,7 @@ function CollectionDocs({ collection }: { collection: Collection }) {
             <Method verb="POST" tone="post" />
             <code className="font-mono text-sm">/api/v1/{collection.name}</code>
           </p>
-          <p className="mb-2 text-xs text-[--color-ink-mute]">
+          <p className="mb-2 text-xs text-ink-mute">
             {collection.publicWrite && write === "none"
               ? "Anonymous submissions allowed (public form)."
               : `Requires a signed-in user (X-User-Token)${
@@ -202,14 +202,14 @@ function CollectionDocs({ collection }: { collection: Collection }) {
             Validated server-side; fires event actions. Required:{" "}
             {collection.fields.filter((f) => f.required).map((f) => f.name).join(", ") || "none"}.
           </p>
-          <pre className="overflow-x-auto rounded-lg bg-[--color-paper] p-3 font-mono text-xs leading-relaxed text-[--color-ink-soft]">
+          <pre className="overflow-x-auto rounded-lg bg-paper p-3 font-mono text-xs leading-relaxed text-ink-soft">
             {samplePayload(collection.fields)}
           </pre>
         </div>
       )}
 
       {write === "owner" && (
-        <p className="mt-2 text-xs text-[--color-ink-mute]">
+        <p className="mt-2 text-xs text-ink-mute">
           <Method verb="PATCH" tone="mut" />
           <Method verb="DELETE" tone="mut" />
           <code className="font-mono">/api/v1/{collection.name}/{"{id}"}</code> — signed-in owner

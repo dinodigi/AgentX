@@ -20,7 +20,7 @@ export default async function AppearancePage({
     <>
       <p className="eyebrow mb-1">Project</p>
       <h1 className="display mb-1 text-xl font-semibold">Appearance</h1>
-      <p className="mb-6 max-w-md text-sm text-[--color-ink-mute]">
+      <p className="mb-6 max-w-md text-sm text-ink-mute">
         Name, color, and logo — what your client sees everywhere in this admin.
         The color becomes the accent across the whole workspace.
       </p>
@@ -30,7 +30,6 @@ export default async function AppearancePage({
           displayName: project.branding.displayName ?? project.name,
           primaryColor: project.branding.primaryColor ?? "#4f46e5",
           logoUrl: project.branding.logoUrl ?? "",
-          theme: project.branding.theme ?? "dark",
         }}
       />
     </>

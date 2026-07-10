@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Check, Download, Plus, Undo2 } from "lucide-react";
+import { Check, Plus, Search, Undo2 } from "lucide-react";
 import { getCollection } from "@/lib/collections";
 import { queryEntries, countEntries, resolveRefsForRead } from "@/lib/entries";
 import { getLocales } from "@/lib/locales";
@@ -47,37 +47,44 @@ export default async function CollectionEntries({
 
   return (
     <>
-      <div className="mb-5 flex items-center gap-3">
-        <h1 className="display text-xl font-semibold">{collection.displayName}</h1>
-        <span className="text-sm text-[--color-ink-mute]">{total} entries</span>
+      <div className="mb-6 flex flex-wrap items-center gap-x-3 gap-y-3">
+        <div className="mr-auto flex items-baseline gap-3">
+          <h1 className="display text-xl font-semibold">{collection.displayName}</h1>
+          <span className="font-mono text-[11px] text-ink-mute">
+            {total} {total === 1 ? "entry" : "entries"}
+          </span>
+        </div>
         {searchField && (
-          <form className="ml-2">
+          <form className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-line-strong" />
             <input
               type="search"
               name="q"
               defaultValue={q ?? ""}
               placeholder={`Search ${searchField.label.toLowerCase()}…`}
-              className="field-input w-48 !py-1.5"
+              className="field-input h-9 w-56 !py-1.5 pl-8 font-mono text-[12px]"
             />
           </form>
         )}
-        <a
-          href={`/api/admin/export-entries?projectId=${projectId}&collection=${name}&format=csv`}
-          className="btn ml-auto"
-          title="Download all entries as CSV"
-          download
-        >
-          <Download className="h-4 w-4" />
-          CSV
-        </a>
-        <a
-          href={`/api/admin/export-entries?projectId=${projectId}&collection=${name}&format=json`}
-          className="btn"
-          title="Download all entries as JSON"
-          download
-        >
-          JSON
-        </a>
+        <div className="flex items-center overflow-hidden rounded-md border border-line">
+          <a
+            href={`/api/admin/export-entries?projectId=${projectId}&collection=${name}&format=csv`}
+            className="px-2.5 py-[7px] font-mono text-[11px] text-ink-mute transition-colors hover:bg-raised hover:text-ink"
+            title="Download all entries as CSV"
+            download
+          >
+            CSV
+          </a>
+          <span className="h-4 w-px bg-line" />
+          <a
+            href={`/api/admin/export-entries?projectId=${projectId}&collection=${name}&format=json`}
+            className="px-2.5 py-[7px] font-mono text-[11px] text-ink-mute transition-colors hover:bg-raised hover:text-ink"
+            title="Download all entries as JSON"
+            download
+          >
+            JSON
+          </a>
+        </div>
         <Link href={`/admin/${projectId}/${name}/new`} className="btn btn-primary">
           <Plus className="h-4 w-4" />
           New entry
@@ -85,7 +92,7 @@ export default async function CollectionEntries({
       </div>
 
       {rows.length === 0 ? (
-        <div className="card p-10 text-center text-sm text-[--color-ink-mute]">
+        <div className="card p-10 text-center text-sm text-ink-mute">
           {q ? (
             "No matches."
           ) : collection.publicWrite ? (
@@ -103,45 +110,35 @@ export default async function CollectionEntries({
           )}
         </div>
       ) : (
-        <div className="card overflow-x-auto">
+        <div className="overflow-x-auto rounded-xl border border-line">
           <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[--color-line] text-left">
-                {collection.publicWrite && <th className="table-head px-4 py-2.5">Status</th>}
+            <thead className="sticky top-0 z-10 bg-card">
+              <tr className="border-b border-line text-left">
+                {collection.publicWrite && <th className="table-head px-4 py-3">Status</th>}
                 {cols.map((f) => (
-                  <th key={f.name} className="table-head px-4 py-2.5">
+                  <th key={f.name} className="table-head px-4 py-3">
                     {f.label}
                   </th>
                 ))}
-                <th className="table-head px-4 py-2.5">Updated</th>
+                <th className="table-head px-4 py-3 text-right">Updated</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr
                   key={r.id}
-                  className={`border-b border-[--color-line] transition-colors last:border-0 hover:bg-[--color-brand-wash] ${
-                    collection.publicWrite && !r.handledAt ? "bg-[--color-brand-wash]/40" : ""
-                  }`}
+                  className="group border-b border-line transition-colors last:border-0 hover:bg-raised"
                 >
                   {collection.publicWrite && (
                     <td className="px-4 py-3">
                       <form action={toggleHandledAction.bind(null, projectId, name, r.id)}>
                         {r.handledAt ? (
-                          <button
-                            type="submit"
-                            className="chip chip-mute transition-opacity hover:opacity-70"
-                            title="Mark as new again"
-                          >
+                          <button type="submit" className="chip chip-mute transition-opacity hover:opacity-70" title="Mark as new again">
                             <Undo2 className="h-3 w-3" />
                             handled
                           </button>
                         ) : (
-                          <button
-                            type="submit"
-                            className="chip chip-brand transition-opacity hover:opacity-70"
-                            title="Mark handled"
-                          >
+                          <button type="submit" className="chip chip-brand transition-opacity hover:opacity-70" title="Mark handled">
                             <Check className="h-3 w-3" />
                             new
                           </button>
@@ -154,7 +151,7 @@ export default async function CollectionEntries({
                       {i === 0 ? (
                         <Link
                           href={`/admin/${projectId}/${name}/${r.id}`}
-                          className="font-medium hover:text-brand-strong"
+                          className="font-medium transition-colors group-hover:text-brand-strong"
                         >
                           <Cell field={f} value={r.data[f.name]} defaultLocale={defaultLocale} />
                         </Link>
@@ -163,7 +160,7 @@ export default async function CollectionEntries({
                       )}
                     </td>
                   ))}
-                  <td className="px-4 py-3 text-[--color-ink-mute]">
+                  <td className="px-4 py-3 text-right font-mono text-[11px] text-ink-mute">
                     {r.updatedAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                   </td>
                 </tr>
@@ -180,7 +177,7 @@ export default async function CollectionEntries({
               ← Prev
             </Link>
           )}
-          <span className="text-[--color-ink-mute]">
+          <span className="text-ink-mute">
             Page {page} of {pages}
           </span>
           {page < pages && (
@@ -209,7 +206,7 @@ function Cell({
   if (fieldLocalized(field) && value && typeof value === "object" && !Array.isArray(value)) {
     value = (value as Record<string, unknown>)[defaultLocale ?? ""] ?? null;
   }
-  if (value == null || value === "") return <span className="text-[--color-line-strong]">—</span>;
+  if (value == null || value === "") return <span className="text-line-strong">—</span>;
 
   switch (field.type) {
     case "boolean":
@@ -229,11 +226,11 @@ function Cell({
         value && typeof value === "object" && "label" in value
           ? String((value as { label: unknown }).label)
           : String(value);
-      return <span className="text-[--color-ink-soft]">{label}</span>;
+      return <span className="text-ink-soft">{label}</span>;
     }
     case "date":
       return (
-        <span className="text-[--color-ink-soft]">
+        <span className="text-ink-soft">
           {new Date(String(value)).toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
@@ -249,7 +246,7 @@ function Cell({
       return url && /\.(png|jpe?g|gif|webp|svg)$/i.test(url) ? (
         <img src={url} alt="" className="h-8 w-8 rounded object-cover" />
       ) : (
-        <span className="text-xs text-[--color-ink-mute]">file</span>
+        <span className="text-xs text-ink-mute">file</span>
       );
     }
     case "richtext": {

@@ -33,7 +33,7 @@ export default async function AssetsPage({
     <>
       <div className="mb-5 flex items-center gap-3">
         <h1 className="display text-xl font-semibold">Media</h1>
-        <span className="text-sm text-[--color-ink-mute]">
+        <span className="text-sm text-ink-mute">
           {assets.length}
           {hasMore ? "+" : ""} files
         </span>
@@ -41,7 +41,7 @@ export default async function AssetsPage({
       </div>
 
       {assets.length === 0 ? (
-        <div className="card p-10 text-center text-sm text-[--color-ink-mute]">
+        <div className="card p-10 text-center text-sm text-ink-mute">
           No files yet — upload one here, or attach files to entries and they&apos;ll
           appear in this library.
         </div>
@@ -67,7 +67,7 @@ export default async function AssetsPage({
               ← Prev
             </Link>
           )}
-          <span className="text-[--color-ink-mute]">Page {page}</span>
+          <span className="text-ink-mute">Page {page}</span>
           {hasMore && (
             <Link href={`/admin/${projectId}/assets?page=${page + 1}`} className="btn">
               Next →
