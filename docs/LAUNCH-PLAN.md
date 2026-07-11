@@ -127,8 +127,14 @@ while we watch every tenant from an operator console.
       new work; Phase 15 was tenants' checkout). Usage counters (requests,
       storage, entries) → daily rollups → hard-cap enforcement with clear
       errors + upgrade prompts.
-- [ ] B4 (M) **Operator console.** All workspaces/projects, usage numbers,
-      connector health, plan status, suspend switch. Decided 2026-07-10:
+- [~] B4 (M) **Operator console — read view ✅ shipped 2026-07-11 (d8e00c3 +
+      fe6a7f8).** `/admin/console` (operator-gated) shows all workspaces + all
+      projects with scale + connector health, link into any project for support.
+      And the everyday dashboard is now **personal even for operators** — the
+      god view moved off `/admin` into the console (operators keep god-mode
+      *access* via getProjectRole, only the listing is scoped). **Still todo:**
+      usage/plan columns (need B3), a suspend control, and the support-access
+      audit-log policy. Decided 2026-07-10:
       - The console is a **separate surface** (own route, operator-gated, reads
         the control plane). The everyday dashboard shows only our own workspace,
         like any tenant — fixing today's ADMIN_EMAILS behavior of mixing every
