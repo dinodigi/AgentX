@@ -41,6 +41,34 @@ while we watch every tenant from an operator console.
 - **Invite accept flow** — pending-invitation step before a workspace member is
   active (today membership is instant). Deferred from B1.
 
+### Plugins / AI-extensible tools — three versions (recorded 2026-07-11, all post-launch, Phase 21)
+
+The question: can the agent's tool vocabulary grow beyond the ~42 built-ins?
+Three tiers of "extend the toolbox", in ascending power *and* risk:
+
+- **V0 — developer-published plugins (the baseline Phase 21).** A developer
+  (us, later 3rd parties) publishes a package of tools (e.g. a Bookings plugin
+  adding `check_availability`/`book_slot`); a project enables it; the agent can
+  then call those verbs. The AI *calls* the tools, doesn't author them. Needs a
+  registry + per-project enablement + MCP tool proxying.
+- **V1 — AI-registered tools backed by a tenant endpoint (recommended future).**
+  The agent itself registers a new tool on the fly, pointed at the tenant's own
+  signed HTTP endpoint (natural extension of the hooks model). Self-extending
+  agent, no human in the loop, and the "we never host tenant code" boundary
+  stays intact (the code runs on the tenant's infra; we store the tool def +
+  proxy the call). More powerful than V0; same safety envelope.
+- **V2 — AI-authored code that WE host + execute.** Maximal power, but it breaks
+  the core safety thesis and is a secure-code-execution product unto itself
+  (sandboxing, attack surface). **Operator's framing (2026-07-11): a genuine
+  possible future, but a DIFFERENT product within Pluggie — its own conversation,
+  not this launch.** Explicitly rejected for the current platform.
+- **Middle option (mostly buildable today):** AI composes a reusable *blueprint*
+  (collections + workflows + events + hooks bundle) via the export/import
+  manifest — reusability, not new power.
+
+Decision deferred by the operator ("big feature, decide later"). None of this is
+in the launch plan.
+
 ---
 
 > **Progress note:** this file is the durable source of truth for launch
@@ -62,10 +90,13 @@ while we watch every tenant from an operator console.
 
 ## Track A — the data plane (Phase 19, reshaped for greenfield)
 
-- [~] A0 (M) **Design doc** (`docs/gap-designs/design-data-plane.md`) — **drafted
-      2026-07-10, pending review** (grounded in a 7-agent code-understanding pass +
-      a 3-lens adversarial review; 6 open questions listed at the doc's end).
-      Reviewed together before code. Owns the four open questions:
+- [x] A0 (M) **Design doc** (`docs/gap-designs/design-data-plane.md`) — **✅
+      approved 2026-07-11.** Operator confirmed all 6 open-question recommendations:
+      (1) collections stay control-plane; (2) high-volume logs → tenant DB;
+      (3) hand-written SQL migrations; (4) test/dev falls back to the control DB;
+      (5) managed granularity — I research Neon facts before A3 (doesn't block A1);
+      (6) accept the FK asymmetry (control DB keeps FKs, tenant DBs don't). A1
+      proceeds on these. Original four questions the doc owns:
       1. **Table split** — what moves to the tenant DB (entries, trash, versions,
          entry_changes, assets…) vs stays control-plane (workspaces, members,
          project registry, tokens, connector refs, usage, audit) vs needs care
