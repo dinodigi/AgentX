@@ -65,6 +65,10 @@ services:
         sync: false
       - key: R2_PUBLIC_BASE_URL
         sync: false
+      # Delivery token for the marketing signups intake (LAUNCH-PLAN 0.2).
+      # Minted by scripts/setup-marketing-intake.ts — same value as local .env.
+      - key: MARKETING_INTAKE_TOKEN
+        sync: false
 
   # ── The job drain (replaces the Netlify scheduled function) ───────────────
   # Every minute, POST /api/jobs/drain with the shared CRON_SECRET. Uses node's
