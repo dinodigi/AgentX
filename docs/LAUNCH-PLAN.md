@@ -84,13 +84,14 @@ while we watch every tenant from an operator console.
 - [~] B1 (M) **Workspaces.** Sign-up → workspace; workspace owns projects;
       members ride the existing project_members shape. ADMIN_EMAILS becomes a
       real platform-operator role.
-      - **B1a (code done, commit c45f8b1, NOT pushed):** schema (`workspaces`,
-        `workspace_members`, `projects.workspace_id`), the 3-rung access ladder
-        in `lib/access.ts`, `createProject` → personal workspace, dashboard
-        "Your projects / Shared with you". **Blocked on the operator running
-        `scripts/migrate-workspaces.ts` against the shared DB before this can
-        deploy or be verified live.**
-      - **B1b (todo):** workspace member-management UI + workspace switcher.
+      - [x] **B1a — ✅ shipped 2026-07-11 (commit c45f8b1, pushed).** schema
+        (`workspaces`, `workspace_members`, `projects.workspace_id`), the 3-rung
+        access ladder in `lib/access.ts`, `createProject` → personal workspace,
+        dashboard "Your projects / Shared with you". Migration applied to the
+        shared DB (4 workspaces, 17 projects backfilled); access ladder verified
+        against real data (workspace member → operator, foreign project → denied,
+        platform op → all); smoke 11/11; prod build green.
+      - [ ] **B1b (todo):** workspace member-management UI + workspace switcher.
       - Decided 2026-07-10:
       - Workspace roles (owner / admin / manager) **cascade** to all workspace
         projects; per-project member rows remain the bottom rung for sharing a
