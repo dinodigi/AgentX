@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { count, desc, eq, inArray, and } from "drizzle-orm";
 import { db } from "@/db";
+import { tenantDb } from "@/lib/data-plane";
 import { assets, entries, projects, projectTokens, projectMembers, webhookDeliveries, jobs } from "@/db/schema";
 import { getProjectRole, getViewer } from "@/lib/access";
 import { canDeleteProject } from "@/lib/workspaces";
@@ -26,6 +27,9 @@ export default async function SettingsPage({
   const viewer = await getViewer();
   const canDelete = viewer ? await canDeleteProject(projectId, viewer) : false;
 
+  // Tokens/members/jobs/project = control plane; deliveries + the delete-plan
+  // counts below read the project's data plane.
+  const tdb = await tenantDb(projectId);
   const [collections, tokens, members, deliveries, projectRow, automationJobs, schedules] = await Promise.all([
     listCollections(projectId),
     db
@@ -39,7 +43,7 @@ export default async function SettingsPage({
       .from(projectTokens)
       .where(eq(projectTokens.projectId, projectId)),
     db.select().from(projectMembers).where(eq(projectMembers.projectId, projectId)),
-    db
+    tdb
       .select()
       .from(webhookDeliveries)
       .where(eq(webhookDeliveries.projectId, projectId))
@@ -68,8 +72,8 @@ export default async function SettingsPage({
   const deleteCounts = canDelete
     ? {
         collections: collections.length,
-        entries: (await db.select({ n: count() }).from(entries).where(eq(entries.projectId, projectId)))[0]?.n ?? 0,
-        assets: (await db.select({ n: count() }).from(assets).where(eq(assets.projectId, projectId)))[0]?.n ?? 0,
+        entries: (await tdb.select({ n: count() }).from(entries).where(eq(entries.projectId, projectId)))[0]?.n ?? 0,
+        assets: (await tdb.select({ n: count() }).from(assets).where(eq(assets.projectId, projectId)))[0]?.n ?? 0,
       }
     : null;
 

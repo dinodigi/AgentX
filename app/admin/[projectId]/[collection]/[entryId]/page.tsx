@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, eq } from "drizzle-orm";
 import { Globe, History, RotateCcw } from "lucide-react";
-import { db } from "@/db";
+import { tenantDb } from "@/lib/data-plane";
 import { entries, type AuditActor } from "@/db/schema";
 import { getCollection } from "@/lib/collections";
 import { listAuditLog } from "@/lib/audit";
@@ -45,12 +45,14 @@ export default async function EditEntry({
   if (!collection) notFound();
 
   const [entry, relationChoices, audit, versionsPage, locales] = await Promise.all([
-    db
-      .select()
-      .from(entries)
-      .where(and(eq(entries.id, entryId), eq(entries.collectionId, collection.id)))
-      .limit(1)
-      .then((r) => r[0]),
+    tenantDb(projectId).then((tdb) =>
+      tdb
+        .select()
+        .from(entries)
+        .where(and(eq(entries.id, entryId), eq(entries.collectionId, collection.id)))
+        .limit(1)
+        .then((r) => r[0]),
+    ),
     loadRelationChoices(projectId, collection.fields),
     listAuditLog(projectId, { entryId, limit: 8, offset: 0 }),
     listEntryVersions(projectId, entryId, { limit: 10 }),

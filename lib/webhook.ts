@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { projects, webhookDeliveries, type WebhookDelivery } from "@/db/schema";
 
 /**
@@ -78,7 +79,7 @@ export async function listDeliveries(
   if (f.collectionId) conditions.push(eq(webhookDeliveries.collectionId, f.collectionId));
   if (f.status) conditions.push(eq(webhookDeliveries.status, f.status));
   if (f.event) conditions.push(eq(webhookDeliveries.event, f.event));
-  return db
+  return (await tenantDb(projectId))
     .select()
     .from(webhookDeliveries)
     .where(and(...conditions))
@@ -122,7 +123,7 @@ async function log(
   lastError: string | null,
 ): Promise<void> {
   try {
-    await db.insert(webhookDeliveries).values({
+    await (await tenantDb(opts.projectId)).insert(webhookDeliveries).values({
       projectId: opts.projectId,
       collectionId: opts.collectionId,
       url: opts.url,

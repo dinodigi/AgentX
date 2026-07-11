@@ -1,7 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { notFound } from "next/navigation";
 import { and, count, eq, isNull, inArray } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "@/lib/data-plane";
 import { entries } from "@/db/schema";
 import { getProject } from "@/lib/admin";
 import { getProjectRole, accessibleProjects, getViewer } from "@/lib/access";
@@ -41,7 +41,7 @@ export default async function ProjectLayout({
   const unhandled =
     inboxIds.length === 0
       ? []
-      : await db
+      : await (await tenantDb(projectId))
           .select({ collectionId: entries.collectionId, n: count() })
           .from(entries)
           .where(and(inArray(entries.collectionId, inboxIds), isNull(entries.handledAt)))

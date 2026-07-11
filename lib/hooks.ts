@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { projects, webhookDeliveries, type Collection, type WriteHook } from "@/db/schema";
 
 /**
@@ -147,7 +148,7 @@ export async function callWriteHook(
   // answered); only unreachable/malformed is a delivery failure.
   const stage = envelope.event === "entry.before_create" ? "before_create" : "before_update";
   try {
-    await db.insert(webhookDeliveries).values({
+    await (await tenantDb(projectId)).insert(webhookDeliveries).values({
       projectId,
       collectionId: collection.id,
       url: hook.url,

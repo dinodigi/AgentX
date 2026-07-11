@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "@/lib/data-plane";
 import { entries } from "@/db/schema";
 import { getCollection } from "@/lib/collections";
 import { getProjectRole, getViewer } from "@/lib/access";
@@ -76,14 +76,15 @@ export async function toggleHandledAction(
   const collection = await getCollection(projectId, collectionName);
   if (!collection) return;
 
-  const [row] = await db
+  const tdb = await tenantDb(projectId);
+  const [row] = await tdb
     .select({ handledAt: entries.handledAt })
     .from(entries)
     .where(and(eq(entries.id, entryId), eq(entries.collectionId, collection.id)))
     .limit(1);
   if (!row) return;
 
-  await db
+  await tdb
     .update(entries)
     .set({ handledAt: row.handledAt ? null : new Date() })
     .where(eq(entries.id, entryId));

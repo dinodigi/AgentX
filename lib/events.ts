@@ -6,7 +6,7 @@ import { connectorSecret, getConnector } from "./connectors";
 import { matchesClauses } from "./query";
 import { ValidationError } from "./validation";
 import { enqueueJob } from "./jobs";
-import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { webhookDeliveries } from "@/db/schema";
 
 /**
@@ -233,7 +233,7 @@ export async function dispatchEmail(
     lastError = e instanceof Error ? e.message : String(e);
   }
   try {
-    await db.insert(webhookDeliveries).values({
+    await (await tenantDb(projectId)).insert(webhookDeliveries).values({
       projectId,
       collectionId,
       url: `email:${rendered.to}`,
@@ -258,7 +258,7 @@ export async function refireDelivery(
   projectId: string,
   deliveryId: string,
 ): Promise<"success" | "failed"> {
-  const [row] = await db
+  const [row] = await (await tenantDb(projectId))
     .select()
     .from(webhookDeliveries)
     .where(and(eq(webhookDeliveries.id, deliveryId), eq(webhookDeliveries.projectId, projectId)))

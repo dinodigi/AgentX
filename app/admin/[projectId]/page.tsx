@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { and, count, eq, isNull, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "@/lib/data-plane";
 import { entries, type AuditActor } from "@/db/schema";
 import { listCollections } from "@/lib/collections";
 import { listConnectors } from "@/lib/connectors";
@@ -26,13 +26,14 @@ export default async function ProjectHome({
 }) {
   const { projectId } = await params;
 
+  const tdb = await tenantDb(projectId);
   const [project, collections, entryCounts, lastByCol, unhandledByCol, connectors, audit, h] =
     await Promise.all([
       getProject(projectId),
       listCollections(projectId),
-      db.select({ id: entries.collectionId, n: count() }).from(entries).where(eq(entries.projectId, projectId)).groupBy(entries.collectionId),
-      db.select({ id: entries.collectionId, last: sql<string | null>`max(${entries.updatedAt})` }).from(entries).where(eq(entries.projectId, projectId)).groupBy(entries.collectionId),
-      db.select({ id: entries.collectionId, n: count() }).from(entries).where(and(eq(entries.projectId, projectId), isNull(entries.handledAt))).groupBy(entries.collectionId),
+      tdb.select({ id: entries.collectionId, n: count() }).from(entries).where(eq(entries.projectId, projectId)).groupBy(entries.collectionId),
+      tdb.select({ id: entries.collectionId, last: sql<string | null>`max(${entries.updatedAt})` }).from(entries).where(eq(entries.projectId, projectId)).groupBy(entries.collectionId),
+      tdb.select({ id: entries.collectionId, n: count() }).from(entries).where(and(eq(entries.projectId, projectId), isNull(entries.handledAt))).groupBy(entries.collectionId),
       listConnectors(projectId),
       listAuditLog(projectId, { limit: 6, offset: 0 }),
       headers(),

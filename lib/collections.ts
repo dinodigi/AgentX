@@ -2,7 +2,8 @@ import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
 import { tenantDb } from "./data-plane";
-import { collections, entries, entriesTrash, projects, type Collection, type EventAction, type WriteHook } from "@/db/schema";
+import type { DbExecutor } from "./db-tx";
+import { collections, entries, entriesTrash, entryVersions, projects, type Collection, type EventAction, type WriteHook } from "@/db/schema";
 import { getConnector } from "./connectors";
 import { parseAfter } from "./events";
 import { validateWorkflow } from "./workflow";
@@ -548,10 +549,10 @@ function validateRenames(
 }
 
 /** Count entries that carry any of the given data keys. */
-async function countEntriesWithKeys(collectionId: string, keys: string[]): Promise<number> {
+async function countEntriesWithKeys(dbc: DbExecutor, collectionId: string, keys: string[]): Promise<number> {
   if (keys.length === 0) return 0;
   const keyList = sql.join(keys.map((k) => sql`${k}`), sql`, `);
-  const rows = await db
+  const rows = await dbc
     .select({ n: count() })
     .from(entries)
     .where(
@@ -702,6 +703,7 @@ function boundExceeds(a: number | string, b: number | string, dateField: boolean
  * the rename backfill, so it queries data under the OLD key name.
  */
 async function scanConstraintTightening(
+  dbc: DbExecutor,
   collectionId: string,
   oldFields: FieldDef[],
   newFields: FieldDef[],
@@ -711,7 +713,7 @@ async function scanConstraintTightening(
   const warnings: ConstraintWarning[] = [];
 
   const countWhere = async (key: string, cond: ReturnType<typeof sql>): Promise<number> => {
-    const rows = await db
+    const rows = await dbc
       .select({ n: count() })
       .from(entries)
       .where(and(eq(entries.collectionId, collectionId), sql`${entries.data} ? ${key}`, cond));
@@ -793,7 +795,7 @@ async function scanConstraintTightening(
         // Values past max never reach the regex — same guard as the write path,
         // so a hostile pattern can't be handed unbounded legacy input. Over-max
         // rows are write-invalid anyway and counted by the max scan above.
-        const rows = await db
+        const rows = await dbc
           .select({ v: sql<string>`${entries.data}->>${key}` })
           .from(entries)
           .where(
@@ -870,6 +872,7 @@ async function validateLocalizedFields(
  * queried under the OLD key names, before the rename backfill runs.
  */
 async function planLocalizedToggles(
+  dbc: DbExecutor,
   current: Collection,
   fields: FieldDef[],
   renames: { from: string; to: string }[],
@@ -894,18 +897,18 @@ async function planLocalizedToggles(
 
     const key = sql`${entries.data} -> ${oldName}::text`;
     if (fieldLocalized(f)) {
-      const [row] = await db
+      const [row] = await dbc
         .select({ n: sql<number>`count(*)::int` })
         .from(entries)
         .where(and(eq(entries.collectionId, current.id), sql`jsonb_typeof(${key}) = 'string'`));
       localized.push({ field: f.name, entriesToWrap: row.n });
       wraps.push(f.name);
     } else {
-      const [affected] = await db
+      const [affected] = await dbc
         .select({ n: sql<number>`count(*)::int` })
         .from(entries)
         .where(and(eq(entries.collectionId, current.id), sql`jsonb_typeof(${key}) = 'object'`));
-      const [losing] = await db
+      const [losing] = await dbc
         .select({ n: sql<number>`count(*)::int` })
         .from(entries)
         .where(
@@ -915,7 +918,7 @@ async function planLocalizedToggles(
             sql`NOT jsonb_exists(${key}, ${defaultLocale ?? ""}::text)`,
           ),
         );
-      const keyRows = (await db.execute(
+      const keyRows = (await dbc.execute(
         sql`SELECT DISTINCT jsonb_object_keys(${key}) AS k FROM entries
             WHERE collection_id = ${current.id} AND jsonb_typeof(${key}) = 'object'`,
       )) as unknown as { rows?: { k: string }[] };
@@ -1023,16 +1026,18 @@ export async function defineCollection(
   let toggleWraps: string[] = [];
   let toggleCollapses: string[] = [];
   const projectLocales = await getLocales(projectId);
+  // Data scans + backfills below read/write tenant entries; resolve once.
+  const tdb = await tenantDb(projectId);
   if (current) {
     const structural = diffFields(current.fields, fields, renames);
     const dangerousKeys = [
       ...structural.removed,
       ...structural.retyped.map((r) => r.field),
     ];
-    const affectedEntries = await countEntriesWithKeys(current.id, dangerousKeys);
+    const affectedEntries = await countEntriesWithKeys(tdb, current.id, dangerousKeys);
     // J8: localized-flag toggles — wrap counts ride the diff for visibility;
     // a delocalize (variants dropped) joins the confirm gate like a removal.
-    const toggles = await planLocalizedToggles(current, fields, renames, projectLocales?.default ?? null);
+    const toggles = await planLocalizedToggles(tdb, current, fields, renames, projectLocales?.default ?? null);
     toggleWraps = toggles.wraps;
     toggleCollapses = toggles.collapses;
     diff = {
@@ -1068,7 +1073,7 @@ export async function defineCollection(
   // Tightened validator-level constraints apply to NEW writes immediately;
   // existing rows keep their values. Count what now violates, warn-only.
   const constraintWarnings = current
-    ? await scanConstraintTightening(current.id, current.fields, fields, renames)
+    ? await scanConstraintTightening(tdb, current.id, current.fields, fields, renames)
     : [];
 
   const values = {
@@ -1126,12 +1131,12 @@ export async function defineCollection(
   // that needs a rename concurrent with a same-collection restore and is fixed
   // by re-saving the row. Do schema renames when the project is quiescent.
   for (const r of renames) {
-    await db.execute(
+    await tdb.execute(
       sql`UPDATE entries
           SET data = (data - ${r.from}::text) || jsonb_build_object(${r.to}::text, data->${r.from}::text)
           WHERE collection_id = ${row.id} AND data ? ${r.from}::text`,
     );
-    await db.execute(
+    await tdb.execute(
       sql`UPDATE entries_trash
           SET data = (data - ${r.from}::text) || jsonb_build_object(${r.to}::text, data->${r.from}::text)
           WHERE collection_id = ${row.id} AND data ? ${r.from}::text`,
@@ -1147,7 +1152,7 @@ export async function defineCollection(
       const t = sql.raw(table);
       for (const f of toggleWraps) {
         // Localize ON: wrap existing plain strings under the default locale.
-        await db.execute(
+        await tdb.execute(
           sql`UPDATE ${t}
               SET data = jsonb_set(data, ARRAY[${f}::text], jsonb_build_object(${def}::text, data->${f}::text))
               WHERE collection_id = ${row.id} AND jsonb_typeof(data->${f}::text) = 'string'`,
@@ -1155,7 +1160,7 @@ export async function defineCollection(
       }
       for (const f of toggleCollapses) {
         // Delocalize (confirmed): keep the default variant as the plain value…
-        await db.execute(
+        await tdb.execute(
           sql`UPDATE ${t}
               SET data = jsonb_set(data, ARRAY[${f}::text], data->${f}::text->${def}::text)
               WHERE collection_id = ${row.id} AND jsonb_typeof(data->${f}::text) = 'object'
@@ -1163,7 +1168,7 @@ export async function defineCollection(
         );
         // …and drop the key entirely where no default variant exists — a text
         // field must never hold JSON null (openMinor #4).
-        await db.execute(
+        await tdb.execute(
           sql`UPDATE ${t}
               SET data = data - ${f}::text
               WHERE collection_id = ${row.id} AND jsonb_typeof(data->${f}::text) = 'object'`,
@@ -1200,9 +1205,10 @@ export async function planDeleteCollection(
   const target = await getCollection(projectId, name);
   if (!target) return null;
 
+  const tdb = await tenantDb(projectId);
   const [countRows, trashRows, all] = await Promise.all([
-    db.select({ n: count() }).from(entries).where(eq(entries.collectionId, target.id)),
-    db.select({ n: count() }).from(entriesTrash).where(eq(entriesTrash.collectionId, target.id)),
+    tdb.select({ n: count() }).from(entries).where(eq(entries.collectionId, target.id)),
+    tdb.select({ n: count() }).from(entriesTrash).where(eq(entriesTrash.collectionId, target.id)),
     listCollections(projectId),
   ]);
 
@@ -1224,9 +1230,11 @@ export async function planDeleteCollection(
   };
 }
 
-/** Delete a collection and (via cascade) its entries. Caller enforces the plan. */
+/** Delete a collection and its entries (cascade on the control DB; explicit
+ * sweep on a tenant DB — see below). Caller enforces the plan. */
 export async function deleteCollection(projectId: string, name: string): Promise<void> {
   const target = await getCollection(projectId, name);
+  const tdb = await tenantDb(projectId);
   if (target) {
     // H3: append a `deleted` tombstone per live entry BEFORE the cascade, so a
     // synced client converges instead of keeping ghost entries. entry_changes
@@ -1239,7 +1247,7 @@ export async function deleteCollection(projectId: string, name: string): Promise
     const CHUNK = 500;
     let after = "00000000-0000-0000-0000-000000000000";
     for (;;) {
-      const rows = await db
+      const rows = await tdb
         .select({ id: entries.id, data: entries.data })
         .from(entries)
         .where(and(eq(entries.collectionId, target.id), gt(entries.id, after)))
@@ -1257,8 +1265,15 @@ export async function deleteCollection(projectId: string, name: string): Promise
   await db
     .delete(collections)
     .where(and(eq(collections.projectId, projectId), eq(collections.name, name)));
-  // Partial indexes on entries outlive the cascade — drop them explicitly.
   if (target) {
+    // A tenant DB has no FK into the control-plane collections table (A1 accepts
+    // the asymmetry), so the ON DELETE CASCADE that clears entries/trash/versions
+    // on the control DB does not exist there — sweep explicitly. On the fallback
+    // path the cascade has already emptied these and the sweep is a no-op.
+    await tdb.execute(sql`DELETE FROM ${entries} WHERE ${entries.collectionId} = ${target.id}`);
+    await tdb.execute(sql`DELETE FROM ${entriesTrash} WHERE ${entriesTrash.collectionId} = ${target.id}`);
+    await tdb.execute(sql`DELETE FROM ${entryVersions} WHERE ${entryVersions.collectionId} = ${target.id}`);
+    // Partial indexes on entries outlive the delete — drop them explicitly.
     await syncUniqueIndexes(projectId, target.id, target.fields, []);
     await syncSearchIndex(projectId, target.id, target.fields, []);
   }
