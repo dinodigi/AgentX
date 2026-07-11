@@ -23,10 +23,13 @@ export interface TokenInfo {
   projectId: string;
   /** 'mcp' = full agent access; 'delivery' = public read/write only (what sites hold). */
   scope: "mcp" | "delivery";
+  /** Which data-plane environment the token addresses (A1.3). Always 'prod'
+   * until A5 mints dev tokens; carried here so the boundary already knows. */
+  env: "prod" | "dev";
 }
 
 /**
- * Resolve a raw bearer token to its project + scope, or null if unknown.
+ * Resolve a raw bearer token to its project + scope + env, or null if unknown.
  * Cached cross-request (this runs on EVERY MCP and delivery call); revoking a
  * token must call revalidateTag("project-tokens").
  */
@@ -36,7 +39,7 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
   const cached = unstable_cache(
     async () => {
       const rows = await db
-        .select({ projectId: projectTokens.projectId, scope: projectTokens.scope })
+        .select({ projectId: projectTokens.projectId, scope: projectTokens.scope, env: projectTokens.env })
         .from(projectTokens)
         .where(eq(projectTokens.tokenHash, hash))
         .limit(1);
@@ -47,9 +50,10 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
         .set({ lastUsedAt: new Date() })
         .where(eq(projectTokens.tokenHash, hash))
         .catch(() => {});
-      return { projectId: rows[0].projectId, scope: rows[0].scope as TokenInfo["scope"] };
+      return { projectId: rows[0].projectId, scope: rows[0].scope as TokenInfo["scope"], env: rows[0].env };
     },
-    ["token-v2", hash],
+    // v3: value shape gained `env` — never serve a cached v2 shape.
+    ["token-v3", hash],
     // TTL as defense-in-depth: a token revoked outside the app (script, other
     // instance) dies within 5 minutes even if no revalidateTag fires.
     { tags: ["project-tokens"], revalidate: 300 },

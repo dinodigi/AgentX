@@ -113,6 +113,7 @@ export async function GET(req: NextRequest) {
     protocolVersion: PROTOCOL_VERSION,
     authenticated: info?.scope === "mcp",
     scope: info?.scope ?? null,
+    env: info?.env ?? null,
     tools: TOOL_DEFS.map((t) => t.name),
     errorCodes: ERROR_CODES,
     errorFormat:

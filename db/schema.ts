@@ -159,6 +159,9 @@ export const projectTokens = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull(),
     scope: text("scope").notNull().default("mcp"),
+    /** Which data-plane environment the token addresses (A1.3). Everything is
+     * 'prod' until A5 mints per-env tokens and threads env through delivery. */
+    env: text("env").$type<"prod" | "dev">().notNull().default("prod"),
     label: text("label"),
     /** ≤5-min granularity (token cache TTL); null = never used. */
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
