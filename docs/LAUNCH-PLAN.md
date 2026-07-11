@@ -110,8 +110,18 @@ in the launch plan.
       4. **Provisioning flows** — BYO (paste connection string → validate →
          install → route) vs managed (Neon API against our org), and how
          environments map onto each.
-- [ ] A1 (L) **Resolver + migration runner + local backend.** The single biggest
-      lift of the whole plan; everything else stacks on it.
+- [~] A1 (L) **Resolver + migration runner + local backend.** The single biggest
+      lift; everything else stacks on it. **In progress 2026-07-11:**
+      - [x] A1.1 (a72fb60) — `lib/data-plane.ts` resolver: `tenantDb`/
+        `withTenantTransaction`, fail-closed control-DB fallback, client cache.
+      - [~] A1.2 threading — DONE (65a8a5d): entries write path (verifyRefs join
+        decomposed, 4 cores, transact + replay → tenantDb; smoke 53/53).
+        TODO: `record*` helpers + index-sync on tenantDb; read paths
+        (query/get/count/aggregate, delivery reads, search, locales, trash,
+        assets). All behavior-preserving (everything falls back to controlDb).
+      - [ ] A1.3 — `env` column on project_tokens + thread env (all-prod for now).
+      - [ ] A1.4 — hand-written versioned migration runner + `_schema_migrations`
+        + expand/contract contract (exercised in A2 with a real tenant DB).
 - [ ] A2 (M) **Neon connector, BYO mode.**
 - [ ] A3 (M) **Managed provisioning** — Neon API, our org, auto-provision on
       project create.
