@@ -84,6 +84,19 @@ export async function storageFor(projectId: string): Promise<ProjectStorage> {
   if (!row) return sharedStorage();
 
   const cfg = row.config as { mode?: string; accountId?: string; bucket?: string; publicBaseUrl?: string };
+
+  // MANAGED: our account, our env credentials — only the bucket + public base
+  // come from the row (no per-row copy of the platform secret). A row still
+  // provisioning (no public base yet) fails closed rather than minting URLs
+  // nobody can serve.
+  if (cfg?.mode === "managed") {
+    if (!cfg.bucket || !cfg.publicBaseUrl) {
+      throw new Error(`managed r2 bucket for project ${projectId} is still provisioning or malformed (fail-closed)`);
+    }
+    const shared = sharedStorage();
+    return { client: shared.client, bucket: cfg.bucket, publicBaseUrl: cfg.publicBaseUrl.replace(/\/$/, ""), mode: "managed" };
+  }
+
   if (!cfg?.accountId || !cfg?.bucket || !cfg?.publicBaseUrl || !row.secretEnc) {
     throw new Error(`r2 connector for project ${projectId} is missing accountId/bucket/publicBaseUrl/credentials (fail-closed)`);
   }
@@ -99,7 +112,7 @@ export async function storageFor(projectId: string): Promise<ProjectStorage> {
     ),
     bucket: cfg.bucket,
     publicBaseUrl: cfg.publicBaseUrl.replace(/\/$/, ""),
-    mode: cfg.mode === "managed" ? "managed" : "byo",
+    mode: "byo",
   };
 }
 

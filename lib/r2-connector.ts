@@ -1,14 +1,21 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
 import { and, count, eq } from "drizzle-orm";
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadBucketCommand } from "@aws-sdk/client-s3";
+import {
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  HeadBucketCommand,
+  CreateBucketCommand,
+  DeleteBucketCommand,
+} from "@aws-sdk/client-s3";
 import { revalidateTag } from "next/cache";
 import { controlDb } from "@/db";
 import { assets, projectConnectors, type ProjectConnector } from "@/db/schema";
 import { tenantDb } from "./data-plane";
 import { connectorsTag } from "./connectors";
 import { encryptSecret, decryptSecret } from "./crypto";
-import { evictStorageClient, r2Endpoint } from "./r2";
+import { evictStorageClient, r2Endpoint, listPrefixKeys, deleteKeys } from "./r2";
 
 /**
  * The `r2` connector (A4): the project's own object storage. BYO = the tenant
@@ -181,6 +188,188 @@ export async function connectR2Bucket(projectId: string, input: R2ConnectInput):
     ok: true,
     detail: `connected — uploads and image derivatives for this project now live in "${input.bucket}" and serve from your URL`,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Managed buckets (A4c): our account, our env credentials, one bucket per
+// project. Bucket create/delete ride the plain S3 API (verified: the platform
+// token is account-scoped); only the r2.dev public URL needs the Cloudflare
+// REST API (CF_API_TOKEN with R2:Edit). r2.dev is rate-limited/non-production
+// per Cloudflare — accepted for launch; per-tenant custom domains later.
+// ---------------------------------------------------------------------------
+
+const CF_API_BASE = () => process.env.CF_API_BASE || "https://api.cloudflare.com/client/v4";
+
+function platformClient(): S3Client {
+  return new S3Client({
+    region: "auto",
+    endpoint: r2Endpoint(process.env.R2_ACCOUNT_ID!),
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+    },
+  });
+}
+
+/** Enable the bucket's r2.dev managed domain; returns the https public base. */
+async function enableManagedDomain(bucket: string): Promise<string> {
+  const token = process.env.CF_API_TOKEN;
+  if (!token) {
+    throw new Error(
+      "CF_API_TOKEN is not set — enabling the managed bucket's public URL needs a Cloudflare API token with R2:Edit (BYO buckets are unaffected)",
+    );
+  }
+  const res = await fetch(
+    `${CF_API_BASE()}/accounts/${process.env.R2_ACCOUNT_ID}/r2/buckets/${bucket}/domains/managed`,
+    {
+      method: "PUT",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+  const body = (await res.json().catch(() => null)) as { success?: boolean; result?: { domain?: string } } | null;
+  if (!res.ok || !body?.success || !body.result?.domain) {
+    throw new Error(`Cloudflare managed-domain enable failed (HTTP ${res.status})`);
+  }
+  return `https://${body.result.domain}`;
+}
+
+/**
+ * Provision a MANAGED bucket: one per project, in our account. Handle-first —
+ * the bucket exists under a deterministic name (`agentx-<projectId>`) and the
+ * row is stored BEFORE the public-domain step can fail, so a retry resumes
+ * (CreateBucket tolerates already-owned; the domain PUT is idempotent).
+ */
+export async function provisionManagedBucket(projectId: string): Promise<StorageConnectResult> {
+  const existing = await r2Row(projectId);
+  if (existing?.config?.mode === "byo") {
+    return { ok: false, detail: "this project uses a BYO bucket — disconnect it first if you want a managed one" };
+  }
+  if (existing?.config?.mode === "managed" && existing.config.publicBaseUrl && existing.status === "connected") {
+    return { ok: false, detail: "a managed bucket is already provisioned for this project" };
+  }
+
+  // Zero-asset guard (asset URLs are minted absolute at upload). A managed row
+  // mid-provisioning never served an upload (storageFor fails closed on it).
+  if (!existing) {
+    const tdb = await tenantDb(projectId);
+    const [a] = await tdb.select({ n: count() }).from(assets).where(eq(assets.projectId, projectId));
+    if ((a?.n ?? 0) > 0) {
+      return {
+        ok: false,
+        detail: `this project already has ${a!.n} asset(s) on its current storage — asset migration isn't supported yet; provision before uploading`,
+      };
+    }
+  }
+
+  const bucket = `agentx-${projectId}`;
+  const client = platformClient();
+  try {
+    try {
+      await client.send(new CreateBucketCommand({ Bucket: bucket }));
+    } catch (e) {
+      const name = (e as { name?: string }).name ?? "";
+      if (!/BucketAlreadyOwnedByYou|BucketAlreadyExists/i.test(name)) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return { ok: false, detail: `could not create the bucket: ${msg}` };
+      }
+      // Already ours from a prior attempt — resume.
+    }
+
+    // HANDLE FIRST: the row names the bucket before the domain step can fail.
+    const handle = {
+      projectId,
+      type: "r2" as const,
+      config: { mode: "managed", accountId: process.env.R2_ACCOUNT_ID!, bucket, publicBaseUrl: "" },
+      secretEnc: null as string | null, // managed uses the platform credentials
+      status: "provisioning",
+      updatedAt: new Date(),
+    };
+    await controlDb
+      .insert(projectConnectors)
+      .values(handle)
+      .onConflictDoUpdate({
+        target: [projectConnectors.projectId, projectConnectors.type],
+        set: { config: handle.config, secretEnc: null, status: "provisioning", updatedAt: handle.updatedAt },
+      });
+    revalidateConnectors(projectId);
+
+    let publicBaseUrl: string;
+    try {
+      publicBaseUrl = await enableManagedDomain(bucket);
+      // Full-loop probe with the platform credentials — same bar as BYO.
+      const probe = await probeBucket({
+        accountId: process.env.R2_ACCOUNT_ID!,
+        accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+        bucket,
+        publicBaseUrl,
+      });
+      if (!probe.ok) throw new Error(probe.detail);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await controlDb
+        .update(projectConnectors)
+        .set({ status: "error", updatedAt: new Date() })
+        .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "r2")))
+        .catch(() => {});
+      revalidateConnectors(projectId);
+      return { ok: false, detail: `bucket created but its public URL is not live (${msg}) — retry to resume` };
+    }
+
+    await controlDb
+      .update(projectConnectors)
+      .set({
+        config: { mode: "managed", accountId: process.env.R2_ACCOUNT_ID!, bucket, publicBaseUrl },
+        status: "connected",
+        updatedAt: new Date(),
+      })
+      .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "r2")));
+    revalidateConnectors(projectId);
+    return { ok: true, detail: `managed bucket provisioned — uploads now serve from ${publicBaseUrl}` };
+  } finally {
+    client.destroy();
+  }
+}
+
+/**
+ * Tear down the MANAGED bucket: empty it, delete it, drop the routing row.
+ * LOUD on failure — a bucket must never be silently orphaned. Destroys the
+ * project's media; the caller gates this behind an explicit confirm.
+ */
+export async function deprovisionManagedBucket(projectId: string): Promise<StorageConnectResult> {
+  const existing = await r2Row(projectId);
+  if (!existing || existing.config?.mode !== "managed") {
+    return { ok: false, detail: "this project has no managed bucket" };
+  }
+  const bucket = existing.config.bucket;
+  const client = platformClient();
+  try {
+    if (bucket) {
+      try {
+        // Empty first — DeleteBucket requires it. storageFor may fail closed on
+        // a half-provisioned row, so build the plane directly from the handle.
+        const st = { client, bucket, publicBaseUrl: "", mode: "managed" as const };
+        const keys = await listPrefixKeys(st, "");
+        await deleteKeys(st, keys);
+        await client.send(new DeleteBucketCommand({ Bucket: bucket }));
+      } catch (e) {
+        const name = (e as { name?: string }).name ?? "";
+        if (!/NoSuchBucket|NotFound/i.test(name)) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return { ok: false, detail: `could not delete the managed bucket (${msg}) — nothing was removed; retry` };
+        }
+      }
+    }
+    await controlDb
+      .delete(projectConnectors)
+      .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "r2")));
+    revalidateConnectors(projectId);
+    return { ok: true, detail: "managed bucket deleted — the project is back on the shared storage plane" };
+  } finally {
+    client.destroy();
+  }
 }
 
 /**

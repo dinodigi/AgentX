@@ -19,6 +19,8 @@ import {
   provisionManagedAction,
   deprovisionManagedAction,
   connectR2Action,
+  provisionManagedBucketAction,
+  deprovisionManagedBucketAction,
 } from "./actions";
 
 const inputClass = "field-input";
@@ -750,6 +752,25 @@ export function R2ConnectorCard(p: {
             {busy ? "Probing…" : p.connected ? "Reconnect" : "Connect"}
           </button>
         )}
+        {!p.connected && (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setNote(null);
+              setError(null);
+              const res = await provisionManagedBucketAction(p.projectId);
+              setBusy(false);
+              setError(res.error ?? null);
+              if (!res.error) setNote(res.detail ?? "Provisioned");
+            }}
+            title="We create and run a dedicated bucket for this project"
+          >
+            {busy ? "Provisioning…" : "Provision managed bucket"}
+          </button>
+        )}
         {p.connected && (
           <>
             <button
@@ -767,7 +788,47 @@ export function R2ConnectorCard(p: {
             >
               Test
             </button>
-            {!managed && (
+            {managed && p.status !== "connected" && (
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setNote(null);
+                  setError(null);
+                  const res = await provisionManagedBucketAction(p.projectId);
+                  setBusy(false);
+                  setError(res.error ?? null);
+                  if (!res.error) setNote(res.detail ?? "Provisioned");
+                }}
+              >
+                Retry provisioning
+              </button>
+            )}
+            {managed ? (
+              <button
+                type="button"
+                className="btn btn-danger-ghost"
+                disabled={busy}
+                onClick={async () => {
+                  if (
+                    !window.confirm(
+                      "Deprovision this managed bucket? Its media is DELETED with it. The project returns to the shared storage plane.",
+                    )
+                  ) {
+                    return;
+                  }
+                  setBusy(true);
+                  const res = await deprovisionManagedBucketAction(p.projectId);
+                  setBusy(false);
+                  setError(res.error ?? null);
+                  if (!res.error) setNote(res.detail ?? "Deprovisioned");
+                }}
+              >
+                Deprovision
+              </button>
+            ) : (
               <button
                 type="button"
                 className="btn btn-danger-ghost"

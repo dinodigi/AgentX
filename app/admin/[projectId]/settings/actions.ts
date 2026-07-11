@@ -304,6 +304,30 @@ export async function connectR2Action(
   return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
 }
 
+/** A4c: one-click managed bucket in our account (handle-first, resumable). */
+export async function provisionManagedBucketAction(
+  projectId: string,
+): Promise<{ error?: string; ok?: boolean; detail?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const { provisionManagedBucket } = await import("@/lib/r2-connector");
+  const result = await provisionManagedBucket(projectId);
+  revalidatePath(`/admin/${projectId}/connectors`);
+  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+}
+
+/** A4c: delete the managed bucket + its media (confirm-gated in the card). */
+export async function deprovisionManagedBucketAction(
+  projectId: string,
+): Promise<{ error?: string; ok?: boolean; detail?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const { deprovisionManagedBucket } = await import("@/lib/r2-connector");
+  const result = await deprovisionManagedBucket(projectId);
+  revalidatePath(`/admin/${projectId}/connectors`);
+  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+}
+
 /** A3: one-click managed database — a Neon project of the tenant's own,
  * provisioned from OUR org (handle-first, resumable). */
 export async function provisionManagedAction(
@@ -449,6 +473,20 @@ export async function deleteProjectAction(
     const teardown = await deprovisionManagedDatabase(projectId);
     if (!teardown.ok) {
       return { error: `Managed database teardown failed — project not deleted. ${teardown.detail}` };
+    }
+  }
+  // Same for a managed BUCKET (A4c): its media goes with it, wholesale, before
+  // the generic byte cleanup (which skips BYO and prefix-cleans shared).
+  const [storagePlane] = await db
+    .select({ config: projectConnectors.config })
+    .from(projectConnectors)
+    .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "r2")))
+    .limit(1);
+  if (storagePlane && storagePlane.config?.mode === "managed") {
+    const { deprovisionManagedBucket } = await import("@/lib/r2-connector");
+    const teardown = await deprovisionManagedBucket(projectId);
+    if (!teardown.ok) {
+      return { error: `Managed bucket teardown failed — project not deleted. ${teardown.detail}` };
     }
   }
 
