@@ -93,9 +93,11 @@ export interface AccessibleProjects {
 export async function accessibleProjectsGrouped(): Promise<AccessibleProjects> {
   const viewer = await getViewer();
   if (!viewer) return { owned: [], shared: [] };
-  if (viewer.isPlatformOperator) {
-    return { owned: await db.select().from(projects), shared: [] };
-  }
+  // B4: the everyday dashboard is personal even for platform operators — they see
+  // only their own workspace/shared projects here, exactly like any tenant. The
+  // cross-tenant "god view" moved to the operator console (/admin/console).
+  // Operators keep god-mode ACCESS via getProjectRole; this only scopes the
+  // dashboard LISTING.
 
   const [wsRows, memberRows] = await Promise.all([
     db.select({ id: workspaceMembers.workspaceId }).from(workspaceMembers).where(eq(workspaceMembers.clerkUserId, viewer.userId)),
