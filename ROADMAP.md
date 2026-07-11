@@ -11,6 +11,13 @@ email, Stripe) and extend the agent's tool surface with **plugins**.
 > — each increment below has a concrete file-level spec there. Old Phases 6/7
 > (multi-tenancy, plugins) are now Phases 20/21.
 
+> **Productization (2026-07-10): [docs/LAUNCH-PLAN.md](docs/LAUNCH-PLAN.md) supersedes
+> the ordering below for Phases 19–21.** Phase 19 (reshaped greenfield: per-project
+> databases from day one, Neon + R2 connectors, dev/prod environments) runs FIRST,
+> then Phase 20 (workspaces, pay-per-project billing, operator console). Phase 21
+> (plugins) is ON HOLD. Phase 14 stays evidence-gated. Business model: free
+> workspace, pay per project, BYO keys vs managed infra per project.
+
 ## Design rules (apply to every phase)
 
 1. **Declarative + self-describing** — every capability is visible through the
@@ -49,13 +56,17 @@ email, Stripe) and extend the agent's tool surface with **plugins**.
 
 ## Phase 2 — Deploy + dogfood (in flight)
 
-Host is intentionally unpinned: Netlify today, likely Render later — every
-mechanism below stays host-agnostic (pg-backed queues, HTTP-only streaming).
+Host: **Render** (moved from Netlify) — `render.yaml` Blueprint, pushing
+`master` auto-deploys; re-sync the Blueprint for env-var changes. Every
+mechanism stays host-agnostic (pg-backed queues, HTTP-only streaming).
 
-- [x] 2.1 Production deploy — Netlify (`agentx-currents.netlify.app`), 2026-07-06
+- [x] 2.1 Production deploy — Netlify 2026-07-06; **moved to Render** (render.yaml,
+      master auto-deploys; jobs drain = internal cron hitting host:port)
 - [x] 2.2 Production smoke suite (`SMOKE_BASE` override for prod runs)
 - [ ] 2.3 Point a real Currents content site at the delivery API →
-      **promoted to the Dogfood Acceptance Milestone after Phase 12**
+      **promoted to the Dogfood Acceptance Milestone after Phase 12**.
+      *Dogfooding begins with LAUNCH-PLAN Step 0.2: the marketing site's
+      waitlist/beta forms POST to a real AgentX project's delivery API.*
 - [ ] 2.4 Friction log — every wall hit during the real build, captured as issues
 - [ ] 2.5 Token hygiene — rotate dev tokens, document handoff flow
 
@@ -253,6 +264,10 @@ Parameterized **presets, not expressions**: one new shape
   in the spec; build when a real project asks for "share this row with one user".
 
 ## ★ Dogfood Acceptance Milestone (= Phase 2.3–2.5)
+
+*(Sequencing per LAUNCH-PLAN: runs as Track C1 after the new data plane's
+managed provisioning (A3) — the real site becomes tenant #1 on the new
+plumbing. Marketing-intake dogfood starts earlier, at Step 0.2.)*
 
 Build the real Currents site on the platform. The envelope is now complete:
 constraints + repairable errors, safe deletes, expansion/filtering/search,
@@ -562,22 +577,28 @@ site needs srcsets.
 
 ---
 
-## Phase 19 — Neon connector (BYO database) — evidence-gated
+## Phase 19 — Neon connector (BYO database) — **NEXT UP, reshaped**
 
-Unchanged from the original plan: build only when an external tenant or a
-data-ownership requirement demands it — the bridge into multi-tenancy.
+> Superseded by **[docs/LAUNCH-PLAN.md](docs/LAUNCH-PLAN.md) Track A** (2026-07-10):
+> no longer evidence-gated — it runs FIRST, greenfield (per-project DB from day
+> one, shared DB shrinks to pure control plane), and grows to include the R2
+> connector and per-project dev/prod environments. Design doc: A0.
 
 - [ ] 19.1 Connection management / migration runner / data-plane routing (split)
 - [ ] 19.2 Neon branching — preview environments ("branch, try migration, promote/discard")
 
 ## Phase 20 — Multi-tenancy (open the platform)
 
+> Superseded by **[docs/LAUNCH-PLAN.md](docs/LAUNCH-PLAN.md) Track B**: workspaces
+> with role cascade, project lifecycle + pay-per-project billing (caps, not
+> metering), operator console as a separate surface.
+
 - [ ] 20.1 Workspace model — sign-up → workspace owns projects (extends project_members)
 - [ ] 20.2 Isolation audit — every query provably project-scoped
 - [ ] 20.3 Quotas/limits per workspace
 - [ ] 20.4 Platform operator console (usage, health)
 
-## Phase 21 — Plugins (extend the tool surface)
+## Phase 21 — Plugins (extend the tool surface) — **ON HOLD (2026-07-10)**
 
 - [ ] 21.1 Plugin manifest format (tools contributed, connector dependencies)
 - [ ] 21.2 Registry + per-project enablement
@@ -591,9 +612,12 @@ data-ownership requirement demands it — the bridge into multi-tenancy.
       layer — **before** Phase 11 multiplies `getCollection` call sites.
 - [ ] Durable rate-limit store (shared, serverless-safe) — automatically tightens
       E2 search, J1 transforms, K2b checkout when it ships; none block on it.
-- [ ] Render move (when decided): jobs drain flips from Netlify scheduled fn to
-      Render cron hitting the same endpoint; SSE gets native streaming; verify
-      sharp + `ws` bundling.
+      **Promoted to LAUNCH-PLAN C2** — required before strangers arrive.
+- [x] Render move — done: render.yaml Blueprint, master auto-deploys, jobs drain
+      = internal cron against host:port, sharp + `ws` bundling verified in the
+      prod build. Re-sync the Blueprint for env-var changes. NOTE: `db:push` is
+      broken against Neon PG18 on the existing DB (apply columns by hand; a
+      clean-DB push works).
 
 ## Test-harness notes
 
