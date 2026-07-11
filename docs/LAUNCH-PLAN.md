@@ -29,6 +29,18 @@ while we watch every tenant from an operator console.
   communicate via explicit bridges. B1's role hierarchy is built so this stays
   a cheap extension, not a rework.
 
+### Post-launch backlog (recorded, build after the launch plan)
+
+- **Beta-tester feedback widget** — an in-admin "send feedback" control for beta
+  testers; submissions come back to the operator. Naturally dogfoodable: a
+  publicWrite `feedback` collection on an AgentX project, exactly like the
+  marketing `signups` intake (0.2). Small.
+- **Beta self-serve gate** — an "approved beta tester" flag that reopens
+  `createProject` for that user (front half of B2, minus billing). Buildable
+  before B3; turns manual concierge onboarding into self-serve.
+- **Invite accept flow** — pending-invitation step before a workspace member is
+  active (today membership is instant). Deferred from B1.
+
 ---
 
 > **Progress note:** this file is the durable source of truth for launch
@@ -188,8 +200,9 @@ Launch gate = A-track + B-track + C1 + C4 + C5 + C7 all green.
 
 1. ⚑ **Pricing anchors** — per-project price for BYO vs managed (blocks B3, C3).
 2. **Free sandbox project per workspace** — yes/no (shapes B2/B3).
-3. ⚑ **Name + domain** — "Pluggie" is a working name, not settled (blocks C3,
-   legal, and the Clerk/email/domain setup).
+3. **Name + domain** — **pluggie.app acquired** (2026-07-11); name effectively
+   settled. Remaining: Clerk **production instance** on pluggie.app (DNS + prod
+   keys) before flipping off the Render URL — see the domain runbook in chat.
 4. **BYO environments shape** — two connection strings vs granted Neon API key
    (settled in A0 review).
 5. **Legal entity + ToS/privacy path** (blocks C6).
