@@ -320,7 +320,11 @@ Launch gate = A-track + B-track + C1 + C4 + C5 + C7 all green.
 
 ## Decisions needed from the operator (blocking marked ⚑)
 
-1. ⚑ **Pricing anchors** — per-project price for BYO vs managed (blocks B3, C3).
+1. ~~⚑ **Pricing anchors**~~ — **✅ DECIDED 2026-07-11: $19/mo BYO, $29/mo
+   managed, per project (= per application), workspace free.** Unblocks B3
+   (subscriptions + caps sized against these anchors) and C3 (pricing page
+   gets real numbers; the private-beta→launch copy shift stays a launch-time
+   call).
 2. ~~**Free sandbox project per workspace**~~ — **✅ DECIDED 2026-07-11: YES,
    one hard-capped sandbox per workspace** (shared plane only, dev-grade caps
    — e.g. ~1k entries / 100MB media, exact caps set in B3); upgrading to a
