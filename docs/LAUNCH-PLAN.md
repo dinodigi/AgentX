@@ -24,6 +24,10 @@ while we watch every tenant from an operator console.
   upgrade prompts. Invoice-grade usage billing is explicitly out of scope.
 - **Out of scope for launch:** Phase 14 (semantic search), plugins, enterprise
   cross-app communication, per-row ACL, overage billing.
+- **Recorded north star (not scoped):** enterprise workspaces — teams join a
+  workspace (domain-locked invites, SSO later), and its projects can opt-in
+  communicate via explicit bridges. B1's role hierarchy is built so this stays
+  a cheap extension, not a rework.
 
 ---
 
