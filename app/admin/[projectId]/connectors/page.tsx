@@ -33,6 +33,7 @@ export default async function ConnectorsPage({
           connected={Boolean(neon)}
           status={neon?.status ?? "disconnected"}
           host={neon?.config.host ?? null}
+          mode={neon?.config.mode ?? null}
         />
         {(Object.keys(CONNECTOR_SPECS) as FormConnectorType[]).map((type) => {
           const spec = CONNECTOR_SPECS[type];

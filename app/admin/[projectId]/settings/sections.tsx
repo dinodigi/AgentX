@@ -16,6 +16,8 @@ import {
   rotateConnectorSecretAction,
   provisionStripeWebhook,
   connectNeonAction,
+  provisionManagedAction,
+  deprovisionManagedAction,
 } from "./actions";
 
 const inputClass = "field-input";
@@ -486,10 +488,13 @@ export function NeonConnectorCard(p: {
   connected: boolean;
   status: string;
   host: string | null;
+  /** "byo" | "managed" | null (not connected). */
+  mode: string | null;
 }) {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const managed = p.mode === "managed";
 
   return (
     <form
@@ -512,41 +517,68 @@ export function NeonConnectorCard(p: {
               ? "var(--color-line-strong)"
               : p.status === "connected"
                 ? "var(--color-ok)"
-                : "var(--color-err)",
+                : p.status === "provisioning"
+                  ? "var(--color-line-strong)"
+                  : "var(--color-err)",
           }}
         />
         <p className="text-sm font-medium">Neon Postgres (project database)</p>
         {p.connected && (
           <span className="text-xs text-ink-mute">
-            {p.status === "connected" ? `connected — ${p.host ?? "database"}` : "error"}
+            {p.status === "connected"
+              ? `${managed ? "managed" : "your database"} — ${p.host ?? "connected"}`
+              : p.status}
           </span>
         )}
       </div>
 
       <p className="mb-3 text-xs text-ink-mute">
         Give this project its own Postgres database — all content (entries, assets
-        metadata, history) lives there instead of the shared plane. Connect
-        validates the database, installs the schema, and only then stores the
-        connection string (encrypted). Attach it <em>before</em> creating content:
-        existing content is not migrated.
+        metadata, history) lives there instead of the shared plane. Provision a
+        managed one in one click, or bring your own. Set it up <em>before</em>{" "}
+        creating content: existing content is not migrated.
       </p>
 
-      <div className="mb-3">
-        <label className="mb-1 block text-xs text-ink-mute">
-          Connection string{p.connected ? " (stored — paste again to re-install/heal)" : ""}
-        </label>
-        <input
-          name="connectionString"
-          type="password"
-          placeholder={p.connected ? "••••••••" : "postgres://user:pass@host/dbname"}
-          className={inputClass}
-        />
-      </div>
+      {!managed && (
+        <div className="mb-3">
+          <label className="mb-1 block text-xs text-ink-mute">
+            Bring your own: connection string
+            {p.connected ? " (stored — paste again to re-install/heal)" : ""}
+          </label>
+          <input
+            name="connectionString"
+            type="password"
+            placeholder={p.connected ? "••••••••" : "postgres://user:pass@host/dbname"}
+            className={inputClass}
+          />
+        </div>
+      )}
 
-      <div className="flex items-center gap-2">
-        <button type="submit" disabled={busy} className={buttonClass}>
-          {busy ? "Validating…" : p.connected ? "Reconnect" : "Connect"}
-        </button>
+      <div className="flex flex-wrap items-center gap-2">
+        {!managed && (
+          <button type="submit" disabled={busy} className={buttonClass}>
+            {busy ? "Working…" : p.connected ? "Reconnect" : "Connect"}
+          </button>
+        )}
+        {!p.connected && (
+          <button
+            type="button"
+            className="btn"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setNote(null);
+              setError(null);
+              const res = await provisionManagedAction(p.projectId);
+              setBusy(false);
+              setError(res.error ?? null);
+              if (!res.error) setNote(res.detail ?? "Provisioned");
+            }}
+            title="We create and run a dedicated Neon database for this project"
+          >
+            {busy ? "Provisioning…" : "Provision managed database"}
+          </button>
+        )}
         {p.connected && (
           <>
             <button
@@ -564,25 +596,67 @@ export function NeonConnectorCard(p: {
             >
               Test
             </button>
-            <button
-              type="button"
-              className="btn btn-danger-ghost"
-              disabled={busy}
-              onClick={async () => {
-                if (
-                  !window.confirm(
-                    "Disconnect this database? Your database and its data are NEVER deleted, but the project's content becomes unreachable through the platform until you reconnect it.",
-                  )
-                ) {
-                  return;
-                }
-                const res = await disconnectConnector(p.projectId, "neon");
-                setError(res.error ?? null);
-                if (!res.error) setNote("Disconnected — your database was not touched");
-              }}
-            >
-              Disconnect
-            </button>
+            {managed && p.status !== "connected" && (
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setNote(null);
+                  setError(null);
+                  const res = await provisionManagedAction(p.projectId);
+                  setBusy(false);
+                  setError(res.error ?? null);
+                  if (!res.error) setNote(res.detail ?? "Provisioned");
+                }}
+              >
+                Retry provisioning
+              </button>
+            )}
+            {managed ? (
+              <button
+                type="button"
+                className="btn btn-danger-ghost"
+                disabled={busy}
+                onClick={async () => {
+                  if (
+                    !window.confirm(
+                      "Deprovision this managed database? Its content is DELETED with it (Neon keeps it recoverable for 7 days). The project returns to the shared plane, empty.",
+                    )
+                  ) {
+                    return;
+                  }
+                  setBusy(true);
+                  const res = await deprovisionManagedAction(p.projectId);
+                  setBusy(false);
+                  setError(res.error ?? null);
+                  if (!res.error) setNote(res.detail ?? "Deprovisioned");
+                }}
+              >
+                Deprovision
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-danger-ghost"
+                disabled={busy}
+                onClick={async () => {
+                  if (
+                    !window.confirm(
+                      "Disconnect this database? Your database and its data are NEVER deleted, but the project's content becomes unreachable through the platform until you reconnect it.",
+                    )
+                  ) {
+                    return;
+                  }
+                  const res = await disconnectConnector(p.projectId, "neon");
+                  setError(res.error ?? null);
+                  if (!res.error) setNote("Disconnected — your database was not touched");
+                }}
+              >
+                Disconnect
+              </button>
+            )}
           </>
         )}
         {note && <span className="text-xs text-ink-mute">{note}</span>}

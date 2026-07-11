@@ -597,6 +597,29 @@ Then A5 only branches the connector, mints `dev` tokens, and makes
 5. **Managed provisioning granularity** — a Neon *project* per tenant project, or
    one Neon project with a *branch/database* per tenant project? (cost, limits,
    branch quotas — needs Neon API facts before A3.)
+
+   **✅ ANSWERED 2026-07-11 (A3 research, verified against live Neon docs):
+   ONE NEON PROJECT PER TENANT PROJECT, in our org, via an org API key.**
+   - **Quotas:** Free/Launch = 100 projects per org; **Scale = 1,000 projects
+     (soft limit, raisable on request)** — ≫ launch scale.
+   - **Cost shape:** usage-based, **no per-project minimum** (invoices < $0.50
+     not collected). Compute $0.106/CU-hr (Launch) / $0.222 (Scale); storage
+     $0.35/GB-mo. **Scale-to-zero** (5 min default; Scale plan configurable
+     1 min–always-on) → an idle managed tenant costs ≈ storage only. Fits
+     pay-per-project + caps exactly.
+   - **A5 alignment:** branches included per project (10 Launch / 25 Scale,
+     $1.50/branch-mo beyond) → the tenant's **dev environment = a branch
+     inside the tenant's own Neon project**, not a shared-org resource.
+   - **API:** `POST /api/v2/projects` (Bearer org key; `region_id`,
+     `pg_version` 14–18; response carries `connection_uris` +
+     `operations[]` to poll before first connect — creation is async).
+     `DELETE /api/v2/projects/{id}` removes everything and is **recoverable
+     for 7 days** (`POST /projects/{id}/recover`) — B2's teardown grace
+     window for free.
+   - **Rejected:** branch-per-tenant (25-branch quota, teardown = surgery on a
+     shared project, PITR/restore entanglement, weaker isolation story) and
+     database-per-tenant on one instance (shared compute/noisy neighbor, no
+     per-tenant scale-to-zero, undermines the "everything isolated" promise).
 6. **The FK asymmetry** (§3) — accept FKs-in-control-DB / no-FKs-in-tenant-DB
    (keeps the smoke harness and fallback teardown untouched), or unify to
    app-level cascade everywhere for a single schema shape? Recommendation: accept

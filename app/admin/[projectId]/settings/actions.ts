@@ -273,6 +273,32 @@ export async function connectNeonAction(
   return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
 }
 
+/** A3: one-click managed database — a Neon project of the tenant's own,
+ * provisioned from OUR org (handle-first, resumable). */
+export async function provisionManagedAction(
+  projectId: string,
+): Promise<{ error?: string; ok?: boolean; detail?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const { provisionManagedDatabase } = await import("@/lib/neon-connector");
+  const result = await provisionManagedDatabase(projectId);
+  revalidatePath(`/admin/${projectId}/connectors`);
+  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+}
+
+/** A3: tear down the managed database (deletes it; Neon keeps it recoverable
+ * for 7 days). The card gates this behind an explicit confirm. */
+export async function deprovisionManagedAction(
+  projectId: string,
+): Promise<{ error?: string; ok?: boolean; detail?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const { deprovisionManagedDatabase } = await import("@/lib/neon-connector");
+  const result = await deprovisionManagedDatabase(projectId);
+  revalidatePath(`/admin/${projectId}/connectors`);
+  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+}
+
 /**
  * K5: register the project's Stripe webhook endpoint in one click. The webhook
  * URL is built from the app's PUBLIC origin (proxy-aware, APP_URL override),
@@ -379,15 +405,20 @@ export async function deleteProjectAction(
 
   // Data-plane connector at delete time (B2 decisions): BYO → allowed; we drop
   // OUR control-plane records and routing but NEVER touch the tenant's own
-  // database (it's theirs). MANAGED → refuse until A3 wires Neon-API teardown,
-  // rather than silently orphan a paid tenant DB.
+  // database (it's theirs). MANAGED → tear the Neon project down FIRST (A3);
+  // a teardown failure blocks the delete so a paid DB is never orphaned
+  // silently (Neon keeps deleted projects recoverable for 7 days).
   const [dataPlane] = await db
     .select({ id: projectConnectors.id, config: projectConnectors.config })
     .from(projectConnectors)
     .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "neon")))
     .limit(1);
-  if (dataPlane && dataPlane.config?.mode !== "byo") {
-    return { error: "This project has a managed database connector — data-plane teardown isn't wired yet (A3)." };
+  if (dataPlane && dataPlane.config?.mode === "managed") {
+    const { deprovisionManagedDatabase } = await import("@/lib/neon-connector");
+    const teardown = await deprovisionManagedDatabase(projectId);
+    if (!teardown.ok) {
+      return { error: `Managed database teardown failed — project not deleted. ${teardown.detail}` };
+    }
   }
 
   try {
