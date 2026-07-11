@@ -78,7 +78,7 @@ function safeColor(v: string | undefined): string {
   return "#4f46e5";
 }
 
-export function toSwitcher(p: {
+function toSwitcher(p: {
   id: string;
   name: string;
   branding: { displayName?: string; primaryColor?: string; logoUrl?: string };
