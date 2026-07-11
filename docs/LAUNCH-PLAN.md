@@ -143,29 +143,36 @@ in the launch plan.
         against a real throwaway PG18 database on our Neon instance: fresh
         apply 0→1, idempotent re-run, probe, entries round-trip, partial
         idempotency index enforced.
-- [ ] A2 (M) **Neon connector, BYO mode.** Connect → validate → install
-      (migrateTenantDb) → store encrypted → route. **Must-do gate list, from A1
-      + the design doc (§7/§8/§11) — these are A2-blocking, not polish:**
-      - Migrate-before-first-use gate on `tenantDb()` + a quarantine state for
-        a tenant DB that can't complete a step (never a write-500 storm).
-      - Keyed envelopes (`kid` + dual-key decrypt window) for
-        CONNECTOR_MASTER_KEY BEFORE real connection strings are stored — today
-        a key rotation would brick every connector.
-      - Fleet dashboard + operator console per-project entry counts read the
-        shared `entries` table cross-project (app/admin/page.tsx,
-        lib/platform.ts) — silently wrong the moment the first connector-backed
-        project exists. Land the control-plane usage counter first, or ship
-        documented zeroes.
-      - Public image-transform route resolves an asset by bare uuid with no
-        project context (app/api/v1/assets/[id]/image) — needs a project-scoped
-        URL shape or a control-plane asset→project pointer.
-      - BYO validation normalizes Neon `-pooler` hosts to the direct endpoint
-        (session semantics; the runner already self-normalizes).
-      - Provisioning replays syncUnique/SearchIndex per collection after the
-        runner (per-collection partial indexes are not in the fixed DDL set).
-      - Optimization (not blocking): tenantDb resolves the connector row on
-        EVERY call (~1 extra control query per content op) — add a short-TTL
-        cache with explicit invalidation on connector change/rotate.
+- [x] A2 (M) **Neon connector, BYO mode — ✅ COMPLETE 2026-07-11.** Connect →
+      validate (session probe: PG15+, CREATE privilege) → install
+      (migrateTenantDb) → store encrypted → route → replay per-collection
+      indexes. `lib/neon-connector.ts` is the ONLY storing path (the generic
+      form action's type excludes neon), with a zero-content guard (content
+      migration stays out of scope; same-string reconnect = allowed heal) and
+      a BYO-invariant disconnect (their DB is never touched). Dedicated admin
+      card. **Acceptance proof — smoke 49 against a REAL second database:**
+      first content op passes the migrate gate and installs v1; entries,
+      versions, changes, audit, trash, assets, and partial indexes all live
+      tenant-side; control DB holds zero content; fallback sibling has no
+      cross-talk; public image URL resolves via the pointer. Full suite
+      409/409. Gate list resolution:
+      - [x] Migrate-before-first-use gate + quarantine (70564bd) — tenantDb/
+        withTenantTransaction verify once per process per conn string; failure
+        flips the connector to error and fails closed.
+      - [x] Keyed envelopes (1ce4cdd) — v2.<kid> ciphertexts, keyring env,
+        legacy k0 compat, rotation runbook in lib/crypto.ts.
+      - [x] Dashboard/console counts (ce6de1f) — tenantContentStats fan-out
+        overlay, bounded to connector-backed projects; zeros + error chip when
+        unreachable. B3 rollups replace at scale.
+      - [x] Image route (ce6de1f) — control-plane `asset_pointers` written on
+        upload; bare-uuid URLs unchanged.
+      - [x] `-pooler` handling — resolved by design: the runner self-normalizes
+        to the direct endpoint (session advisory locks); stored strings may be
+        pooled (neon-http + interactive transactions are pooler-safe).
+      - [x] Index replay on provision (70564bd) — replayCollectionIndexes.
+      - [ ] (Non-blocking, A3-or-later) resolver-lookup cache: tenantDb still
+        resolves the connector row per call (~1 extra control query per
+        content op); add short-TTL cache + eviction on connector change.
 - [ ] A3 (M) **Managed provisioning** — Neon API, our org, auto-provision on
       project create.
 - [ ] A4 (M) **R2 as a connector** — BYO bucket + managed per-project bucket;
