@@ -75,7 +75,7 @@ export default async function AdminHome() {
 
   return (
     <div className="flex min-h-screen">
-      <WorkspaceSidebar projects={switcher} theme={theme} canCreateProjects={canCreate} />
+      <WorkspaceSidebar projects={switcher} theme={theme} canCreateProjects={canCreate} isPlatformOperator={canCreate} />
       <div className="page-enter min-w-0 flex-1">
         <ProjectFleet owned={ownedFleet} shared={sharedFleet} canCreate={canCreate} />
       </div>

@@ -39,7 +39,7 @@ export default async function WorkspacePage() {
 
   return (
     <div className="flex min-h-screen">
-      <WorkspaceSidebar projects={switcher} theme={theme} canCreateProjects={viewer.isPlatformOperator} />
+      <WorkspaceSidebar projects={switcher} theme={theme} canCreateProjects={viewer.isPlatformOperator} isPlatformOperator={viewer.isPlatformOperator} />
       <div className="page-enter min-w-0 flex-1">
         <WorkspaceTeam
           workspaceId={workspaceId}

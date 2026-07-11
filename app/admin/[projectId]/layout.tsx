@@ -60,6 +60,7 @@ export default async function ProjectLayout({
         currentId={projectId}
         theme={theme}
         canCreateProjects={viewer?.isPlatformOperator ?? false}
+        isPlatformOperator={viewer?.isPlatformOperator ?? false}
       />
       <main className="page-enter mx-auto min-w-0 max-w-[1400px] flex-1 px-5 py-7 md:px-10 md:py-9">
         {children}

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { UserButton } from "@clerk/nextjs";
 import {
+  Boxes,
   Code2,
   Image as ImageIcon,
   LayoutGrid,
@@ -31,12 +32,15 @@ export function WorkspaceSidebar({
   currentId,
   theme,
   canCreateProjects = false,
+  isPlatformOperator = false,
 }: {
   projects: SwitcherProject[];
   currentId?: string;
   theme: "dark" | "light";
   /** LAUNCH-PLAN 0.1: creation is operator-only until B2 reopens it. */
   canCreateProjects?: boolean;
+  /** B4: platform operators get the console link (the god view). */
+  isPlatformOperator?: boolean;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -120,6 +124,12 @@ export function WorkspaceSidebar({
             {item("/admin", "Projects", LayoutGrid)}
             {item("/admin/workspace", "Team", Users)}
             {canCreateProjects && item("/admin/new", "New project", Plus)}
+            {isPlatformOperator && (
+              <>
+                {group("Platform")}
+                {item("/admin/console", "Console", Boxes)}
+              </>
+            )}
           </nav>
         )}
 
