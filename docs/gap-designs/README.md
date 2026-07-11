@@ -19,6 +19,7 @@ increments with concrete files, surfaces, and migrations.
 | design-compute.json | BYO-compute hooks + computed fields — **read with ROADMAP Phase 16 corrections; this design's revision pass did not complete** | 16 |
 | design-realtime.json | Change feed + SSE | 17 |
 | design-media-i18n.json | Image transforms + localized fields | 18 |
+| **design-data-plane.md** | Per-project data plane (control vs tenant split, resolver seam, migration runner, BYO/managed provisioning, dev/prod envs) — **A0 draft, pending review**; markdown, not JSON | 19 / Track A |
 
 Also here:
 

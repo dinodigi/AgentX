@@ -46,8 +46,10 @@ while we watch every tenant from an operator console.
 
 ## Track A — the data plane (Phase 19, reshaped for greenfield)
 
-- [ ] A0 (M) **Design doc** (`docs/gap-designs/design-data-plane.md`), reviewed
-      together before code. Owns the four open questions:
+- [~] A0 (M) **Design doc** (`docs/gap-designs/design-data-plane.md`) — **drafted
+      2026-07-10, pending review** (grounded in a 7-agent code-understanding pass +
+      a 3-lens adversarial review; 6 open questions listed at the doc's end).
+      Reviewed together before code. Owns the four open questions:
       1. **Table split** — what moves to the tenant DB (entries, trash, versions,
          entry_changes, assets…) vs stays control-plane (workspaces, members,
          project registry, tokens, connector refs, usage, audit) vs needs care
