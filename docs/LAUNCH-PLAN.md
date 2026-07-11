@@ -173,8 +173,23 @@ in the launch plan.
       - [ ] (Non-blocking, A3-or-later) resolver-lookup cache: tenantDb still
         resolves the connector row per call (~1 extra control query per
         content op); add short-TTL cache + eviction on connector change.
-- [ ] A3 (M) **Managed provisioning** — Neon API, our org, auto-provision on
-      project create.
+- [x] A3 (M) **Managed provisioning — ✅ COMPLETE 2026-07-11 (81c3628).**
+      Decision (design doc §13.5, live-docs verified): **one Neon project per
+      tenant project** in our org — Scale plan 1k projects soft-cap, no
+      per-project minimum, scale-to-zero ≈ storage-only idle cost, A5 dev env
+      = a branch in the tenant's own Neon project, 7-day delete recovery.
+      `lib/neon-api.ts` (+ NEON_API_BASE mock override) +
+      `provisionManagedDatabase`: zero-content guard → create → **teardown
+      handle stored first** → ready-poll → schema install → conn stored →
+      index replay; mid-failure quarantines with the handle and retry
+      tears down the orphan + provisions fresh; a row with a stored secret is
+      never replaced. Deprovision is loud + confirm-gated; **project delete
+      (B2) now tears down managed DBs instead of refusing**. Proof:
+      `scripts/exercise-managed-provisioning.ts` (committed, on-demand) — mock
+      control API over REAL created/dropped databases, 5/5; smoke 49
+      regression 6/6. **Pending operator: set NEON_API_KEY (+ NEON_ORG_ID if
+      personal key) in Render for a real-API run; auto-provision-on-create
+      wires into B2's setup state, not here.**
 - [ ] A4 (M) **R2 as a connector** — BYO bucket + managed per-project bucket;
       media + image-transform derivatives ride the same resolver.
 - [ ] A5 (L) **Dev/prod environments.** Managed: dev = Neon branch of prod,
