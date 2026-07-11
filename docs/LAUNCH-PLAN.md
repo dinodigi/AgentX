@@ -73,7 +73,15 @@ while we watch every tenant from an operator console.
 
 - [ ] B1 (M) **Workspaces.** Sign-up → workspace; workspace owns projects;
       members ride the existing project_members shape. ADMIN_EMAILS becomes a
-      real platform-operator role.
+      real platform-operator role. Decided 2026-07-10:
+      - Workspace roles (owner / admin / manager) **cascade** to all workspace
+        projects; per-project member rows remain the bottom rung for sharing a
+        single project with an outsider (the client-handoff path).
+      - Access resolution ladder: platform operator → workspace role →
+        project member row. Dashboard = the union of everything reachable,
+        grouped **"Your projects" / "Shared with you"** in the fleet + switcher.
+      - **Ownership is singular:** a project belongs to exactly one paying
+        workspace. Sharing spreads access, never billing, keys, or deletion.
 - [ ] B2 (M) **Project lifecycle.** Create → *setup* state (choose BYO or
       managed, connect or provision) → active. Self-serve creation reopens here,
       behind a plan. MCP token + delivery API light up only on active.
@@ -82,7 +90,16 @@ while we watch every tenant from an operator console.
       storage, entries) → daily rollups → hard-cap enforcement with clear
       errors + upgrade prompts.
 - [ ] B4 (M) **Operator console.** All workspaces/projects, usage numbers,
-      connector health, plan status, suspend switch.
+      connector health, plan status, suspend switch. Decided 2026-07-10:
+      - The console is a **separate surface** (own route, operator-gated, reads
+        the control plane). The everyday dashboard shows only our own workspace,
+        like any tenant — fixing today's ADMIN_EMAILS behavior of mixing every
+        tenant's projects into the operator's normal dashboard.
+      - Platform-account data (who signed up, projects per workspace, cap usage)
+        lives HERE — never in the dogfooded marketing project, which only holds
+        content-shaped data (waitlist leads via its publicWrite inbox).
+      - Policy to settle during B4: whether operators can enter a tenant's
+        project admin at all (support access), and under what audit logging.
 
 ## Track C — launch readiness
 
@@ -121,6 +138,9 @@ Launch gate = A-track + B-track + C1 + C4 + C5 + C7 all green.
 4. **BYO environments shape** — two connection strings vs granted Neon API key
    (settled in A0 review).
 5. **Legal entity + ToS/privacy path** (blocks C6).
+6. **Operator support access** — may platform operators open a tenant's project
+   admin, and with what logging? (settled during B4; default leaning: allowed
+   but audit-logged and visible to the tenant).
 
 ## Honest sizing
 
