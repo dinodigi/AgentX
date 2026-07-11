@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { entries, type Collection } from "@/db/schema";
 
 /**
@@ -30,7 +30,7 @@ export async function exportEntries(
   collection: Collection,
   format: "json" | "csv" = "json",
 ): Promise<ExportResult> {
-  const raw = await db
+  const raw = await (await tenantDb(collection.projectId))
     .select()
     .from(entries)
     .where(eq(entries.collectionId, collection.id))

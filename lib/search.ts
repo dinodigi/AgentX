@@ -1,5 +1,5 @@
 import { and, eq, sql, asc, desc, type SQL } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { entries, type Collection, type Entry } from "@/db/schema";
 import { fieldSearchable, type FieldDef } from "./field-types";
 import { buildWhere, type WhereItem } from "./query";
@@ -88,7 +88,7 @@ export async function searchEntriesPage(collection: Collection, opts: SearchOpts
   ];
 
   const rank = sql<number>`ts_rank(${vec}, ${query})`;
-  const rows = await db
+  const rows = await (await tenantDb(collection.projectId))
     .select({
       id: entries.id,
       projectId: entries.projectId,

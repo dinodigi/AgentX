@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { collections, entries, projectSchedules, type EventAction, type ScheduleAction } from "@/db/schema";
 import { actionHash, dispatchEmail, runEventAction, type EntryEvent } from "./events";
 import { deliverWebhook } from "./webhook";
@@ -49,7 +50,7 @@ export const HANDLERS: JobHandlers = {
     if (!live || live.disabled) return;
 
     // (3) The CURRENT entry — deleted (or trashed) → skip-as-succeeded.
-    const [entry] = await db
+    const [entry] = await (await tenantDb(job.projectId))
       .select({ id: entries.id, data: entries.data })
       .from(entries)
       .where(and(eq(entries.id, p.entryId), eq(entries.collectionId, collection.id)))

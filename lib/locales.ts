@@ -1,6 +1,7 @@
 import { unstable_cache, revalidateTag } from "next/cache";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import {
   projects,
   collections,
@@ -151,7 +152,9 @@ export async function setLocales(
 
   // Count impact only when the change is destructive-shaped AND localized
   // fields exist to hold variants (zero until J5 enables the field knob).
+  // Collections (config) are control-plane; the variant counts read tenant data.
   if (removed.length > 0 || defaultChange) {
+    const tdb = await tenantDb(projectId);
     const cols = await db
       .select({ id: collections.id, name: collections.name, fields: collections.fields })
       .from(collections)
@@ -160,7 +163,7 @@ export async function setLocales(
       for (const f of localizedFields(col.fields as FieldDef[])) {
         const variantMap = sql`${entries.data} -> ${f.name}`;
         for (const locale of removed) {
-          const [row] = await db
+          const [row] = await tdb
             .select({ n: sql<number>`count(*)::int` })
             .from(entries)
             .where(
@@ -175,7 +178,7 @@ export async function setLocales(
           }
         }
         if (defaultChange) {
-          const [row] = await db
+          const [row] = await tdb
             .select({ n: sql<number>`count(*)::int` })
             .from(entries)
             .where(
@@ -222,6 +225,7 @@ export async function setLocales(
   // single-statement jsonb shape as the rename backfill; trash rows included,
   // matching how rename-backfill treats entries_trash.
   if (variantsLost.length > 0) {
+    const tdb = await tenantDb(projectId);
     for (const v of variantsLost) {
       const [col] = await db
         .select({ id: collections.id })
@@ -233,7 +237,7 @@ export async function setLocales(
         // ::text casts on EVERY bound param: inside .set() drizzle types params
         // from the jsonb column context, making `-> $n` / `- $n` jsonb-jsonb.
         const variantMap = sql`${table.data} -> ${v.field}::text`;
-        await db
+        await tdb
           .update(table)
           .set({
             data: sql`jsonb_set(${table.data}, ARRAY[${v.field}::text], (${variantMap}) - ${v.locale}::text)`,

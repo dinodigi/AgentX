@@ -1,6 +1,8 @@
-import { and, eq, sql, desc, lt } from "drizzle-orm";
-import { db } from "@/db";
-import { entries, entriesTrash, entryVersions, type Collection, type AuditActor } from "@/db/schema";
+import { and, eq, inArray, sql, desc, lt } from "drizzle-orm";
+import { controlDb } from "@/db";
+import { tenantDb } from "./data-plane";
+import type { DbExecutor } from "./db-tx";
+import { collections, entries, entriesTrash, entryVersions, type Collection, type AuditActor } from "@/db/schema";
 import { emitEntryEvent } from "./events";
 import { recordAudit } from "./audit";
 import { defer } from "./defer";
@@ -39,7 +41,7 @@ export async function restoreEntry(
 ): Promise<{ id: string; data: Record<string, unknown> }> {
   let result;
   try {
-    result = await db.execute(sql`
+    result = await (await tenantDb(projectId)).execute(sql`
       WITH moved AS (
         DELETE FROM ${entriesTrash}
         WHERE ${entriesTrash.id} = ${id} AND ${entriesTrash.collectionId} = ${collection.id}
@@ -108,10 +110,10 @@ export async function listTrash(
   const conds = [eq(entriesTrash.projectId, projectId)];
   if (opts.before) conds.push(lt(entriesTrash.deletedAt, new Date(opts.before)));
 
-  const found = await db
+  const found = await (await tenantDb(projectId))
     .select({
       id: entriesTrash.id,
-      collection: sql<string>`(SELECT name FROM collections WHERE id = ${entriesTrash.collectionId})`,
+      collectionId: entriesTrash.collectionId,
       data: entriesTrash.data,
       deletedAt: entriesTrash.deletedAt,
       deletedBy: entriesTrash.deletedBy,
@@ -122,9 +124,24 @@ export async function listTrash(
     .limit(limit + 1);
 
   const hasMore = found.length > limit;
-  const rows = found.slice(0, limit).map((r) => ({
+  const kept = found.slice(0, limit);
+
+  // Collection names live in the control plane — the old correlated subquery
+  // can't cross the DB split, so resolve names in a second, control-side query
+  // (same decomposition as verifyRefs).
+  const colIds = [...new Set(kept.map((r) => r.collectionId))];
+  const names =
+    colIds.length > 0
+      ? await controlDb
+          .select({ id: collections.id, name: collections.name })
+          .from(collections)
+          .where(inArray(collections.id, colIds))
+      : [];
+  const nameById = new Map(names.map((c) => [c.id, c.name]));
+
+  const rows = kept.map((r) => ({
     id: r.id,
-    collection: r.collection,
+    collection: nameById.get(r.collectionId) ?? "(deleted collection)",
     data: r.data,
     deletedAt: (r.deletedAt as Date).toISOString(),
     deletedBy: r.deletedBy,
@@ -133,13 +150,13 @@ export async function listTrash(
 }
 
 /** Count entries (live + trashed, excluding the row itself) that reference an id. */
-async function countInboundRefs(projectId: string, id: string): Promise<number> {
+async function countInboundRefs(dbc: DbExecutor, projectId: string, id: string): Promise<number> {
   const like = "%" + id + "%";
-  const [live] = await db
+  const [live] = await dbc
     .select({ n: sql<number>`count(*)` })
     .from(entries)
     .where(and(eq(entries.projectId, projectId), sql`${entries.data}::text LIKE ${like}`));
-  const [trash] = await db
+  const [trash] = await dbc
     .select({ n: sql<number>`count(*)` })
     .from(entriesTrash)
     .where(
@@ -154,6 +171,7 @@ async function countInboundRefs(projectId: string, id: string): Promise<number> 
 
 /** Asset ids in a row that no OTHER live-or-trashed entry references — freed by purge. */
 async function computeAssetsFreed(
+  dbc: DbExecutor,
   projectId: string,
   collection: Collection,
   rowId: string,
@@ -166,11 +184,11 @@ async function computeAssetsFreed(
   const freed: string[] = [];
   for (const assetId of assetIds) {
     const like = "%" + assetId + "%";
-    const [live] = await db
+    const [live] = await dbc
       .select({ n: sql<number>`count(*)` })
       .from(entries)
       .where(and(eq(entries.projectId, projectId), sql`${entries.data}::text LIKE ${like}`));
-    const [trash] = await db
+    const [trash] = await dbc
       .select({ n: sql<number>`count(*)` })
       .from(entriesTrash)
       .where(
@@ -207,7 +225,8 @@ export async function purgeEntry(
   id: string,
   opts: { confirm?: boolean; actor?: AuditActor } = {},
 ): Promise<PurgeResult> {
-  const [trashed] = await db
+  const tdb = await tenantDb(projectId);
+  const [trashed] = await tdb
     .select()
     .from(entriesTrash)
     .where(and(eq(entriesTrash.id, id), eq(entriesTrash.collectionId, collection.id)))
@@ -216,8 +235,8 @@ export async function purgeEntry(
 
   if (!opts.confirm) {
     const [inboundRefCount, assetsFreed] = await Promise.all([
-      countInboundRefs(projectId, id),
-      computeAssetsFreed(projectId, collection, id, trashed.data),
+      countInboundRefs(tdb, projectId, id),
+      computeAssetsFreed(tdb, projectId, collection, id, trashed.data),
     ]);
     return {
       purged: false,
@@ -228,7 +247,7 @@ export async function purgeEntry(
   }
 
   // Purge the row and reap its version history in one statement.
-  await db.execute(sql`
+  await tdb.execute(sql`
     WITH purged AS (
       DELETE FROM ${entriesTrash}
       WHERE ${entriesTrash.id} = ${id} AND ${entriesTrash.collectionId} = ${collection.id}
@@ -258,12 +277,13 @@ export async function emptyTrash(
   projectId: string,
   opts: { collection?: Collection; confirm?: boolean; actor?: AuditActor } = {},
 ): Promise<EmptyTrashResult> {
+  const tdb = await tenantDb(projectId);
   const scope = opts.collection
     ? and(eq(entriesTrash.projectId, projectId), eq(entriesTrash.collectionId, opts.collection.id))
     : eq(entriesTrash.projectId, projectId);
 
   if (!opts.confirm) {
-    const [{ n }] = await db.select({ n: sql<number>`count(*)` }).from(entriesTrash).where(scope);
+    const [{ n }] = await tdb.select({ n: sql<number>`count(*)` }).from(entriesTrash).where(scope);
     return {
       emptied: false,
       requiresConfirmation: true,
@@ -278,7 +298,7 @@ export async function emptyTrash(
   const scopeSql = opts.collection
     ? sql`${entriesTrash.projectId} = ${projectId} AND ${entriesTrash.collectionId} = ${opts.collection.id}`
     : sql`${entriesTrash.projectId} = ${projectId}`;
-  const result = await db.execute(sql`
+  const result = await tdb.execute(sql`
     WITH purged AS (
       DELETE FROM ${entriesTrash} WHERE ${scopeSql} RETURNING id
     ),

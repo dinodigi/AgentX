@@ -23,6 +23,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id } = await params;
   if (!UUID_RE.test(id)) return deliveryError(404, "not found");
 
+  // DELIBERATELY control-DB (A1): this public URL carries no project context, so
+  // there is nothing to resolve a tenant DB by. Works while every project falls
+  // back to the control DB; BEFORE A2 ships a connector-backed project, this
+  // route needs a project-scoped URL shape or a control-plane asset→project
+  // pointer (recorded in LAUNCH-PLAN A2).
   const [asset] = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
   if (!asset) return deliveryError(404, "not found");
   if (!isTransformable(asset.contentType)) {

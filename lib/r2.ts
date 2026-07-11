@@ -9,7 +9,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { assets, entries, entriesTrash, type Asset } from "@/db/schema";
 import { ValidationError } from "./validation";
 
@@ -65,7 +65,7 @@ export async function uploadAsset(input: UploadInput): Promise<Asset> {
   );
 
   const url = `${process.env.R2_PUBLIC_BASE_URL}/${key}`;
-  const [row] = await db
+  const [row] = await (await tenantDb(input.projectId))
     .insert(assets)
     .values({
       projectId: input.projectId,
@@ -152,7 +152,7 @@ export async function listAssets(
   projectId: string,
   page?: { limit: number; offset: number },
 ): Promise<Asset[]> {
-  let q = db
+  let q = (await tenantDb(projectId))
     .select()
     .from(assets)
     .where(eq(assets.projectId, projectId))
@@ -168,7 +168,8 @@ export async function listAssets(
  * repair. Asset ids are uuids, so a text containment check is precise.
  */
 export async function deleteAsset(projectId: string, assetId: string): Promise<void> {
-  const [asset] = await db
+  const tdb = await tenantDb(projectId);
+  const [asset] = await tdb
     .select()
     .from(assets)
     .where(and(eq(assets.id, assetId), eq(assets.projectId, projectId)))
@@ -176,7 +177,7 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
   if (!asset) throw new ValidationError(`asset ${assetId} not found`, "E_NOT_FOUND");
 
   const like = "%" + assetId + "%";
-  const [ref] = await db
+  const [ref] = await tdb
     .select({ n: sql<number>`count(*)` })
     .from(entries)
     .where(and(eq(entries.projectId, projectId), sql`${entries.data}::text LIKE ${like}`));
@@ -188,7 +189,7 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
   }
 
   // A trashed entry can still be restored, so it still pins the asset.
-  const [trashRef] = await db
+  const [trashRef] = await tdb
     .select({ n: sql<number>`count(*)` })
     .from(entriesTrash)
     .where(and(eq(entriesTrash.projectId, projectId), sql`${entriesTrash.data}::text LIKE ${like}`));
@@ -221,5 +222,5 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
   } else {
     await client().send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: asset.r2Key }));
   }
-  await db.delete(assets).where(eq(assets.id, assetId));
+  await tdb.delete(assets).where(eq(assets.id, assetId));
 }

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { and, eq, inArray } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "@/lib/data-plane";
 import { entries } from "@/db/schema";
 import { bearerFrom, resolveProjectId } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
@@ -86,7 +86,7 @@ export async function POST(req: NextRequest) {
   // indistinguishable per-item miss below instead of a DB type error.
   const ids = [...new Set(body.items.map((i) => i.id).filter((id) => UUID_RE.test(id)))];
   const rows = ids.length
-    ? await db
+    ? await (await tenantDb(projectId))
         .select({ id: entries.id, data: entries.data })
         .from(entries)
         .where(and(eq(entries.collectionId, collection.id), inArray(entries.id, ids)))

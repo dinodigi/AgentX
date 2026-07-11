@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, count, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { db, controlDb } from "@/db";
+import { controlDb } from "@/db";
 import { tenantDb, withTenantTransaction } from "./data-plane";
 import {
   entries,
@@ -560,7 +560,7 @@ async function runBeforeUpdateHook(
   patch: Record<string, unknown>,
 ): Promise<{ patch: Record<string, unknown>; replaced: boolean }> {
   const hook = collection.hooks!.beforeUpdate!;
-  const [current] = await db
+  const [current] = await (await tenantDb(projectId))
     .select()
     .from(entries)
     .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
@@ -628,11 +628,13 @@ export async function updateEntry(
     localizedReplace = hooked.replaced;
   }
 
+  const tdb = await tenantDb(projectId);
+
   // I4: recompute source-triggered computed fields onto the final patch (after
   // any transform). slugify/template follow a changed source; now(on:'always')
   // restamps; uuid + now(on:'create') stay frozen. CAS (update_entry_if) skips this.
   if (hasRecomputable(collection.fields)) {
-    const [cur] = await db
+    const [cur] = await tdb
       .select()
       .from(entries)
       .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
@@ -648,7 +650,7 @@ export async function updateEntry(
     }
   }
 
-  const { entry, emit } = await updateEntryCore(await tenantDb(collection.projectId), collection, id, patch, workflowActor(actor), {
+  const { entry, emit } = await updateEntryCore(tdb, collection, id, patch, workflowActor(actor), {
     localizedReplace,
   });
   await recordChange({
@@ -1153,7 +1155,8 @@ export async function restoreEntryVersion(
   versionId: string,
   actor: AuditActor = UNKNOWN_ACTOR,
 ): Promise<Entry> {
-  const [version] = await db
+  const tdb = await tenantDb(projectId);
+  const [version] = await tdb
     .select()
     .from(entryVersions)
     .where(
@@ -1176,7 +1179,7 @@ export async function restoreEntryVersion(
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
 
-  const [current] = await db
+  const [current] = await tdb
     .select()
     .from(entries)
     .where(and(eq(entries.id, entryId), eq(entries.collectionId, collection.id)))
@@ -1199,7 +1202,7 @@ export async function restoreEntryVersion(
 
   let row: Entry | undefined;
   try {
-    [row] = await db
+    [row] = await tdb
       .update(entries)
       .set({ data: clean, updatedAt: new Date() })
       .where(eq(entries.id, entryId))
@@ -1280,17 +1283,21 @@ async function deleteEntryCore(
  *  statement. Opportunistic + error-swallowed, deferred from the delete path and
  *  list_trash. */
 export async function sweepExpiredTrash(projectId: string): Promise<void> {
-  await db
-    .execute(
-      sql`
-        WITH swept AS (
-          DELETE FROM ${entriesTrash}
-          WHERE ${entriesTrash.projectId} = ${projectId}
-            AND ${entriesTrash.deletedAt} < now() - interval '30 days'
-          RETURNING id
-        )
-        DELETE FROM ${entryVersions} WHERE ${entryVersions.entryId} IN (SELECT id FROM swept)
-      `,
+  // .then keeps the resolver inside the swallow — best-effort must survive a
+  // fail-closed tenantDb throw too.
+  await tenantDb(projectId)
+    .then((tdb) =>
+      tdb.execute(
+        sql`
+          WITH swept AS (
+            DELETE FROM ${entriesTrash}
+            WHERE ${entriesTrash.projectId} = ${projectId}
+              AND ${entriesTrash.deletedAt} < now() - interval '30 days'
+            RETURNING id
+          )
+          DELETE FROM ${entryVersions} WHERE ${entryVersions.entryId} IN (SELECT id FROM swept)
+        `,
+      ),
     )
     .catch(() => {});
 }
@@ -1691,7 +1698,7 @@ export async function transact(
 }
 
 export async function getEntry(collection: Collection, id: string): Promise<Entry | null> {
-  const [row] = await db
+  const [row] = await (await tenantDb(collection.projectId))
     .select()
     .from(entries)
     .where(and(eq(entries.id, id), eq(entries.collectionId, collection.id)))
@@ -1708,7 +1715,7 @@ export async function countEntries(
     eq(entries.collectionId, collection.id),
     ...buildWhere(collection.fields, where, related),
   ];
-  const [row] = await db
+  const [row] = await (await tenantDb(collection.projectId))
     .select({ n: count() })
     .from(entries)
     .where(and(...conditions));
@@ -1821,7 +1828,7 @@ export async function bulkCreateEntries(
     // field named, rather than paying a round-trip per item.
     let rows: Entry[];
     try {
-      rows = await db
+      rows = await (await tenantDb(projectId))
         .insert(entries)
         .values(
           valid.map((v) => ({ projectId, collectionId: collection.id, data: v.clean })),
@@ -1981,7 +1988,8 @@ export async function queryEntriesPage(
   }
   const order = buildOrderBy(collection.fields, opts.orderBy);
 
-  let q = db.select().from(entries).where(and(...conditions)).$dynamic();
+  const tdb = await tenantDb(collection.projectId);
+  let q = tdb.select().from(entries).where(and(...conditions)).$dynamic();
   q = order ? q.orderBy(order, entries.id) : q.orderBy(createdMs, entries.id);
   const rows = await q.limit(limit + 1).offset(offset);
   return { rows: rows.slice(0, limit), limit, offset, hasMore: rows.length > limit };
@@ -2034,7 +2042,7 @@ export async function resolveRelations(
   if (allIds.size === 0) return rows;
 
   // Entry ids are globally unique — one fetch covers every target collection.
-  const targetRows = await db
+  const targetRows = await (await tenantDb(projectId))
     .select({ id: entries.id, data: entries.data })
     .from(entries)
     .where(and(inArray(entries.id, [...allIds]), eq(entries.projectId, projectId)));
@@ -2097,7 +2105,7 @@ export async function resolveAssets(
   }
   if (ids.size === 0) return rows;
 
-  const found = await db
+  const found = await (await tenantDb(projectId))
     .select({ id: assets.id, url: assets.url, contentType: assets.contentType })
     .from(assets)
     .where(and(inArray(assets.id, [...ids]), eq(assets.projectId, projectId)));
@@ -2178,11 +2186,12 @@ export async function expandRelations(
   }
 
   // Fetch + resolve + project each target collection's rows once.
+  const tdb = await tenantDb(projectId);
   const expandedById = new Map<string, { raw: Record<string, unknown>; view: Record<string, unknown> }>();
   for (const [targetName, ids] of idsByTarget) {
     const targetColl = await getCollection(projectId, targetName);
     if (!targetColl) continue;
-    let targetRows = await db
+    let targetRows = await tdb
       .select()
       .from(entries)
       .where(and(inArray(entries.id, [...ids]), eq(entries.collectionId, targetColl.id)));
@@ -2258,6 +2267,7 @@ export async function includeReverse(
   if (specs.length === 0 || parentIds.length === 0) return out;
   if (specs.length > 3) throw new ValidationError("includeReverse: at most 3 specs");
 
+  const tdb = await tenantDb(projectId);
   const idArray = sql`ARRAY[${sql.join(parentIds.map((id) => sql`${id}`), sql`, `)}]::text[]`;
 
   for (const spec of specs) {
@@ -2292,7 +2302,7 @@ export async function includeReverse(
     const gateSql = gate.length > 0 ? sql` AND ${and(...gate)}` : sql``;
 
     // One windowed statement: rank each child within its parent, keep limit+1.
-    const result = await db.execute(sql`
+    const result = await tdb.execute(sql`
       SELECT id, data, parent_ref FROM (
         SELECT id, data, data->>${spec.field} AS parent_ref,
           row_number() OVER (
@@ -2405,8 +2415,9 @@ export async function aggregateEntries(
   const toValues = (row: Record<string, unknown>) =>
     opts.aggregates.map((_, i) => (row[`a${i}`] === null ? null : Number(row[`a${i}`])));
 
+  const tdb = await tenantDb(collection.projectId);
   if (!opts.groupBy) {
-    const [row] = await db.select(selects).from(entries).where(and(...conditions));
+    const [row] = await tdb.select(selects).from(entries).where(and(...conditions));
     return { groups: [{ key: null, values: toValues(row) }], truncated: false };
   }
 
@@ -2423,7 +2434,7 @@ export async function aggregateEntries(
   // Group/order by ordinal: repeating the parametrized JSONB expression would
   // get fresh parameter numbers and Postgres would refuse to match them.
   const keyExpr = sql`${entries.data}->>${groupField.name}`;
-  const rows = await db
+  const rows = await tdb
     .select({ key: keyExpr, ...selects })
     .from(entries)
     .where(and(...conditions))
@@ -2438,10 +2449,11 @@ export async function aggregateEntries(
   }));
 
   // Relation group keys are target-entry ids; resolve their labels in one query.
+  // (Target collection = control plane; the label rows = tenant DB.)
   if (groupField.type === "relation") {
     const ids = groups.map((g) => g.key).filter((k): k is string => k !== null);
     if (ids.length > 0) {
-      const [target] = await db
+      const [target] = await controlDb
         .select()
         .from(collections)
         .where(
@@ -2452,7 +2464,7 @@ export async function aggregateEntries(
         )
         .limit(1);
       if (target) {
-        const labelRows = await db
+        const labelRows = await tdb
           .select({ id: entries.id, label: sql`${entries.data}->>${groupField.labelField}` })
           .from(entries)
           .where(and(eq(entries.collectionId, target.id), inArray(entries.id, ids)));
