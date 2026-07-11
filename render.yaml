@@ -69,6 +69,19 @@ services:
       # Minted by scripts/setup-marketing-intake.ts — same value as local .env.
       - key: MARKETING_INTAKE_TOKEN
         sync: false
+      # Managed data plane (A3): a Neon API key from the SAME account that
+      # hosts the control-plane DB — managed tenant DBs are sibling projects.
+      # (Add NEON_ORG_ID in the dashboard only if that account is an org.)
+      # Unset = managed provisioning refuses with a clear error; BYO unaffected.
+      - key: NEON_API_KEY
+        sync: false
+      # Managed storage plane (A4): Cloudflare API token (Account → Workers R2
+      # Storage → Edit) on the SAME account as R2_ACCOUNT_ID — used only to
+      # enable each managed bucket's r2.dev public URL. Bucket create/delete
+      # ride the existing account-scoped R2 S3 keys. Unset = managed buckets
+      # refuse at the public-URL step; BYO + shared plane unaffected.
+      - key: CF_API_TOKEN
+        sync: false
 
   # ── The job drain (replaces the Netlify scheduled function) ───────────────
   # Every minute, POST /api/jobs/drain with the shared CRON_SECRET. Uses node's
