@@ -83,8 +83,8 @@ in the launch plan.
 - [x] 0.2 (S) **Real marketing intake — dogfooded on AgentX itself.** ✅ shipped
       2026-07-11 (commit cb0e084, pushed). "Pluggie Marketing" project + publicWrite
       `signups` collection; forms POST via a server action to our delivery API;
-      verified end-to-end. **Pending you: set `MARKETING_INTAKE_TOKEN` in Render**
-      or prod signups stay dark.
+      verified end-to-end. ✅ `MARKETING_INTAKE_TOKEN` confirmed set in Render
+      2026-07-11 — prod signups live.
 - [x] 0.3 (S) **ROADMAP.md refresh** — ✅ shipped 2026-07-11 (commit feadecc,
       pushed). Render corrections, launch-plan supersession, plugins on hold.
 
@@ -187,9 +187,10 @@ in the launch plan.
       (B2) now tears down managed DBs instead of refusing**. Proof:
       `scripts/exercise-managed-provisioning.ts` (committed, on-demand) — mock
       control API over REAL created/dropped databases, 5/5; smoke 49
-      regression 6/6. **Pending operator: set NEON_API_KEY (+ NEON_ORG_ID if
-      personal key) in Render for a real-API run; auto-provision-on-create
-      wires into B2's setup state, not here.**
+      regression 6/6. **✅ REAL-API RUN PASSED 2026-07-11** (operator's
+      NEON_API_KEY in Render + local .env): actual Neon project provisioned,
+      schema v1 through the gate, content routed in (control DB zero rows),
+      torn down. Auto-provision-on-create wires into B2's setup state.
 - [x] A4 (M) **R2 as a connector — ✅ COMPLETE 2026-07-11 (92f282b + 32943bd).**
       `storageFor(projectId)` resolves the storage plane exactly like tenantDb
       (shared env fallback; fail-closed on malformed rows); uploads, deletes,
@@ -203,9 +204,10 @@ in the launch plan.
       managed-domain endpoint (r2.dev rate limits accepted for launch;
       per-tenant custom domains post-launch). Proofs: BYO exercise 7/7 vs the
       real bucket, managed exercise (committed, on-demand) 4/4 with a REAL
-      bucket lifecycle, smoke 50 server-path 3/3 + regressions. **Pending
-      operator: CF_API_TOKEN (R2:Edit) in Render for managed buckets' public
-      URLs.**
+      bucket lifecycle, smoke 50 server-path 3/3 + regressions.
+      **✅ REAL-API RUN PASSED 2026-07-11** (operator's CF_API_TOKEN): actual
+      bucket + live r2.dev public URL, upload served byte-exact over the
+      public internet, torn down — managed infra fully operational.
 - [ ] A5 (L) **Dev/prod environments.** Managed: dev = Neon branch of prod,
       promote = schema-diff apply (engine exists). BYO shape to be settled in A0
       (two connection strings vs a granted Neon API key). Per-env MCP tokens +
@@ -319,7 +321,11 @@ Launch gate = A-track + B-track + C1 + C4 + C5 + C7 all green.
 ## Decisions needed from the operator (blocking marked ⚑)
 
 1. ⚑ **Pricing anchors** — per-project price for BYO vs managed (blocks B3, C3).
-2. **Free sandbox project per workspace** — yes/no (shapes B2/B3).
+2. ~~**Free sandbox project per workspace**~~ — **✅ DECIDED 2026-07-11: YES,
+   one hard-capped sandbox per workspace** (shared plane only, dev-grade caps
+   — e.g. ~1k entries / 100MB media, exact caps set in B3); upgrading to a
+   paid project unlocks the real per-project data plane. Shapes B2's setup
+   state + B3's plan gating.
 3. **Name + domain** — **pluggie.app acquired** (2026-07-11); name effectively
    settled. Remaining: Clerk **production instance** on pluggie.app (DNS + prod
    keys) before flipping off the Render URL — see the domain runbook in chat.
