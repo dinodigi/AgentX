@@ -15,6 +15,7 @@ import {
   Settings,
   Table2,
   Trash2,
+  Users,
   X,
 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
@@ -117,6 +118,7 @@ export function WorkspaceSidebar({
           <nav className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
             {group("Workspace")}
             {item("/admin", "Projects", LayoutGrid)}
+            {item("/admin/workspace", "Team", Users)}
             {canCreateProjects && item("/admin/new", "New project", Plus)}
           </nav>
         )}

@@ -1,8 +1,15 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { workspaces, workspaceMembers, type WorkspaceRole } from "@/db/schema";
 import type { Viewer } from "./access";
+
+export interface WorkspaceMemberRow {
+  id: string;
+  email: string;
+  role: WorkspaceRole;
+  clerkUserId: string;
+}
 
 /**
  * Workspace membership (B1). A workspace owns projects; a membership here
@@ -25,6 +32,27 @@ export async function getWorkspaceRole(workspaceId: string, userId: string): Pro
     .where(and(eq(workspaceMembers.workspaceId, workspaceId), eq(workspaceMembers.clerkUserId, userId)))
     .limit(1);
   return row ? (row.role as WorkspaceRole) : null;
+}
+
+/** A workspace's identity, or null if it doesn't exist. */
+export async function getWorkspace(id: string): Promise<{ id: string; name: string } | null> {
+  const [w] = await db.select({ id: workspaces.id, name: workspaces.name }).from(workspaces).where(eq(workspaces.id, id)).limit(1);
+  return w ?? null;
+}
+
+/** Members of a workspace, oldest first (the owner leads). */
+export async function listWorkspaceMembers(workspaceId: string): Promise<WorkspaceMemberRow[]> {
+  const rows = await db
+    .select({
+      id: workspaceMembers.id,
+      email: workspaceMembers.email,
+      role: workspaceMembers.role,
+      clerkUserId: workspaceMembers.clerkUserId,
+    })
+    .from(workspaceMembers)
+    .where(eq(workspaceMembers.workspaceId, workspaceId))
+    .orderBy(asc(workspaceMembers.createdAt));
+  return rows as WorkspaceMemberRow[];
 }
 
 /** Workspace ids the viewer belongs to (any role). */
