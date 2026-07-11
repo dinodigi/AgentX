@@ -190,8 +190,22 @@ in the launch plan.
       regression 6/6. **Pending operator: set NEON_API_KEY (+ NEON_ORG_ID if
       personal key) in Render for a real-API run; auto-provision-on-create
       wires into B2's setup state, not here.**
-- [ ] A4 (M) **R2 as a connector** — BYO bucket + managed per-project bucket;
-      media + image-transform derivatives ride the same resolver.
+- [x] A4 (M) **R2 as a connector — ✅ COMPLETE 2026-07-11 (92f282b + 32943bd).**
+      `storageFor(projectId)` resolves the storage plane exactly like tenantDb
+      (shared env fallback; fail-closed on malformed rows); uploads, deletes,
+      image-transform derivatives + their 302s, and B2 byte-cleanup all ride
+      it (cleanup is mode-aware: shared prefix-delete / BYO never touched /
+      managed goes with the bucket). BYO connect = full-loop probe (write with
+      their keys → read back through THEIR public URL → delete) + zero-asset
+      guard; managed = real S3 CreateBucket in our account (**platform token
+      verified account-scoped — no new secret for the bucket lifecycle**),
+      handle-first + resumable, r2.dev public URL via the Cloudflare REST
+      managed-domain endpoint (r2.dev rate limits accepted for launch;
+      per-tenant custom domains post-launch). Proofs: BYO exercise 7/7 vs the
+      real bucket, managed exercise (committed, on-demand) 4/4 with a REAL
+      bucket lifecycle, smoke 50 server-path 3/3 + regressions. **Pending
+      operator: CF_API_TOKEN (R2:Edit) in Render for managed buckets' public
+      URLs.**
 - [ ] A5 (L) **Dev/prod environments.** Managed: dev = Neon branch of prod,
       promote = schema-diff apply (engine exists). BYO shape to be settled in A0
       (two connection strings vs a granted Neon API key). Per-env MCP tokens +
