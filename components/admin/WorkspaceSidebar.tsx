@@ -29,10 +29,13 @@ export function WorkspaceSidebar({
   projects,
   currentId,
   theme,
+  canCreateProjects = false,
 }: {
   projects: SwitcherProject[];
   currentId?: string;
   theme: "dark" | "light";
+  /** LAUNCH-PLAN 0.1: creation is operator-only until B2 reopens it. */
+  canCreateProjects?: boolean;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -88,7 +91,7 @@ export function WorkspaceSidebar({
         {/* PINNED: switcher */}
         <div className="flex items-center gap-1 border-b border-line p-2.5">
           <div className="min-w-0 flex-1">
-            <ProjectSwitcher projects={projects} currentId={currentId} />
+            <ProjectSwitcher projects={projects} currentId={currentId} canCreate={canCreateProjects} />
           </div>
           <button
             type="button"
@@ -114,7 +117,7 @@ export function WorkspaceSidebar({
           <nav className="min-h-0 flex-1 overflow-y-auto px-2.5 py-2">
             {group("Workspace")}
             {item("/admin", "Projects", LayoutGrid)}
-            {item("/admin/new", "New project", Plus)}
+            {canCreateProjects && item("/admin/new", "New project", Plus)}
           </nav>
         )}
 

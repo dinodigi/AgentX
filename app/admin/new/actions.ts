@@ -20,6 +20,12 @@ export interface CreateProjectResult {
 export async function createProject(formData: FormData): Promise<CreateProjectResult> {
   const viewer = await getViewer();
   if (!viewer) return { error: "not signed in" };
+  // LAUNCH-PLAN 0.1: creation is invite-only until the workspace + billing
+  // layer (B2) reopens it self-serve. The UI hides its affordances too, but
+  // this check is the one that holds.
+  if (!viewer.isPlatformOperator) {
+    return { error: "Project creation is invite-only during the beta." };
+  }
 
   const name = String(formData.get("name") ?? "").trim();
   const color = String(formData.get("color") ?? "#4f46e5");

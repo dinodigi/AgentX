@@ -4,7 +4,7 @@ import { and, count, eq, isNull, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { entries } from "@/db/schema";
 import { getProject } from "@/lib/admin";
-import { getProjectRole, accessibleProjects } from "@/lib/access";
+import { getProjectRole, accessibleProjects, getViewer } from "@/lib/access";
 import { listCollections } from "@/lib/collections";
 import { brandInk } from "@/lib/brand";
 import { getWorkspaceTheme, getSidebarCollapsed } from "@/lib/theme";
@@ -26,13 +26,14 @@ export default async function ProjectLayout({
   children: ReactNode;
 }) {
   const { projectId } = await params;
-  const [project, collections, role, allProjects, theme, collapsed] = await Promise.all([
+  const [project, collections, role, allProjects, theme, collapsed, viewer] = await Promise.all([
     getProject(projectId),
     listCollections(projectId),
     getProjectRole(projectId),
     accessibleProjects(),
     getWorkspaceTheme(),
     getSidebarCollapsed(),
+    getViewer(),
   ]);
   if (!project || !role) notFound();
 
@@ -54,7 +55,12 @@ export default async function ProjectLayout({
       className="flex min-h-screen"
       style={{ "--brand": brand, "--brand-ink": brandInk(brand) } as CSSProperties}
     >
-      <WorkspaceSidebar projects={allProjects.map(toSwitcher)} currentId={projectId} theme={theme} />
+      <WorkspaceSidebar
+        projects={allProjects.map(toSwitcher)}
+        currentId={projectId}
+        theme={theme}
+        canCreateProjects={viewer?.isPlatformOperator ?? false}
+      />
       <main className="page-enter mx-auto min-w-0 max-w-[1400px] flex-1 px-5 py-7 md:px-10 md:py-9">
         {children}
       </main>

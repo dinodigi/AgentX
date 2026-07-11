@@ -1,7 +1,7 @@
 import { count, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { collections, entries, projectConnectors } from "@/db/schema";
-import { accessibleProjects } from "@/lib/access";
+import { accessibleProjects, getViewer } from "@/lib/access";
 import { brandInk } from "@/lib/brand";
 import { getWorkspaceTheme } from "@/lib/theme";
 import { ProjectFleet, type FleetProject } from "@/components/admin/ProjectFleet";
@@ -14,7 +14,12 @@ import type { SwitcherProject } from "@/components/admin/ProjectSwitcher";
  * each project a live system with scale, connector health and a last-write pulse.
  */
 export default async function AdminHome() {
-  const [projects, theme] = await Promise.all([accessibleProjects(), getWorkspaceTheme()]);
+  const [projects, theme, viewer] = await Promise.all([
+    accessibleProjects(),
+    getWorkspaceTheme(),
+    getViewer(),
+  ]);
+  const canCreate = viewer?.isPlatformOperator ?? false;
 
   const [collectionCounts, entryCounts, connectorRows, activityRows] = await Promise.all([
     db.select({ projectId: collections.projectId, n: count() }).from(collections).groupBy(collections.projectId),
@@ -66,9 +71,9 @@ export default async function AdminHome() {
 
   return (
     <div className="flex min-h-screen">
-      <WorkspaceSidebar projects={switcher} theme={theme} />
+      <WorkspaceSidebar projects={switcher} theme={theme} canCreateProjects={canCreate} />
       <div className="page-enter min-w-0 flex-1">
-        <ProjectFleet projects={fleet} />
+        <ProjectFleet projects={fleet} canCreate={canCreate} />
       </div>
     </div>
   );

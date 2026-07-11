@@ -21,9 +21,12 @@ export interface SwitcherProject {
 export function ProjectSwitcher({
   projects,
   currentId,
+  canCreate = false,
 }: {
   projects: SwitcherProject[];
   currentId?: string;
+  /** LAUNCH-PLAN 0.1: creation is operator-only until B2 reopens it. */
+  canCreate?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
@@ -110,14 +113,16 @@ export function ProjectSwitcher({
             ))}
           </div>
 
-          <Link
-            href="/admin/new"
-            onClick={() => setOpen(false)}
-            className="flex items-center gap-2.5 border-t border-line px-3 py-2.5 text-[13px] text-ink-mute transition-colors hover:bg-raised hover:text-ink"
-          >
-            <Plus className="h-4 w-4" />
-            New project
-          </Link>
+          {canCreate && (
+            <Link
+              href="/admin/new"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2.5 border-t border-line px-3 py-2.5 text-[13px] text-ink-mute transition-colors hover:bg-raised hover:text-ink"
+            >
+              <Plus className="h-4 w-4" />
+              New project
+            </Link>
+          )}
         </div>
       )}
     </div>

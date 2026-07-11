@@ -21,7 +21,14 @@ export interface FleetProject {
   createdAt: string;
 }
 
-export function ProjectFleet({ projects }: { projects: FleetProject[] }) {
+export function ProjectFleet({
+  projects,
+  canCreate = false,
+}: {
+  projects: FleetProject[];
+  /** LAUNCH-PLAN 0.1: creation is operator-only until B2 reopens it. */
+  canCreate?: boolean;
+}) {
   const totalCollections = projects.reduce((s, p) => s + p.collections, 0);
   const totalEntries = projects.reduce((s, p) => s + p.entries, 0);
   // Fleet is "green" when no connected project has a connector in error.
@@ -59,23 +66,34 @@ export function ProjectFleet({ projects }: { projects: FleetProject[] }) {
           <p className="eyebrow mb-1">Studio</p>
           <h1 className="display text-[22px] font-semibold leading-none">Projects</h1>
         </div>
-        <Link href="/admin/new" className="btn btn-primary">
-          <Plus className="h-4 w-4" />
-          New project
-        </Link>
+        {canCreate && (
+          <Link href="/admin/new" className="btn btn-primary">
+            <Plus className="h-4 w-4" />
+            New project
+          </Link>
+        )}
       </div>
 
       {projects.length === 0 ? (
         <div className="card flex flex-col items-center gap-3 p-14 text-center">
-          <p className="display text-lg font-semibold">No backends yet</p>
-          <p className="max-w-sm text-sm text-ink-mute">
-            A project gives you a branded admin, an MCP endpoint, and a delivery API — defined by an
-            agent, handed to a client.
+          <p className="display text-lg font-semibold">
+            {canCreate ? "No backends yet" : "No projects yet"}
           </p>
-          <Link href="/admin/new" className="btn btn-ink mt-1">
-            <Plus className="h-4 w-4" />
-            New project
-          </Link>
+          <p className="max-w-sm text-sm text-ink-mute">
+            {canCreate
+              ? "A project gives you a branded admin, an MCP endpoint, and a delivery API — defined by an agent, handed to a client."
+              : "Projects shared with you appear here. During the beta we onboard new projects by hand — request a spot and we'll set yours up with you."}
+          </p>
+          {canCreate ? (
+            <Link href="/admin/new" className="btn btn-ink mt-1">
+              <Plus className="h-4 w-4" />
+              New project
+            </Link>
+          ) : (
+            <Link href="/pricing" className="btn btn-ink mt-1">
+              Request beta access
+            </Link>
+          )}
         </div>
       ) : (
         <ul className="flex flex-col gap-2.5">
