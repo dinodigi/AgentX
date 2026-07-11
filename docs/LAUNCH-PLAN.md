@@ -110,23 +110,62 @@ in the launch plan.
       4. **Provisioning flows** — BYO (paste connection string → validate →
          install → route) vs managed (Neon API against our org), and how
          environments map onto each.
-- [~] A1 (L) **Resolver + migration runner + local backend.** The single biggest
-      lift; everything else stacks on it. **In progress 2026-07-11:**
+- [x] A1 (L) **Resolver + migration runner + local backend — ✅ COMPLETE
+      2026-07-11.** Everything behavior-preserving (no project has a neon
+      connector yet → every call resolves to the control DB); full smoke
+      404/404 through the fallback proves the seam without real Neon.
       - [x] A1.1 (a72fb60) — `lib/data-plane.ts` resolver: `tenantDb`/
         `withTenantTransaction`, fail-closed control-DB fallback, client cache.
-      - [~] A1.2 threading — 2 of 3 batches done (behavior-preserving; all falls
-        back to controlDb):
+      - [x] A1.2 threading — all 4 batches:
         - [x] write path (65a8a5d): verifyRefs join decomposed, 4 cores,
           transact + replay → tenantDb. Smoke 53/53.
         - [x] derived-writes + index-sync (60fd41a): record{Change,Version,Audit}
           + feed/version/audit reads + prunes; syncUnique/SearchIndex(projectId)
           on tenantDb. Smoke 20/20.
-        - [ ] read paths (mechanical): entries query/get/count/aggregate,
-          delivery reads, search, locales, trash, assets.
-      - [ ] A1.3 — `env` column on project_tokens + thread env (all-prod for now).
-      - [ ] A1.4 — hand-written versioned migration runner + `_schema_migrations`
-        + expand/contract contract (exercised in A2 with a real tenant DB).
-- [ ] A2 (M) **Neon connector, BYO mode.**
+        - [x] read paths (a4e8927): entries query/get/count/aggregate + resolve/
+          expand/reverse readers, restore-version, bulk insert, search, locales,
+          trash (listTrash's collections-name subquery decomposed cross-plane),
+          assets/r2, export, delayed-event re-read, checkout. Full smoke 404/404.
+        - [x] schema-change scans + logs + admin (076f4d7): define_collection
+          diff-plan scans, rename/localized-toggle backfills, delete-collection
+          chunker + an EXPLICIT tenant-side sweep of entries/trash/versions
+          (tenant DBs have no FK into control-plane `collections`, so the
+          control DB's cascade cannot exist there); webhook_deliveries call
+          sites (webhook/hooks/events/settings); per-project admin surfaces.
+          Targeted smoke 88/88.
+      - [x] A1.3 (0469ab9) — `env` on project_tokens (NOT NULL DEFAULT 'prod',
+        applied to the live DB by hand), TokenInfo carries it, token cache key
+        bumped v3. All-prod until A5 mints dev tokens.
+      - [x] A1.4 (994d0da) — `lib/tenant-migrations.ts`: versioned runner
+        (advisory-locked, per-step atomic commit with `_schema_migrations`,
+        Neon `-pooler` → direct-endpoint normalization) + v1 DDL (8 tables, no
+        FKs) + the 5-rule expand/contract contract. Exercised end-to-end
+        against a real throwaway PG18 database on our Neon instance: fresh
+        apply 0→1, idempotent re-run, probe, entries round-trip, partial
+        idempotency index enforced.
+- [ ] A2 (M) **Neon connector, BYO mode.** Connect → validate → install
+      (migrateTenantDb) → store encrypted → route. **Must-do gate list, from A1
+      + the design doc (§7/§8/§11) — these are A2-blocking, not polish:**
+      - Migrate-before-first-use gate on `tenantDb()` + a quarantine state for
+        a tenant DB that can't complete a step (never a write-500 storm).
+      - Keyed envelopes (`kid` + dual-key decrypt window) for
+        CONNECTOR_MASTER_KEY BEFORE real connection strings are stored — today
+        a key rotation would brick every connector.
+      - Fleet dashboard + operator console per-project entry counts read the
+        shared `entries` table cross-project (app/admin/page.tsx,
+        lib/platform.ts) — silently wrong the moment the first connector-backed
+        project exists. Land the control-plane usage counter first, or ship
+        documented zeroes.
+      - Public image-transform route resolves an asset by bare uuid with no
+        project context (app/api/v1/assets/[id]/image) — needs a project-scoped
+        URL shape or a control-plane asset→project pointer.
+      - BYO validation normalizes Neon `-pooler` hosts to the direct endpoint
+        (session semantics; the runner already self-normalizes).
+      - Provisioning replays syncUnique/SearchIndex per collection after the
+        runner (per-collection partial indexes are not in the fixed DDL set).
+      - Optimization (not blocking): tenantDb resolves the connector row on
+        EVERY call (~1 extra control query per content op) — add a short-TTL
+        cache with explicit invalidation on connector change/rotate.
 - [ ] A3 (M) **Managed provisioning** — Neon API, our org, auto-provision on
       project create.
 - [ ] A4 (M) **R2 as a connector** — BYO bucket + managed per-project bucket;
