@@ -1,17 +1,21 @@
 import "server-only";
 import { currentUser } from "@clerk/nextjs/server";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { db } from "@/db";
-import { projectMembers, projects, type Project } from "@/db/schema";
+import { projectMembers, projects, workspaceMembers, type Project } from "@/db/schema";
 
 /**
- * Per-project access control. Two tiers:
- *  - Platform operators (emails in ADMIN_EMAILS) see every project.
- *  - Everyone else sees only projects where they hold a project_members row:
- *    `operator` = settings + content, `client` = content only.
+ * Access control — a three-rung ladder (B1), strongest rung wins:
+ *   1. Platform operators (emails in ADMIN_EMAILS) — see/operate every project.
+ *   2. Workspace role — a member of the project's OWNING workspace operates it
+ *      (owner/admin/manager all cascade to `operator` at the project level).
+ *   3. project_members row — the per-project share for an outsider
+ *      (`operator` = settings + content, `client` = content only). The
+ *      client-handoff path.
  *
- * This is deliberately the shape of future multi-tenancy: a platform user's
- * dashboard is just "projects where they're a member".
+ * getProjectRole + accessibleProjects are the only two authorization choke
+ * points; every surface (settings, connectors, upload/export, the dashboard)
+ * goes through them, so the ladder is enforced app-wide from here.
  */
 
 export type Role = "operator" | "client";
@@ -42,32 +46,90 @@ export async function getProjectRole(projectId: string): Promise<Role | null> {
   const viewer = await getViewer();
   if (!viewer) return null;
   if (viewer.isPlatformOperator) return "operator";
-  const rows = await db
+
+  // Rung 2: a member of the project's owning workspace operates the project.
+  const [project] = await db
+    .select({ workspaceId: projects.workspaceId })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (project?.workspaceId) {
+    const [ws] = await db
+      .select({ id: workspaceMembers.id })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, project.workspaceId),
+          eq(workspaceMembers.clerkUserId, viewer.userId),
+        ),
+      )
+      .limit(1);
+    if (ws) return "operator";
+  }
+
+  // Rung 3: an explicit per-project share.
+  const [member] = await db
     .select({ role: projectMembers.role })
     .from(projectMembers)
-    .where(
-      and(
-        eq(projectMembers.projectId, projectId),
-        eq(projectMembers.clerkUserId, viewer.userId),
-      ),
-    )
+    .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.clerkUserId, viewer.userId)))
     .limit(1);
-  return rows[0] ? (rows[0].role as Role) : null;
+  return member ? (member.role as Role) : null;
 }
 
-/** Projects the viewer can open. Platform operators get all of them. */
-export async function accessibleProjects(): Promise<Project[]> {
-  const viewer = await getViewer();
-  if (!viewer) return [];
-  if (viewer.isPlatformOperator) return db.select().from(projects);
+/** Projects grouped by how the viewer reaches them — for the dashboard. */
+export interface AccessibleProjects {
+  /** Reached via workspace membership (the viewer's own workspaces). */
+  owned: Project[];
+  /** Reached only via a per-project share (an outsider handoff). */
+  shared: Project[];
+}
 
-  const memberships = await db
-    .select({ projectId: projectMembers.projectId })
-    .from(projectMembers)
-    .where(eq(projectMembers.clerkUserId, viewer.userId));
-  if (memberships.length === 0) return [];
-  return db
+/**
+ * Every project the viewer can open, grouped. Platform operators get all of
+ * them under `owned`. Others get their workspace projects under `owned` and any
+ * outsider-shared projects (a project_members row whose workspace they are NOT
+ * in) under `shared`.
+ */
+export async function accessibleProjectsGrouped(): Promise<AccessibleProjects> {
+  const viewer = await getViewer();
+  if (!viewer) return { owned: [], shared: [] };
+  if (viewer.isPlatformOperator) {
+    return { owned: await db.select().from(projects), shared: [] };
+  }
+
+  const [wsRows, memberRows] = await Promise.all([
+    db.select({ id: workspaceMembers.workspaceId }).from(workspaceMembers).where(eq(workspaceMembers.clerkUserId, viewer.userId)),
+    db.select({ projectId: projectMembers.projectId }).from(projectMembers).where(eq(projectMembers.clerkUserId, viewer.userId)),
+  ]);
+  const workspaceIds = wsRows.map((r) => r.id);
+  const memberProjectIds = memberRows.map((r) => r.projectId);
+
+  if (workspaceIds.length === 0 && memberProjectIds.length === 0) return { owned: [], shared: [] };
+
+  const rows = await db
     .select()
     .from(projects)
-    .where(inArray(projects.id, memberships.map((m) => m.projectId)));
+    .where(
+      or(
+        workspaceIds.length ? inArray(projects.workspaceId, workspaceIds) : undefined,
+        memberProjectIds.length ? inArray(projects.id, memberProjectIds) : undefined,
+      ),
+    );
+
+  const wsSet = new Set(workspaceIds);
+  const owned: Project[] = [];
+  const shared: Project[] = [];
+  for (const p of rows) {
+    // A workspace project is "owned"; a share you also happen to have in your
+    // own workspace still counts as owned (strongest rung).
+    if (p.workspaceId && wsSet.has(p.workspaceId)) owned.push(p);
+    else shared.push(p);
+  }
+  return { owned, shared };
+}
+
+/** Flat list of accessible projects (compat with existing callers). */
+export async function accessibleProjects(): Promise<Project[]> {
+  const { owned, shared } = await accessibleProjectsGrouped();
+  return [...owned, ...shared];
 }

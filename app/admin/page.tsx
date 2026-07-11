@@ -1,7 +1,8 @@
 import { count, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { collections, entries, projectConnectors } from "@/db/schema";
-import { accessibleProjects, getViewer } from "@/lib/access";
+import { accessibleProjectsGrouped, getViewer } from "@/lib/access";
+import type { Project } from "@/db/schema";
 import { brandInk } from "@/lib/brand";
 import { getWorkspaceTheme } from "@/lib/theme";
 import { ProjectFleet, type FleetProject } from "@/components/admin/ProjectFleet";
@@ -14,12 +15,13 @@ import type { SwitcherProject } from "@/components/admin/ProjectSwitcher";
  * each project a live system with scale, connector health and a last-write pulse.
  */
 export default async function AdminHome() {
-  const [projects, theme, viewer] = await Promise.all([
-    accessibleProjects(),
+  const [{ owned, shared }, theme, viewer] = await Promise.all([
+    accessibleProjectsGrouped(),
     getWorkspaceTheme(),
     getViewer(),
   ]);
   const canCreate = viewer?.isPlatformOperator ?? false;
+  const projects = [...owned, ...shared];
 
   const [collectionCounts, entryCounts, connectorRows, activityRows] = await Promise.all([
     db.select({ projectId: collections.projectId, n: count() }).from(collections).groupBy(collections.projectId),
@@ -49,7 +51,7 @@ export default async function AdminHome() {
     return { id: p.id, name, initial: name.charAt(0).toUpperCase(), brand, brandInk: brandInk(brand), logoUrl: p.branding?.logoUrl ?? null };
   });
 
-  const fleet: FleetProject[] = projects.map((p) => {
+  const toFleet = (p: Project): FleetProject => {
     const brand = p.branding?.primaryColor ?? "#4f46e5";
     const name = p.branding?.displayName ?? p.name;
     const last = activityById.get(p.id);
@@ -66,14 +68,16 @@ export default async function AdminHome() {
       lastActivity: last ? new Date(last).toISOString() : null,
       createdAt: p.createdAt.toISOString(),
     };
-  });
-  fleet.sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""));
+  };
+  const byActivity = (a: FleetProject, b: FleetProject) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? "");
+  const ownedFleet = owned.map(toFleet).sort(byActivity);
+  const sharedFleet = shared.map(toFleet).sort(byActivity);
 
   return (
     <div className="flex min-h-screen">
       <WorkspaceSidebar projects={switcher} theme={theme} canCreateProjects={canCreate} />
       <div className="page-enter min-w-0 flex-1">
-        <ProjectFleet projects={fleet} canCreate={canCreate} />
+        <ProjectFleet owned={ownedFleet} shared={sharedFleet} canCreate={canCreate} />
       </div>
     </div>
   );

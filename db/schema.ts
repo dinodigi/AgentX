@@ -129,6 +129,14 @@ import type { InferSelectModel } from "drizzle-orm";
 export const projects = pgTable("projects", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  /**
+   * The workspace that OWNS this project (B1). Nullable only through the
+   * migration window; app logic always sets it on create and it is the unit of
+   * billing + the top rung of the access ladder. A project belongs to exactly
+   * one workspace; sharing to outsiders is a project_members row, never a second
+   * owner.
+   */
+  workspaceId: uuid("workspace_id").references(() => workspaces.id, { onDelete: "cascade" }),
   /** Branding handed to the client: { displayName, logoUrl, primaryColor, ... } */
   branding: jsonb("branding").$type<Branding>().notNull().default({}),
   /** i18n locale registry {default, supported}; null = localized fields unavailable (J3). */
@@ -259,6 +267,45 @@ export const projectMembers = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("project_members_user_idx").on(t.projectId, t.clerkUserId)],
+);
+
+/** A workspace role. owner = billing + delete + membership; admin = manage
+ * projects + invite managers; manager = work in every workspace project. All
+ * three cascade to `operator` at the project level (§B1). */
+export type WorkspaceRole = "owner" | "admin" | "manager";
+
+/**
+ * A workspace owns projects and is the unit a customer signs up for and pays
+ * per project within (B1). One user can belong to many workspaces
+ * (workspace_members); a project belongs to exactly one workspace
+ * (projects.workspaceId). This is the top rung of the access ladder above the
+ * per-project sharing that project_members provides.
+ */
+export const workspaces = pgTable("workspaces", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * Who belongs to a workspace and at what role. A membership here cascades to
+ * every project the workspace owns — so an agency adds a teammate once, not
+ * per project. Sharing a SINGLE project with an outsider stays a
+ * project_members row (the client-handoff path).
+ */
+export const workspaceMembers = pgTable(
+  "workspace_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    clerkUserId: text("clerk_user_id").notNull(),
+    email: text("email").notNull(),
+    role: text("role").$type<WorkspaceRole>().notNull().default("manager"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex("workspace_members_user_idx").on(t.workspaceId, t.clerkUserId)],
 );
 
 /**
@@ -595,6 +642,8 @@ export interface ProjectLocales {
 }
 
 export type Project = InferSelectModel<typeof projects>;
+export type Workspace = InferSelectModel<typeof workspaces>;
+export type WorkspaceMember = InferSelectModel<typeof workspaceMembers>;
 export type Collection = InferSelectModel<typeof collections>;
 export type Entry = InferSelectModel<typeof entries>;
 export type Asset = InferSelectModel<typeof assets>;
