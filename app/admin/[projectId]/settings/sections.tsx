@@ -15,6 +15,7 @@ import {
   testConnector,
   rotateConnectorSecretAction,
   provisionStripeWebhook,
+  connectNeonAction,
 } from "./actions";
 
 const inputClass = "field-input";
@@ -470,6 +471,122 @@ export function ConnectorCard(p: ConnectorCardProps) {
           </div>
         </div>
       )}
+      <ErrorLine error={error} />
+    </form>
+  );
+}
+
+/**
+ * The data-plane connector (A2). Deliberately its own card, not a
+ * CONNECTOR_SPECS entry: Connect validates the database and installs the
+ * schema BEFORE anything is stored, which the generic save flow can't do.
+ */
+export function NeonConnectorCard(p: {
+  projectId: string;
+  connected: boolean;
+  status: string;
+  host: string | null;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <form
+      action={async (fd) => {
+        setBusy(true);
+        setNote(null);
+        setError(null);
+        const res = await connectNeonAction(p.projectId, fd);
+        setBusy(false);
+        setError(res.error ?? null);
+        if (!res.error) setNote(res.detail ?? "Connected");
+      }}
+      className="card max-w-md p-5"
+    >
+      <div className="mb-3 flex items-center gap-2">
+        <span
+          className="h-2 w-2 rounded-full"
+          style={{
+            background: !p.connected
+              ? "var(--color-line-strong)"
+              : p.status === "connected"
+                ? "var(--color-ok)"
+                : "var(--color-err)",
+          }}
+        />
+        <p className="text-sm font-medium">Neon Postgres (project database)</p>
+        {p.connected && (
+          <span className="text-xs text-ink-mute">
+            {p.status === "connected" ? `connected — ${p.host ?? "database"}` : "error"}
+          </span>
+        )}
+      </div>
+
+      <p className="mb-3 text-xs text-ink-mute">
+        Give this project its own Postgres database — all content (entries, assets
+        metadata, history) lives there instead of the shared plane. Connect
+        validates the database, installs the schema, and only then stores the
+        connection string (encrypted). Attach it <em>before</em> creating content:
+        existing content is not migrated.
+      </p>
+
+      <div className="mb-3">
+        <label className="mb-1 block text-xs text-ink-mute">
+          Connection string{p.connected ? " (stored — paste again to re-install/heal)" : ""}
+        </label>
+        <input
+          name="connectionString"
+          type="password"
+          placeholder={p.connected ? "••••••••" : "postgres://user:pass@host/dbname"}
+          className={inputClass}
+        />
+      </div>
+
+      <div className="flex items-center gap-2">
+        <button type="submit" disabled={busy} className={buttonClass}>
+          {busy ? "Validating…" : p.connected ? "Reconnect" : "Connect"}
+        </button>
+        {p.connected && (
+          <>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setNote(null);
+                const res = await testConnector(p.projectId, "neon");
+                setBusy(false);
+                setError(res.error ?? null);
+                if (!res.error) setNote(res.ok ? `OK — ${res.detail}` : `Failed — ${res.detail}`);
+              }}
+            >
+              Test
+            </button>
+            <button
+              type="button"
+              className="btn btn-danger-ghost"
+              disabled={busy}
+              onClick={async () => {
+                if (
+                  !window.confirm(
+                    "Disconnect this database? Your database and its data are NEVER deleted, but the project's content becomes unreachable through the platform until you reconnect it.",
+                  )
+                ) {
+                  return;
+                }
+                const res = await disconnectConnector(p.projectId, "neon");
+                setError(res.error ?? null);
+                if (!res.error) setNote("Disconnected — your database was not touched");
+              }}
+            >
+              Disconnect
+            </button>
+          </>
+        )}
+        {note && <span className="text-xs text-ink-mute">{note}</span>}
+      </div>
       <ErrorLine error={error} />
     </form>
   );

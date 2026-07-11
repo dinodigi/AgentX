@@ -233,10 +233,17 @@ export async function saveConnector(
 
 export async function disconnectConnector(
   projectId: string,
-  type: "clerk" | "resend" | "stripe",
+  type: "clerk" | "resend" | "stripe" | "neon",
 ): Promise<{ error?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
+  if (type === "neon") {
+    // Dedicated flow: evicts cached tenant clients; never touches their DB.
+    const { disconnectNeonDatabase } = await import("@/lib/neon-connector");
+    await disconnectNeonDatabase(projectId);
+    revalidatePath(`/admin/${projectId}/connectors`);
+    return {};
+  }
   const { removeConnector, deprovisionStripeWebhook } = await import("@/lib/connectors");
   // Best-effort: delete the Stripe webhook endpoint we provisioned before we
   // drop the secret that would let us delete it.
@@ -244,6 +251,26 @@ export async function disconnectConnector(
   await removeConnector(projectId, type);
   revalidatePath(`/admin/${projectId}/connectors`);
   return {};
+}
+
+/**
+ * A2: attach a BYO Postgres as this project's data plane. Validate →
+ * install (migration runner) → store encrypted → route → replay collection
+ * indexes. The generic saveConnector cannot express type "neon" — this is
+ * the only path, so a stored neon connector always passed validation.
+ */
+export async function connectNeonAction(
+  projectId: string,
+  formData: FormData,
+): Promise<{ error?: string; ok?: boolean; detail?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const connString = String(formData.get("connectionString") ?? "").trim();
+  if (!connString) return { error: "Paste the database's connection string" };
+  const { connectNeonDatabase } = await import("@/lib/neon-connector");
+  const result = await connectNeonDatabase(projectId, connString);
+  revalidatePath(`/admin/${projectId}/connectors`);
+  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
 }
 
 /**
@@ -269,7 +296,7 @@ export async function provisionStripeWebhook(
 
 export async function testConnector(
   projectId: string,
-  type: "clerk" | "resend" | "stripe",
+  type: "clerk" | "resend" | "stripe" | "neon",
 ): Promise<{ error?: string; ok?: boolean; detail?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
@@ -350,14 +377,16 @@ export async function deleteProjectAction(
     return { error: `Type the project name exactly to confirm: ${label}` };
   }
 
-  // Future-proofing: a managed data-plane connector would need deprovisioning
-  // first (A3/A4). Refuse rather than silently orphan a paid tenant DB.
+  // Data-plane connector at delete time (B2 decisions): BYO → allowed; we drop
+  // OUR control-plane records and routing but NEVER touch the tenant's own
+  // database (it's theirs). MANAGED → refuse until A3 wires Neon-API teardown,
+  // rather than silently orphan a paid tenant DB.
   const [dataPlane] = await db
-    .select({ id: projectConnectors.id })
+    .select({ id: projectConnectors.id, config: projectConnectors.config })
     .from(projectConnectors)
     .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "neon")))
     .limit(1);
-  if (dataPlane) {
+  if (dataPlane && dataPlane.config?.mode !== "byo") {
     return { error: "This project has a managed database connector — data-plane teardown isn't wired yet (A3)." };
   }
 

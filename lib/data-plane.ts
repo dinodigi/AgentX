@@ -8,6 +8,7 @@ import { controlDb } from "@/db";
 import * as schema from "@/db/schema";
 import { projectConnectors } from "@/db/schema";
 import { decryptSecret } from "./crypto";
+import { migrateTenantDb } from "./tenant-migrations";
 import type { DbExecutor } from "./db-tx";
 
 /**
@@ -43,6 +44,60 @@ function tenantClient(connString: string): DbExecutor {
 /** Drop a cached client — call on neon-connector rotate/disconnect (A2). */
 export function evictTenantClient(connString: string): void {
   clientCache.delete(connString);
+  verifiedConnStrings.delete(connString);
+}
+
+// ---------------------------------------------------------------------------
+// Migrate-before-first-use gate (A2, design §7 mitigation 2)
+// ---------------------------------------------------------------------------
+
+/** Conn strings this process has verified at the current schema version. */
+const verifiedConnStrings = new Set<string>();
+const MIGRATE_GATE_TIMEOUT_MS = 30_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
+/**
+ * Ensure the tenant DB behind `conn` is at the current schema version before
+ * any query runs — once per process per connection string. migrateTenantDb is
+ * advisory-locked and idempotent, so concurrent cold starts can't double-apply,
+ * and a resumed/behind DB self-heals on its next connect. Failure QUARANTINES
+ * the connector (status → error, best-effort) and throws — content ops on an
+ * unusable tenant DB must fail closed, loudly, not write into the wrong plane.
+ */
+async function ensureTenantMigrated(projectId: string, conn: string): Promise<void> {
+  if (verifiedConnStrings.has(conn)) return;
+  try {
+    await withTimeout(migrateTenantDb(conn), MIGRATE_GATE_TIMEOUT_MS, "tenant schema check");
+    verifiedConnStrings.add(conn);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Quarantine: flip the connector row so the admin card + health probe show
+    // it. Plain row update (no revalidateTag — this runs during renders too);
+    // the card's Test button re-probes and refreshes the cached view.
+    await controlDb
+      .update(projectConnectors)
+      .set({ status: "error", updatedAt: new Date() })
+      .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "neon")))
+      .catch(() => {});
+    throw new Error(
+      `tenant database for project ${projectId} is not usable (${msg}) — connector quarantined; fix the database or its connection string, then re-test the connector`,
+    );
+  }
 }
 
 /**
@@ -76,7 +131,9 @@ async function resolveTenantConnString(projectId: string, env: Env): Promise<str
  */
 export async function tenantDb(projectId: string, env: Env = "prod"): Promise<DbExecutor> {
   const conn = await resolveTenantConnString(projectId, env);
-  return conn ? tenantClient(conn) : (controlDb as unknown as DbExecutor);
+  if (!conn) return controlDb as unknown as DbExecutor;
+  await ensureTenantMigrated(projectId, conn);
+  return tenantClient(conn);
 }
 
 /**
@@ -90,7 +147,9 @@ export async function withTenantTransaction<T>(
   fn: (tx: DbExecutor) => Promise<T>,
   env: Env = "prod",
 ): Promise<T> {
-  const conn = (await resolveTenantConnString(projectId, env)) ?? process.env.DATABASE_URL!;
+  const resolved = await resolveTenantConnString(projectId, env);
+  if (resolved) await ensureTenantMigrated(projectId, resolved);
+  const conn = resolved ?? process.env.DATABASE_URL!;
   const pool = new Pool({ connectionString: conn, max: 1 });
   try {
     const txDb = drizzleWs(pool, { schema });

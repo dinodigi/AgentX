@@ -17,10 +17,18 @@ import {
  * they don't need, never secrets.
  */
 
-export type ConnectorType = "clerk" | "resend" | "stripe";
+export type ConnectorType = "clerk" | "resend" | "stripe" | "neon";
+
+/**
+ * The connectors the GENERIC settings form may save. `neon` is deliberately
+ * not in this set: its connect flow validates + installs the data-plane schema
+ * before anything is stored (lib/neon-connector.ts) — a plain form save would
+ * bypass that, so the form action's type simply cannot express it.
+ */
+export type FormConnectorType = Exclude<ConnectorType, "neon">;
 
 export const CONNECTOR_SPECS: Record<
-  ConnectorType,
+  FormConnectorType,
   {
     label: string;
     configFields: { key: string; label: string; placeholder: string }[];
@@ -74,7 +82,8 @@ export const CONNECTOR_SPECS: Record<
   },
 };
 
-const tag = (projectId: string) => `connectors:${projectId}`;
+export const connectorsTag = (projectId: string) => `connectors:${projectId}`;
+const tag = connectorsTag;
 
 /**
  * A Clerk publishable key encodes the instance's frontend API domain:
@@ -228,7 +237,7 @@ export async function getAuthConfig(projectId: string): Promise<AuthConfig | nul
  */
 export async function rotateConnectorSecret(
   projectId: string,
-  type: ConnectorType,
+  type: FormConnectorType,
   newSecret: string,
 ): Promise<{ ok: boolean; detail: string }> {
   if (!CONNECTOR_SPECS[type].secretLabel) {
@@ -282,7 +291,20 @@ export async function checkConnectorHealth(
   let ok = false;
   let detail = "";
   try {
-    if (type === "clerk") {
+    if (type === "neon") {
+      // The tenant DB is healthy iff it connects AND reports the expected
+      // schema version (design §8's neon probe). Version 0 = never migrated.
+      const conn = await connectorSecret(projectId, "neon");
+      if (!conn) return { ok: false, detail: "no connection string stored" };
+      const { tenantSchemaVersion, TENANT_SCHEMA_VERSION } = await import("./tenant-migrations");
+      const v = await tenantSchemaVersion(conn);
+      ok = v === TENANT_SCHEMA_VERSION;
+      detail = ok
+        ? `database reachable, schema v${v} (current)`
+        : v === 0
+          ? "database reachable but the data-plane schema is not installed — reconnect to install"
+          : `database reachable but schema v${v} ≠ expected v${TENANT_SCHEMA_VERSION} — content ops are quarantined until it migrates`;
+    } else if (type === "clerk") {
       const auth = await getAuthConfig(projectId);
       if (!auth) return { ok: false, detail: "no issuer configured" };
       const res = await fetch(auth.jwksUrl, { signal: AbortSignal.timeout(8000) });

@@ -670,6 +670,26 @@ async function syncUniqueIndexes(
   }
 }
 
+/**
+ * A2: replay every collection's per-collection partial indexes (unique +
+ * public-search) on the project's data plane. Provisioning runs this right
+ * after the migration runner installs the fixed table set — these indexes are
+ * derived from collection config, so they are not part of the versioned DDL.
+ * Idempotent (CREATE/DROP IF [NOT] EXISTS all the way down).
+ */
+export async function replayCollectionIndexes(projectId: string): Promise<void> {
+  // Direct (uncached) read: this runs in provisioning contexts, which must see
+  // the current config and may execute outside a Next request entirely.
+  const cols = await db
+    .select({ id: collections.id, fields: collections.fields })
+    .from(collections)
+    .where(eq(collections.projectId, projectId));
+  for (const c of cols) {
+    await syncUniqueIndexes(projectId, c.id, [], c.fields as FieldDef[]);
+    await syncSearchIndex(projectId, c.id, [], c.fields as FieldDef[]);
+  }
+}
+
 export interface ConstraintWarning {
   field: string;
   constraint: "min" | "max" | "pattern" | "enum" | "integer";

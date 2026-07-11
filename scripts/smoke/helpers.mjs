@@ -173,6 +173,19 @@ export async function connectStripe(projectId, { sk = "sk_test_smoke", pk = "pk_
       secrets_enc = EXCLUDED.secrets_enc, status = 'connected'`;
 }
 
+/** Attach a BYO neon data-plane connector with a decryptable connection string
+ * (direct SQL, mirroring what lib/neon-connector stores). The server's
+ * migrate-before-first-use gate installs the schema on the first content op —
+ * deliberately NOT pre-installed here so the gate itself is under test. */
+export async function connectNeon(projectId, connString) {
+  const host = new URL(connString).hostname;
+  const config = { mode: "byo", host };
+  await sql`INSERT INTO project_connectors (project_id, type, config, secret_enc, status)
+    VALUES (${projectId}, 'neon', ${JSON.stringify(config)}::jsonb, ${encryptSecret(connString)}, 'connected')
+    ON CONFLICT (project_id, type) DO UPDATE SET
+      config = EXCLUDED.config, secret_enc = EXCLUDED.secret_enc, status = 'connected'`;
+}
+
 /** Local webhook receiver capturing POST bodies + headers — deterministic, no httpbin.
  * setStatus(500) makes it fail deliveries until flipped back (re-fire tests). */
 export async function startWebhookReceiver() {
