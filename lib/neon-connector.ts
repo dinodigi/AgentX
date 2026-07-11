@@ -5,6 +5,7 @@ import ws from "ws";
 import { revalidateTag } from "next/cache";
 import { controlDb } from "@/db";
 import { entries, entriesTrash, assets, projectConnectors, type ProjectConnector } from "@/db/schema";
+import { assertConnectorAllowed } from "./caps";
 import { tenantDb, evictTenantClient } from "./data-plane";
 import { migrateTenantDb, TENANT_SCHEMA_VERSION } from "./tenant-migrations";
 import { connectorsTag } from "./connectors";
@@ -106,6 +107,7 @@ async function probeDatabase(connString: string): Promise<{ ok: true } | { ok: f
  * with the SAME string is an allowed no-op heal (re-install + index replay).
  */
 export async function connectNeonDatabase(projectId: string, rawConnString: string): Promise<ConnectResult> {
+  await assertConnectorAllowed(projectId); // B2: sandboxes stay on the shared plane
   const url = parseConnString(rawConnString);
   if (!url) {
     return { ok: false, detail: "that doesn't look like a postgres:// connection string (host + database required)" };
@@ -212,6 +214,7 @@ export async function connectNeonDatabase(projectId: string, rawConnString: stri
  * creates fresh — every step idempotent from the caller's point of view.
  */
 export async function provisionManagedDatabase(projectId: string): Promise<ConnectResult> {
+  await assertConnectorAllowed(projectId); // B2: sandboxes stay on the shared plane
   const existing = await neonRow(projectId);
   if (existing?.config?.mode === "byo") {
     return { ok: false, detail: "this project uses a BYO database — disconnect it first if you want a managed one" };

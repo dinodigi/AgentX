@@ -28,7 +28,9 @@ export default async function AdminHome() {
   // getActiveWorkspace may have just created a personal workspace that the
   // (concurrent) list didn't see — guarantee the switcher includes the active one.
   const workspaces = workspaceList.some((w) => w.id === active.id) ? workspaceList : [active, ...workspaceList];
-  const canCreate = viewer.isPlatformOperator;
+  // B2: creation is self-serve for workspace owners/admins (the free-sandbox
+  // path; the paid planes stay gated inside the form until B3).
+  const canCreate = viewer.isPlatformOperator || active.role === "owner" || active.role === "admin";
   const projects = await projectsInWorkspace(active.id);
 
   const [collectionCounts, entryCounts, connectorRows, activityRows] = await Promise.all([

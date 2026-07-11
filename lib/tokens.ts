@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 import { db } from "@/db";
-import { projectTokens } from "@/db/schema";
+import { projects, projectTokens } from "@/db/schema";
 
 /**
  * Project tokens scope the single MCP server to one project. We store only a
@@ -26,12 +26,16 @@ export interface TokenInfo {
   /** Which data-plane environment the token addresses (A1.3). Always 'prod'
    * until A5 mints dev tokens; carried here so the boundary already knows. */
   env: "prod" | "dev";
+  /** B2 lifecycle: the agent + delivery surfaces only serve 'active' projects.
+   * Activation must revalidateTag("project-tokens") so it takes effect fast. */
+  projectStatus: "setup" | "active";
 }
 
 /**
- * Resolve a raw bearer token to its project + scope + env, or null if unknown.
- * Cached cross-request (this runs on EVERY MCP and delivery call); revoking a
- * token must call revalidateTag("project-tokens").
+ * Resolve a raw bearer token to its project + scope + env + project status,
+ * or null if unknown. Cached cross-request (this runs on EVERY MCP and
+ * delivery call); revoking a token OR activating a project must call
+ * revalidateTag("project-tokens").
  */
 export async function resolveToken(rawToken: string): Promise<TokenInfo | null> {
   if (!rawToken.startsWith(PREFIX)) return null;
@@ -39,8 +43,14 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
   const cached = unstable_cache(
     async () => {
       const rows = await db
-        .select({ projectId: projectTokens.projectId, scope: projectTokens.scope, env: projectTokens.env })
+        .select({
+          projectId: projectTokens.projectId,
+          scope: projectTokens.scope,
+          env: projectTokens.env,
+          projectStatus: projects.status,
+        })
         .from(projectTokens)
+        .innerJoin(projects, eq(projects.id, projectTokens.projectId))
         .where(eq(projectTokens.tokenHash, hash))
         .limit(1);
       if (!rows[0]) return null;
@@ -50,10 +60,15 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
         .set({ lastUsedAt: new Date() })
         .where(eq(projectTokens.tokenHash, hash))
         .catch(() => {});
-      return { projectId: rows[0].projectId, scope: rows[0].scope as TokenInfo["scope"], env: rows[0].env };
+      return {
+        projectId: rows[0].projectId,
+        scope: rows[0].scope as TokenInfo["scope"],
+        env: rows[0].env,
+        projectStatus: rows[0].projectStatus,
+      };
     },
-    // v3: value shape gained `env` — never serve a cached v2 shape.
-    ["token-v3", hash],
+    // v4: value shape gained `projectStatus` — never serve a cached v3 shape.
+    ["token-v4", hash],
     // TTL as defense-in-depth: a token revoked outside the app (script, other
     // instance) dies within 5 minutes even if no revalidateTag fires.
     { tags: ["project-tokens"], revalidate: 300 },
@@ -61,9 +76,14 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
   return cached();
 }
 
-/** Any-scope resolution — the delivery API accepts both scopes. */
+/**
+ * Any-scope resolution — the delivery API accepts both scopes. ACTIVE projects
+ * only (B2): a setup-state project has no public surface yet, so its tokens
+ * read as unknown here (the MCP route gives agents the precise message).
+ */
 export async function resolveProjectId(rawToken: string): Promise<string | null> {
-  return (await resolveToken(rawToken))?.projectId ?? null;
+  const info = await resolveToken(rawToken);
+  return info && info.projectStatus === "active" ? info.projectId : null;
 }
 
 /** Extract a bearer token from an Authorization header value. */

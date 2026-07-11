@@ -61,6 +61,12 @@ export async function POST(req: NextRequest) {
       { status: 401 },
     );
   }
+  if (info.projectStatus !== "active") {
+    return new Response(
+      "Forbidden [E_PROJECT_SETUP]: this project hasn't finished setup — pick its data plane (connect or provision a database) in the admin and activate it, then retry.",
+      { status: 403 },
+    );
+  }
   const projectId = info.projectId;
 
   let msg: JsonRpcRequest;

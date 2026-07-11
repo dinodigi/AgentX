@@ -42,6 +42,7 @@ import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workf
 import { recordChange, recordChanges, type ChangeInput } from "./changes";
 import type { WorkflowActor } from "@/db/schema";
 import { recordAudit } from "./audit";
+import { assertEntryCap } from "./caps";
 import { defer } from "./defer";
 import { type DbExecutor } from "./db-tx";
 import { recordVersion } from "./versions";
@@ -376,6 +377,7 @@ export async function createEntry(
   applyWorkflowOnCreate(collection, clean); // default/enforce the initial state
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
+  await assertEntryCap(projectId); // B2 sandbox cap — before the hook's external call
 
   // I1a/I1b: consult the before-create hook AFTER cheap local validation, BEFORE
   // the write. A rejection or fail-closed outage stops the insert; a transform
@@ -1549,6 +1551,11 @@ export async function transact(
     }
   }
 
+  // B2 sandbox cap: gate the batch's net-new creates before the tx opens (a
+  // dry run reports the plan without consuming cap).
+  const createCount = prepared.filter((p) => p.kind === "create").length;
+  if (createCount > 0 && !runOpts.dryRun) await assertEntryCap(projectId, createCount);
+
   // dryRun: everything above proves the batch is well-formed (any failure already
   // threw an op-indexed error). Report the plan without opening a transaction.
   // update_if conditions are still only evaluated at execute time — dryRun cannot
@@ -1759,6 +1766,7 @@ export async function bulkCreateEntries(
   actor: AuditActor = UNKNOWN_ACTOR,
 ): Promise<BulkItemResult[]> {
   if (items.length > 100) throw new ValidationError("max 100 entries per bulk call");
+  await assertEntryCap(projectId, items.length); // B2 sandbox cap — whole batch
   const hook = collection.hooks?.beforeCreate;
   const hookEnabled = Boolean(hook && !hook.disabled);
   if (hookEnabled) {

@@ -30,6 +30,8 @@ export const ERROR_CODES = {
     "the collection's before-write hook rejected this write — the message carries the hook's reason; fix the data or ask the operator about the hook",
   E_HOOK_FAILED:
     "the before-write hook endpoint could not be reached or answered malformed — check get_deliveries for the attempt; the operator can set onError:'allow' or disable the hook",
+  E_CAP_REACHED:
+    "the project's plan cap was hit (sandbox limits, B2) — the message names the cap; delete rows/assets or upgrade the project to a paid plan",
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

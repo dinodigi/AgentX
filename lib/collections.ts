@@ -1,6 +1,7 @@
 import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
+import { assertCollectionCap } from "./caps";
 import { tenantDb } from "./data-plane";
 import type { DbExecutor } from "./db-tx";
 import { collections, entries, entriesTrash, entryVersions, projects, type Collection, type EventAction, type WriteHook } from "@/db/schema";
@@ -1039,6 +1040,7 @@ export async function defineCollection(
 
   // Destructive-change gate for existing collections.
   const current = existing.find((c) => c.name === name);
+  if (!current) await assertCollectionCap(projectId); // B2 sandbox cap — new collections only
   const renames = input.renames ?? [];
   validateRenames(current, fields, renames);
   await validateLocalizedFields(projectId, name, fields, existing, current, renames);

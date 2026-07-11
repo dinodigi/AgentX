@@ -143,6 +143,19 @@ export const projects = pgTable("projects", {
   locales: jsonb("locales").$type<ProjectLocales>(),
   /** Signs outgoing webhooks (X-AgentX-Signature); revealed to operators in settings. */
   webhookSigningSecret: text("webhook_signing_secret"),
+  /**
+   * Lifecycle (B2): 'setup' = created but no data plane chosen yet — the admin
+   * shows the setup surface and the MCP/delivery APIs stay dark; 'active' =
+   * live. DB default 'active' keeps every pre-B2 row live with no backfill;
+   * paid creates insert 'setup' explicitly.
+   */
+  status: text("status").$type<"setup" | "active">().notNull().default("active"),
+  /**
+   * Commercial plan (B2/B3): 'sandbox' = the workspace's one free, hard-capped,
+   * shared-plane project; 'byo' | 'managed' = paid ($19/$29 anchors, billed in
+   * B3). NULL = legacy/operator-era project — ungated, uncapped.
+   */
+  plan: text("plan").$type<"sandbox" | "byo" | "managed">(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

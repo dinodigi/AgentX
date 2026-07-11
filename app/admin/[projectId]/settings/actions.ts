@@ -304,6 +304,40 @@ export async function connectR2Action(
   return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
 }
 
+/**
+ * B2: flip a setup-state project live. Paid planes need their database
+ * connected first (that's what setup IS); activation lights up the MCP +
+ * delivery surfaces by revalidating the token cache.
+ */
+export async function activateProject(projectId: string): Promise<{ error?: string; ok?: boolean }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const [project] = await db
+    .select({ status: projects.status, plan: projects.plan })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!project) return { error: "Project not found" };
+  if (project.status === "active") return { ok: true };
+
+  if (project.plan === "byo" || project.plan === "managed") {
+    const [dataPlaneRow] = await db
+      .select({ status: projectConnectors.status })
+      .from(projectConnectors)
+      .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "neon")))
+      .limit(1);
+    if (!dataPlaneRow || dataPlaneRow.status !== "connected") {
+      return { error: "Connect or provision this project's database first — that's the one required setup step." };
+    }
+  }
+
+  await db.update(projects).set({ status: "active" }).where(eq(projects.id, projectId));
+  revalidateTag("project-tokens"); // MCP + delivery light up now, not in 5 minutes
+  revalidateTag(`project:${projectId}`);
+  revalidatePath(`/admin/${projectId}`, "layout");
+  return { ok: true };
+}
+
 /** A4c: one-click managed bucket in our account (handle-first, resumable). */
 export async function provisionManagedBucketAction(
   projectId: string,

@@ -1,11 +1,28 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { and, count, eq } from "drizzle-orm";
 import { UserButton } from "@clerk/nextjs";
+import { db } from "@/db";
+import { projects } from "@/db/schema";
 import { getViewer } from "@/lib/access";
+import { getActiveWorkspace } from "@/lib/workspaces";
 import { NewProjectForm } from "./NewProjectForm";
 
+/**
+ * B2: creation is self-serve for every workspace owner/admin — the free
+ * sandbox path. Paid planes (BYO/managed) render but stay invite-only until
+ * B3 attaches billing to the same seam.
+ */
 export default async function NewProjectPage() {
   const viewer = await getViewer();
-  const canCreate = viewer?.isPlatformOperator ?? false;
+  if (!viewer) redirect("/sign-in");
+
+  const workspace = await getActiveWorkspace(viewer);
+  const [sandboxes] = await db
+    .select({ n: count() })
+    .from(projects)
+    .where(and(eq(projects.workspaceId, workspace.id), eq(projects.plan, "sandbox")));
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-line bg-card">
@@ -17,27 +34,6 @@ export default async function NewProjectPage() {
         </div>
       </header>
 
-      {!canCreate ? (
-        <main className="page-enter mx-auto max-w-lg px-8 py-10">
-          <p className="eyebrow mb-1.5">Private beta</p>
-          <h1 className="display mb-2 text-[26px] font-semibold leading-none">
-            Project creation is invite-only
-          </h1>
-          <p className="mb-6 text-sm leading-relaxed text-ink-mute">
-            During the beta we onboard projects by hand. Projects shared with
-            you appear on your dashboard. Want one of your own? Request a beta
-            spot and we&apos;ll set it up with you.
-          </p>
-          <div className="flex items-center gap-4">
-            <Link href="/pricing" className="btn rounded-md px-4 py-2 text-sm font-medium">
-              Request beta access
-            </Link>
-            <Link href="/admin" className="text-sm text-ink-mute transition-colors hover:text-ink">
-              ← Back to projects
-            </Link>
-          </div>
-        </main>
-      ) : (
       <main className="page-enter mx-auto max-w-lg px-8 py-10">
         <p className="mb-3 text-sm text-ink-mute">
           <Link href="/admin" className="transition-colors hover:text-ink-soft">
@@ -48,11 +44,13 @@ export default async function NewProjectPage() {
         <h1 className="display mb-1 text-[26px] font-semibold leading-none">New project</h1>
         <p className="mb-6 text-sm text-ink-mute">
           A branded admin, MCP token, and delivery API — ready for an agent to
-          define the data model.
+          define the data model. Creating in <span className="text-ink">{workspace.name}</span>.
         </p>
-        <NewProjectForm />
+        <NewProjectForm
+          sandboxUsed={(sandboxes?.n ?? 0) >= 1}
+          canCreatePaid={viewer.isPlatformOperator}
+        />
       </main>
-      )}
     </div>
   );
 }

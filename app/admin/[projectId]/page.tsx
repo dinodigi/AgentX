@@ -13,6 +13,7 @@ import {
   type ActivityItem,
   type OverviewCollection,
 } from "@/components/admin/ProjectOverview";
+import { SetupPanel } from "@/components/admin/SetupPanel";
 
 /**
  * Project dashboard — the backend's front door (its two endpoints) plus an
@@ -26,10 +27,29 @@ export default async function ProjectHome({
 }) {
   const { projectId } = await params;
 
+  const project = await getProject(projectId);
+  if (!project) notFound();
+
+  // B2: a setup-state project shows the setup surface instead of the overview
+  // — BEFORE any tenant-plane read (a half-provisioned data plane fails closed
+  // by design, and there is nothing to show yet anyway).
+  if (project.status === "setup") {
+    const conns = await listConnectors(projectId);
+    const neon = conns.find((c) => c.type === "neon");
+    return (
+      <SetupPanel
+        projectId={projectId}
+        name={project.branding?.displayName ?? project.name}
+        plan={(project.plan === "byo" || project.plan === "managed" ? project.plan : null) as "byo" | "managed" | null}
+        dbConnected={neon?.status === "connected"}
+        dbStatus={neon?.status ?? null}
+      />
+    );
+  }
+
   const tdb = await tenantDb(projectId);
-  const [project, collections, entryCounts, lastByCol, unhandledByCol, connectors, audit, h] =
+  const [collections, entryCounts, lastByCol, unhandledByCol, connectors, audit, h] =
     await Promise.all([
-      getProject(projectId),
       listCollections(projectId),
       tdb.select({ id: entries.collectionId, n: count() }).from(entries).where(eq(entries.projectId, projectId)).groupBy(entries.collectionId),
       tdb.select({ id: entries.collectionId, last: sql<string | null>`max(${entries.updatedAt})` }).from(entries).where(eq(entries.projectId, projectId)).groupBy(entries.collectionId),
@@ -38,7 +58,6 @@ export default async function ProjectHome({
       listAuditLog(projectId, { limit: 6, offset: 0 }),
       headers(),
     ]);
-  if (!project) notFound();
 
   const countById = new Map(entryCounts.map((c) => [c.id, c.n]));
   const lastById = new Map(lastByCol.map((c) => [c.id, c.last]));

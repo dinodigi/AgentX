@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { controlDb } from "@/db";
 import { tenantDb } from "./data-plane";
+import { assertAssetCap } from "./caps";
 import { decryptSecret } from "./crypto";
 import { assets, assetPointers, entries, entriesTrash, projectConnectors, type Asset } from "@/db/schema";
 import { ValidationError } from "./validation";
@@ -137,6 +138,7 @@ export async function uploadAsset(input: UploadInput): Promise<Asset> {
       `content type "${input.contentType}" not allowed — allowed: ${ALLOWED_TYPE_PREFIXES.join(", ")}`,
     );
   }
+  await assertAssetCap(input.projectId, input.bytes.length); // B2 sandbox cap
   const st = await storageFor(input.projectId);
   const key = `${input.projectId}/${randomUUID()}/${sanitize(input.filename)}`;
   await st.client.send(
