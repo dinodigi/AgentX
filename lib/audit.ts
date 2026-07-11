@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { auditLog, type AuditActor, type AuditLogRow } from "@/db/schema";
 import { defer } from "./defer";
 
@@ -19,8 +19,9 @@ export function recordAudit(opts: {
   actor: AuditActor;
   changedFields?: string[];
 }): void {
-  defer(() =>
-    db
+  defer(async () => {
+    const tdb = await tenantDb(opts.projectId);
+    await tdb
       .insert(auditLog)
       .values({
         projectId: opts.projectId,
@@ -30,8 +31,8 @@ export function recordAudit(opts: {
         actor: opts.actor,
         changedFields: opts.changedFields ?? null,
       })
-      .catch(() => {}),
-  );
+      .catch(() => {});
+  });
 }
 
 export interface AuditFilter {
@@ -51,7 +52,7 @@ export async function listAuditLog(
   if (f.collectionName) conditions.push(eq(auditLog.collectionName, f.collectionName));
   if (f.entryId) conditions.push(eq(auditLog.entryId, f.entryId));
   if (f.action) conditions.push(eq(auditLog.action, f.action));
-  return db
+  return (await tenantDb(projectId))
     .select()
     .from(auditLog)
     .where(and(...conditions))

@@ -1,6 +1,7 @@
 import { and, asc, count, eq, gt, sql } from "drizzle-orm";
 import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { collections, entries, entriesTrash, projects, type Collection, type EventAction, type WriteHook } from "@/db/schema";
 import { getConnector } from "./connectors";
 import { parseAfter } from "./events";
@@ -582,6 +583,7 @@ function searchIndexName(collectionId: string): string {
  * outlive its collection (the unique-index gotcha).
  */
 async function syncSearchIndex(
+  projectId: string,
   collectionId: string,
   oldFields: FieldDef[],
   newFields: FieldDef[],
@@ -593,11 +595,13 @@ async function syncSearchIndex(
       .join(",");
   if (key(oldFields) === key(newFields)) return; // subset unchanged
 
+  // Indexes live on the tenant DB's entries table (A1).
+  const tdb = await tenantDb(projectId);
   const name = searchIndexName(collectionId);
-  await db.execute(sql.raw(`DROP INDEX IF EXISTS "${name}"`));
+  await tdb.execute(sql.raw(`DROP INDEX IF EXISTS "${name}"`));
   const subset = publicSearchableFields(newFields);
   if (subset.length > 0) {
-    await db.execute(
+    await tdb.execute(
       sql.raw(
         `CREATE INDEX IF NOT EXISTS "${name}" ON entries USING GIN ((${searchVectorText(subset)})) ` +
           `WHERE collection_id = '${collectionId}'`,
@@ -607,6 +611,7 @@ async function syncSearchIndex(
 }
 
 async function syncUniqueIndexes(
+  projectId: string,
   collectionId: string,
   oldFields: FieldDef[],
   newFields: FieldDef[],
@@ -614,9 +619,11 @@ async function syncUniqueIndexes(
   const oldUnique = new Set(oldFields.filter((f) => f.unique).map((f) => f.name));
   const newUnique = new Set(newFields.filter((f) => f.unique).map((f) => f.name));
 
+  // Indexes + the date-canonicalizing backfill run on the tenant DB's entries (A1).
+  const tdb = await tenantDb(projectId);
   for (const name of oldUnique) {
     if (!newUnique.has(name)) {
-      await db.execute(sql.raw(`DROP INDEX IF EXISTS "${uniqueIndexName(collectionId, name)}"`));
+      await tdb.execute(sql.raw(`DROP INDEX IF EXISTS "${uniqueIndexName(collectionId, name)}"`));
     }
   }
   for (const name of newUnique) {
@@ -627,7 +634,7 @@ async function syncUniqueIndexes(
     // Values that don't parse are left as-is (indexed as raw text).
     if (newFields.find((f) => f.name === name)?.type === "date") {
       try {
-        await db.execute(sql`
+        await tdb.execute(sql`
           UPDATE entries
           SET data = jsonb_set(
             data, ARRAY[${name}]::text[],
@@ -644,7 +651,7 @@ async function syncUniqueIndexes(
     try {
       // Field names are meta-validated snake_case and the id comes from the DB,
       // so inlining them into DDL is safe (DDL can't take bind parameters).
-      await db.execute(
+      await tdb.execute(
         sql.raw(
           `CREATE UNIQUE INDEX IF NOT EXISTS "${uniqueIndexName(collectionId, name)}" ` +
             `ON entries ((data->>'${name}')) WHERE collection_id = '${collectionId}'`,
@@ -1054,8 +1061,8 @@ export async function defineCollection(
   // doesn't enforce. (New collections sync after insert — they have no rows,
   // so index creation cannot fail.)
   if (current) {
-    await syncUniqueIndexes(current.id, current.fields, fields);
-    await syncSearchIndex(current.id, current.fields, fields);
+    await syncUniqueIndexes(projectId, current.id, current.fields, fields);
+    await syncSearchIndex(projectId, current.id, current.fields, fields);
   }
 
   // Tightened validator-level constraints apply to NEW writes immediately;
@@ -1102,8 +1109,8 @@ export async function defineCollection(
     .returning();
 
   if (!current) {
-    await syncUniqueIndexes(row.id, [], fields);
-    await syncSearchIndex(row.id, [], fields);
+    await syncUniqueIndexes(projectId, row.id, [], fields);
+    await syncSearchIndex(projectId, row.id, [], fields);
   }
 
   // Backfill each rename: move the old key's value to the new key across every
@@ -1252,8 +1259,8 @@ export async function deleteCollection(projectId: string, name: string): Promise
     .where(and(eq(collections.projectId, projectId), eq(collections.name, name)));
   // Partial indexes on entries outlive the cascade — drop them explicitly.
   if (target) {
-    await syncUniqueIndexes(target.id, target.fields, []);
-    await syncSearchIndex(target.id, target.fields, []);
+    await syncUniqueIndexes(projectId, target.id, target.fields, []);
+    await syncSearchIndex(projectId, target.id, target.fields, []);
   }
   revalidateTag(collectionsTag(projectId));
 }

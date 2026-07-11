@@ -1,5 +1,5 @@
 import { and, eq, desc, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { entryVersions, type AuditActor } from "@/db/schema";
 import { defer } from "./defer";
 
@@ -25,7 +25,8 @@ export function recordVersion(opts: {
 }): void {
   defer(async () => {
     try {
-      await db.insert(entryVersions).values({
+      const tdb = await tenantDb(opts.projectId);
+      await tdb.insert(entryVersions).values({
         projectId: opts.projectId,
         collectionId: opts.collectionId,
         entryId: opts.entryId,
@@ -34,7 +35,7 @@ export function recordVersion(opts: {
         actor: opts.actor,
       });
       // Keep only the most recent N snapshots for this entry.
-      await db.execute(sql`
+      await tdb.execute(sql`
         DELETE FROM ${entryVersions}
         WHERE ${entryVersions.entryId} = ${opts.entryId}
           AND id NOT IN (
@@ -66,7 +67,7 @@ export async function listEntryVersions(
 ): Promise<{ versions: VersionRow[]; hasMore: boolean }> {
   const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
   const offset = Math.max(opts.offset ?? 0, 0);
-  const found = await db
+  const found = await (await tenantDb(projectId))
     .select()
     .from(entryVersions)
     .where(and(eq(entryVersions.projectId, projectId), eq(entryVersions.entryId, entryId)))

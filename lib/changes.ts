@@ -1,5 +1,5 @@
 import { and, asc, eq, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { tenantDb } from "./data-plane";
 import { entryChanges, type ChangeKind, type ChangeVis, type Collection, type EntryChange } from "@/db/schema";
 import { matchesClauses, type WhereItem } from "./query";
 import { snapshotReadable, type ReadSpec } from "./access-rules";
@@ -69,7 +69,7 @@ function rowValues(c: ChangeInput) {
  * transactional outbox — clients periodically reconcile with a full list). */
 export async function recordChange(input: ChangeInput): Promise<void> {
   try {
-    await db.insert(entryChanges).values(rowValues(input));
+    await (await tenantDb(input.projectId)).insert(entryChanges).values(rowValues(input));
     maybePrune(input.projectId);
   } catch (e) {
     console.error("recordChange failed", e);
@@ -80,7 +80,7 @@ export async function recordChange(input: ChangeInput): Promise<void> {
 export async function recordChanges(inputs: ChangeInput[]): Promise<void> {
   if (inputs.length === 0) return;
   try {
-    await db.insert(entryChanges).values(inputs.map(rowValues));
+    await (await tenantDb(inputs[0].projectId)).insert(entryChanges).values(inputs.map(rowValues));
     maybePrune(inputs[0].projectId);
   } catch (e) {
     console.error("recordChanges failed", e);
@@ -93,7 +93,7 @@ export async function recordChanges(inputs: ChangeInput[]): Promise<void> {
  * harmless (the entry still exists, the client just re-fetches). */
 export async function recordChangesStrict(inputs: ChangeInput[]): Promise<void> {
   if (inputs.length === 0) return;
-  await db.insert(entryChanges).values(inputs.map(rowValues));
+  await (await tenantDb(inputs[0].projectId)).insert(entryChanges).values(inputs.map(rowValues));
 }
 
 /** A change projected for the delivery surface. Tombstones carry no data. */
@@ -227,7 +227,7 @@ export async function listChanges(
   if (opts.since !== undefined) conds.push(sql`${entryChanges.seq} > ${opts.since}`);
   if (opts.collectionId) conds.push(eq(entryChanges.collectionId, opts.collectionId));
 
-  const rows = await db
+  const rows = await (await tenantDb(projectId))
     .select()
     .from(entryChanges)
     .where(and(...conds))
@@ -241,7 +241,7 @@ export async function listChanges(
 
 /** The latest visible seq for a project (delivery bootstrap: omitted `since`). */
 export async function latestSeq(projectId: string): Promise<number> {
-  const [row] = await db
+  const [row] = await (await tenantDb(projectId))
     .select({ seq: entryChanges.seq })
     .from(entryChanges)
     .where(
@@ -280,7 +280,7 @@ function maybePrune(projectId: string): void {
   if (Math.random() > 0.01) return;
   defer(async () => {
     try {
-      await db.execute(sql`
+      await (await tenantDb(projectId)).execute(sql`
         DELETE FROM ${entryChanges}
         WHERE id IN (
           SELECT id FROM ${entryChanges}
