@@ -105,10 +105,19 @@ while we watch every tenant from an operator console.
         grouped **"Your projects" / "Shared with you"** in the fleet + switcher.
       - **Ownership is singular:** a project belongs to exactly one paying
         workspace. Sharing spreads access, never billing, keys, or deletion.
-- [ ] B2 (M) **Project lifecycle.** Create → *setup* state (choose BYO or
+- [~] B2 (M) **Project lifecycle.** Create → *setup* state (choose BYO or
       managed, connect or provision) → active → **deleted**. Self-serve creation
       reopens here, behind a plan. MCP token + delivery API light up only on
-      active. Decided 2026-07-10 — users can delete their own projects:
+      active.
+      - [x] **Deletion — ✅ shipped 2026-07-11 (6bac047).** Danger zone on
+        project Settings: plan (counts) + type-the-name confirm, gated to the
+        owning workspace's owner/admin (a share can't delete), best-effort R2
+        prefix cleanup + cascade delete. Refuses if a managed `neon` connector
+        exists (data-plane teardown = A3). Caught + worked around a live-DB bug:
+        4 tables lack their `project_id` FK cascade (see [[missing-fk-cascades]]),
+        so the action deletes them explicitly. Spawned a task to repair the FKs.
+      - [ ] **Setup state** (choose BYO/managed, provision) — needs Track A.
+      - Decided 2026-07-10 — users can delete their own projects:
       - Destructive = **plan + confirm** (design rule): the delete plan discloses
         what goes (collections, entries, assets, tokens, connectors) and requires
         an explicit confirm (type-the-name gate).
