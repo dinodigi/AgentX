@@ -397,6 +397,22 @@ export const assets = pgTable("assets", {
 });
 
 /**
+ * CONTROL-PLANE pointer asset id → owning project (A2). The public image
+ * transform URL (`/v1/assets/{id}/image`) carries no project context, and the
+ * `assets` row itself lives in the owning project's tenant DB — this pointer
+ * is how the route finds which data plane to look in without breaking every
+ * embedded URL. Written on upload for every project (redundant-but-harmless
+ * for fallback projects); cascades away with the project.
+ */
+export const assetPointers = pgTable("asset_pointers", {
+  assetId: uuid("asset_id").primaryKey(),
+  projectId: uuid("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
  * Soft-deleted entries. A delete is a row MOVE from `entries` to here (same
  * primary-key uuid), so every visibility path — queries, delivery, aggregates —
  * excludes trashed rows structurally, with zero `deletedAt IS NULL` filters to

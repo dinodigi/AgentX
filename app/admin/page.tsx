@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { count, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { collections, entries, projectConnectors, type Project } from "@/db/schema";
+import { tenantContentStats } from "@/lib/data-plane";
 import { getViewer } from "@/lib/access";
 import { brandInk } from "@/lib/brand";
 import { getWorkspaceTheme } from "@/lib/theme";
@@ -52,6 +53,14 @@ export default async function AdminHome() {
     connectorsById.set(c.projectId, list);
   }
 
+  // Connector-backed projects keep content in their own DBs — the grouped
+  // queries above can't see it. Fan out for this workspace's neon projects (A2).
+  const workspaceIds = new Set(projects.map((p) => p.id));
+  const neonIds = connectorRows
+    .filter((c) => c.type === "neon" && workspaceIds.has(c.projectId))
+    .map((c) => c.projectId);
+  const tenantStats = await tenantContentStats(neonIds);
+
   const switcher: SwitcherProject[] = projects.map((p) => {
     const name = p.branding?.displayName ?? p.name;
     const brand = p.branding?.primaryColor ?? "#4f46e5";
@@ -61,6 +70,7 @@ export default async function AdminHome() {
   const toFleet = (p: Project): FleetProject => {
     const brand = p.branding?.primaryColor ?? "#4f46e5";
     const name = p.branding?.displayName ?? p.name;
+    const tenant = tenantStats.get(p.id);
     const last = activityById.get(p.id);
     return {
       id: p.id,
@@ -70,9 +80,9 @@ export default async function AdminHome() {
       brand,
       brandInk: brandInk(brand),
       collections: colsById.get(p.id) ?? 0,
-      entries: entriesById.get(p.id) ?? 0,
+      entries: tenant ? tenant.entries : (entriesById.get(p.id) ?? 0),
       connectors: connectorsById.get(p.id) ?? [],
-      lastActivity: last ? new Date(last).toISOString() : null,
+      lastActivity: tenant ? tenant.lastActivity : last ? new Date(last).toISOString() : null,
       createdAt: p.createdAt.toISOString(),
     };
   };

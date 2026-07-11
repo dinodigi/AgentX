@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/neon-http";
 import { neon, Pool, neonConfig } from "@neondatabase/serverless";
 import { drizzle as drizzleWs } from "drizzle-orm/neon-serverless";
@@ -134,6 +134,41 @@ export async function tenantDb(projectId: string, env: Env = "prod"): Promise<Db
   if (!conn) return controlDb as unknown as DbExecutor;
   await ensureTenantMigrated(projectId, conn);
   return tenantClient(conn);
+}
+
+export interface TenantContentStats {
+  entries: number;
+  lastActivity: string | null;
+}
+
+/**
+ * Per-project content stats for CONNECTOR-BACKED projects — the cross-project
+ * surfaces (fleet dashboard, operator console) can't GROUP BY across tenant
+ * DBs, so they fan out here for exactly the projects whose content left the
+ * shared table (bounded: few at launch; B3's usage rollups replace this at
+ * scale). An unreachable/quarantined tenant DB yields zeros rather than a
+ * crashed dashboard — its connector's error status is the visible signal.
+ */
+export async function tenantContentStats(projectIds: string[]): Promise<Map<string, TenantContentStats>> {
+  const out = new Map<string, TenantContentStats>();
+  await Promise.all(
+    projectIds.map(async (pid) => {
+      try {
+        const tdb = await tenantDb(pid);
+        const [row] = await tdb
+          .select({ n: count(), last: sql<string | null>`max(${schema.entries.updatedAt})` })
+          .from(schema.entries)
+          .where(eq(schema.entries.projectId, pid));
+        out.set(pid, {
+          entries: Number(row?.n ?? 0),
+          lastActivity: row?.last ? new Date(row.last).toISOString() : null,
+        });
+      } catch {
+        out.set(pid, { entries: 0, lastActivity: null });
+      }
+    }),
+  );
+  return out;
 }
 
 /**

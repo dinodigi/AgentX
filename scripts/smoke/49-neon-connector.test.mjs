@@ -1,5 +1,6 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import sharp from "sharp";
 import { neon } from "@neondatabase/serverless";
 import { BASE, ensureServer, createEphemeralProject, connectNeon, mcp, delivery } from "./helpers.mjs";
 
@@ -142,6 +143,43 @@ test("derived writes land tenant-side: versions, change feed, audit, trash", asy
   assert.equal(restored.ok, true, restored.errorText);
   const back = await tenantSql`SELECT id FROM entries WHERE id = ${id}`;
   assert.equal(back.length, 1);
+});
+
+test("assets: metadata tenant-side, control-plane pointer serves the public image URL", async () => {
+  const bytes = await sharp({
+    create: { width: 96, height: 96, channels: 3, background: { r: 20, g: 120, b: 200 } },
+  })
+    .jpeg()
+    .toBuffer();
+  const up = await mcp(project.mcpToken, "upload_asset", {
+    filename: "tenant.jpg",
+    contentType: "image/jpeg",
+    dataBase64: bytes.toString("base64"),
+  });
+  assert.equal(up.ok, true, up.errorText);
+  const assetId = up.value.id;
+
+  try {
+    // Metadata in the tenant DB, absent from the control DB…
+    const inTenant = await tenantSql`SELECT id FROM assets WHERE id = ${assetId}`;
+    assert.equal(inTenant.length, 1, "asset metadata should be tenant-side");
+    const inControl = await admin(`SELECT id FROM assets WHERE id = '${assetId}'`);
+    assert.equal(inControl.length, 0);
+    // …with the control-plane pointer naming the owner.
+    const ptr = await admin(`SELECT project_id FROM asset_pointers WHERE asset_id = '${assetId}'`);
+    assert.equal(ptr.length, 1);
+    assert.equal(ptr[0].project_id, project.id);
+
+    // The PUBLIC transform URL (bare uuid, no project context) resolves through
+    // the pointer into the tenant DB and serves a derivative redirect.
+    const r = await fetch(`${BASE}/api/v1/assets/${assetId}/image?w=64`, { redirect: "manual" });
+    assert.equal(r.status, 302, `expected 302, got ${r.status}`);
+  } finally {
+    const del = await mcp(project.mcpToken, "delete_asset", { id: assetId });
+    assert.equal(del.ok, true, del.errorText);
+    const ptrGone = await admin(`SELECT asset_id FROM asset_pointers WHERE asset_id = '${assetId}'`);
+    assert.equal(ptrGone.length, 0, "pointer removed with the asset");
+  }
 });
 
 test("a sibling fallback project still writes to the control DB (no cross-talk)", async () => {

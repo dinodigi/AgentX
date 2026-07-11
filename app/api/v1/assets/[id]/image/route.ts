@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { assets } from "@/db/schema";
+import { assets, assetPointers } from "@/db/schema";
+import { tenantDb } from "@/lib/data-plane";
 import { parseTransformParams, ensureDerivative, isTransformable } from "@/lib/image-transform";
 import { CORS_HEADERS, preflight } from "@/lib/cors";
 import { deliveryError } from "@/lib/delivery-http";
@@ -23,12 +24,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const { id } = await params;
   if (!UUID_RE.test(id)) return deliveryError(404, "not found");
 
-  // DELIBERATELY control-DB (A1): this public URL carries no project context, so
-  // there is nothing to resolve a tenant DB by. Works while every project falls
-  // back to the control DB; BEFORE A2 ships a connector-backed project, this
-  // route needs a project-scoped URL shape or a control-plane asset→project
-  // pointer (recorded in LAUNCH-PLAN A2).
-  const [asset] = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
+  // The public URL carries no project context, so resolve in two steps (A2):
+  // (1) the control DB's assets table — covers every fallback project (and all
+  // pre-split assets); (2) miss → the control-plane asset_pointers row names
+  // the owning project, whose tenant DB holds the metadata. URLs never change.
+  let [asset] = await db.select().from(assets).where(eq(assets.id, id)).limit(1);
+  if (!asset) {
+    const [ptr] = await db
+      .select({ projectId: assetPointers.projectId })
+      .from(assetPointers)
+      .where(eq(assetPointers.assetId, id))
+      .limit(1);
+    if (ptr) {
+      [asset] = await (await tenantDb(ptr.projectId))
+        .select()
+        .from(assets)
+        .where(eq(assets.id, id))
+        .limit(1);
+    }
+  }
   if (!asset) return deliveryError(404, "not found");
   if (!isTransformable(asset.contentType)) {
     return deliveryError(422, `asset ${id} is not a transformable raster image (contentType: ${asset.contentType})`);

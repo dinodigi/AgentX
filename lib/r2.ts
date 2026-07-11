@@ -9,8 +9,9 @@ import {
 } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
+import { controlDb } from "@/db";
 import { tenantDb } from "./data-plane";
-import { assets, entries, entriesTrash, type Asset } from "@/db/schema";
+import { assets, assetPointers, entries, entriesTrash, type Asset } from "@/db/schema";
 import { ValidationError } from "./validation";
 
 /**
@@ -76,6 +77,12 @@ export async function uploadAsset(input: UploadInput): Promise<Asset> {
       url,
     })
     .returning();
+  // Control-plane pointer: the public image-transform URL carries only the
+  // asset id, so this is how the route finds the owning data plane (A2).
+  await controlDb
+    .insert(assetPointers)
+    .values({ assetId: row.id, projectId: input.projectId })
+    .onConflictDoNothing();
   return row;
 }
 
@@ -223,4 +230,5 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
     await client().send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: asset.r2Key }));
   }
   await tdb.delete(assets).where(eq(assets.id, assetId));
+  await controlDb.delete(assetPointers).where(eq(assetPointers.assetId, assetId));
 }

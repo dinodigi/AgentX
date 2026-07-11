@@ -2,6 +2,7 @@ import "server-only";
 import { count, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { collections, entries, projectConnectors, projects, workspaceMembers, workspaces } from "@/db/schema";
+import { tenantContentStats } from "./data-plane";
 import { getViewer } from "./access";
 import { brandInk } from "./brand";
 
@@ -67,6 +68,11 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
     list.push({ type: c.type, status: c.status });
     connectorsById.set(c.projectId, list);
   }
+
+  // Connector-backed projects' content left the shared table — the grouped
+  // queries above see zero rows for them. Fan out to their tenant DBs (A2).
+  const neonIds = connectorRows.filter((c) => c.type === "neon").map((c) => c.projectId);
+  const tenantStats = await tenantContentStats(neonIds);
   for (const p of allProjects) {
     if (p.workspaceId) projCountByWs.set(p.workspaceId, (projCountByWs.get(p.workspaceId) ?? 0) + 1);
   }
@@ -85,6 +91,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
     .map((p) => {
       const brand = p.branding?.primaryColor ?? "#4f46e5";
       const name = p.branding?.displayName ?? p.name;
+      const tenant = tenantStats.get(p.id);
       const last = activityById.get(p.id);
       return {
         id: p.id,
@@ -95,9 +102,9 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
         brandInk: brandInk(brand),
         logoUrl: p.branding?.logoUrl ?? null,
         collections: colsById.get(p.id) ?? 0,
-        entries: entriesById.get(p.id) ?? 0,
+        entries: tenant ? tenant.entries : (entriesById.get(p.id) ?? 0),
         connectors: connectorsById.get(p.id) ?? [],
-        lastActivity: last ? new Date(last).toISOString() : null,
+        lastActivity: tenant ? tenant.lastActivity : last ? new Date(last).toISOString() : null,
         createdAt: p.createdAt.toISOString(),
       };
     })
