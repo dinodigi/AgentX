@@ -114,11 +114,15 @@ in the launch plan.
       lift; everything else stacks on it. **In progress 2026-07-11:**
       - [x] A1.1 (a72fb60) — `lib/data-plane.ts` resolver: `tenantDb`/
         `withTenantTransaction`, fail-closed control-DB fallback, client cache.
-      - [~] A1.2 threading — DONE (65a8a5d): entries write path (verifyRefs join
-        decomposed, 4 cores, transact + replay → tenantDb; smoke 53/53).
-        TODO: `record*` helpers + index-sync on tenantDb; read paths
-        (query/get/count/aggregate, delivery reads, search, locales, trash,
-        assets). All behavior-preserving (everything falls back to controlDb).
+      - [~] A1.2 threading — 2 of 3 batches done (behavior-preserving; all falls
+        back to controlDb):
+        - [x] write path (65a8a5d): verifyRefs join decomposed, 4 cores,
+          transact + replay → tenantDb. Smoke 53/53.
+        - [x] derived-writes + index-sync (60fd41a): record{Change,Version,Audit}
+          + feed/version/audit reads + prunes; syncUnique/SearchIndex(projectId)
+          on tenantDb. Smoke 20/20.
+        - [ ] read paths (mechanical): entries query/get/count/aggregate,
+          delivery reads, search, locales, trash, assets.
       - [ ] A1.3 — `env` column on project_tokens + thread env (all-prod for now).
       - [ ] A1.4 — hand-written versioned migration runner + `_schema_migrations`
         + expand/contract contract (exercised in A2 with a real tenant DB).
