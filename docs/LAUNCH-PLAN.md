@@ -81,17 +81,21 @@ while we watch every tenant from an operator console.
 
 ## Track B — the business layer (Phase 20, reshaped)
 
-- [~] B1 (M) **Workspaces.** Sign-up → workspace; workspace owns projects;
-      members ride the existing project_members shape. ADMIN_EMAILS becomes a
-      real platform-operator role.
-      - [x] **B1a — ✅ shipped 2026-07-11 (commit c45f8b1, pushed).** schema
-        (`workspaces`, `workspace_members`, `projects.workspace_id`), the 3-rung
-        access ladder in `lib/access.ts`, `createProject` → personal workspace,
-        dashboard "Your projects / Shared with you". Migration applied to the
-        shared DB (4 workspaces, 17 projects backfilled); access ladder verified
-        against real data (workspace member → operator, foreign project → denied,
-        platform op → all); smoke 11/11; prod build green.
-      - [ ] **B1b (todo):** workspace member-management UI + workspace switcher.
+- [x] B1 (M) **Workspaces — ✅ shipped 2026-07-11.** Sign-up → workspace;
+      workspace owns projects; members ride the existing project_members shape.
+      ADMIN_EMAILS is now a real platform-operator role.
+      - [x] **B1a (c45f8b1):** schema (`workspaces`, `workspace_members`,
+        `projects.workspace_id`), the 3-rung access ladder in `lib/access.ts`,
+        `createProject` → personal workspace, dashboard "Your projects / Shared
+        with you". Migration applied to the shared DB (4 workspaces, 17 projects
+        backfilled); ladder verified against real data; smoke 11/11.
+      - [x] **B1b (2606fa4):** `/admin/workspace` team management — owner/admin
+        add/remove members (admin|manager) + rename, gated; "Team" nav link.
+        Gating verified against real data; prod build green.
+      - **Deferred:** a multi-workspace *switcher* (premature — most users have
+        one workspace + platform operators see all; add when multi-workspace
+        membership is common). Also inherited: no pending-invite flow (invitee
+        must have a Clerk account), same as per-project shares.
       - Decided 2026-07-10:
       - Workspace roles (owner / admin / manager) **cascade** to all workspace
         projects; per-project member rows remain the bottom rung for sharing a
