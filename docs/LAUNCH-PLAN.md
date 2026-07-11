@@ -91,11 +91,13 @@ while we watch every tenant from an operator console.
         backfilled); ladder verified against real data; smoke 11/11.
       - [x] **B1b (2606fa4):** `/admin/workspace` team management — owner/admin
         add/remove members (admin|manager) + rename, gated; "Team" nav link.
-        Gating verified against real data; prod build green.
-      - **Deferred:** a multi-workspace *switcher* (premature — most users have
-        one workspace + platform operators see all; add when multi-workspace
-        membership is common). Also inherited: no pending-invite flow (invitee
-        must have a Clerk account), same as per-project shares.
+      - [x] **B1c (cdbcd3f):** workspace **switcher** — active-workspace context
+        (cookie-backed, validated), dashboard scoped to one workspace at a time
+        (replaces the Your/Shared grouping), switcher on the dashboard / project
+        switcher inside a project. Verified incl. forged-cookie isolation.
+      - **Deferred:** invite **accept** flow (membership is instant today; a
+        pending-invite step is a follow-up — circle back). Invitee still must
+        have a Clerk account.
       - Decided 2026-07-10:
       - Workspace roles (owner / admin / manager) **cascade** to all workspace
         projects; per-project member rows remain the bottom rung for sharing a
