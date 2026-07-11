@@ -9,12 +9,14 @@ import { listCollections } from "@/lib/collections";
 import { brandInk } from "@/lib/brand";
 import { getWorkspaceTheme, getSidebarCollapsed } from "@/lib/theme";
 import { WorkspaceSidebar } from "@/components/admin/WorkspaceSidebar";
+import { ContentSidebar } from "@/components/admin/ContentSidebar";
 import type { SwitcherProject } from "@/components/admin/ProjectSwitcher";
 
 /**
- * The project workspace shell: the unified sidebar (switcher + contextual nav +
- * account) and a full-width content area. --brand is the single client color,
- * contained; the workspace theme is governed by the admin theme root above.
+ * The project workspace shell — three columns: the left chrome rail (switcher +
+ * fixed project sections + account), the editing area, and the right ContentSidebar
+ * (collections + inboxes, the part that grows with the schema). --brand is the
+ * single client color, contained; the theme is governed by the admin root above.
  */
 export default async function ProjectLayout({
   params,
@@ -52,8 +54,11 @@ export default async function ProjectLayout({
       className="flex min-h-screen"
       style={{ "--brand": brand, "--brand-ink": brandInk(brand) } as CSSProperties}
     >
-      <WorkspaceSidebar
-        projects={allProjects.map(toSwitcher)}
+      <WorkspaceSidebar projects={allProjects.map(toSwitcher)} currentId={projectId} theme={theme} />
+      <main className="page-enter mx-auto min-w-0 max-w-[1400px] flex-1 px-5 py-7 md:px-10 md:py-9">
+        {children}
+      </main>
+      <ContentSidebar
         currentId={projectId}
         content={collections.map((c) => ({
           name: c.name,
@@ -61,12 +66,8 @@ export default async function ProjectLayout({
           publicWrite: c.publicWrite,
           unhandled: unhandledById.get(c.id) ?? 0,
         }))}
-        theme={theme}
         defaultCollapsed={collapsed}
       />
-      <main className="page-enter mx-auto min-w-0 max-w-[1400px] flex-1 px-5 py-7 md:px-10 md:py-9">
-        {children}
-      </main>
     </div>
   );
 }
