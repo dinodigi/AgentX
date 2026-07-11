@@ -248,10 +248,17 @@ in the launch plan.
         grouped **"Your projects" / "Shared with you"** in the fleet + switcher.
       - **Ownership is singular:** a project belongs to exactly one paying
         workspace. Sharing spreads access, never billing, keys, or deletion.
-- [~] B2 (M) **Project lifecycle.** Create → *setup* state (choose BYO or
-      managed, connect or provision) → active → **deleted**. Self-serve creation
-      reopens here, behind a plan. MCP token + delivery API light up only on
-      active.
+- [x] B2 (M) **Project lifecycle — ✅ COMPLETE 2026-07-11 (1beb2e6).**
+      Create → setup (choose plane) → active → deleted, live end to end:
+      `projects.status` + `projects.plan` (legacy rows ungated), **self-serve
+      creation for workspace owners/admins** — one free hard-capped sandbox
+      per workspace (instant, shared planes; caps: 1k entries / 20 collections
+      / 100MB media via `lib/caps.ts`, E_CAP_REACHED with upgrade hints;
+      sandboxes cannot attach dedicated connectors); paid planes ($19/$29)
+      render in the form but stay invite-only until B3 swaps that exact gate
+      for checkout; setup surface with one-click managed provisioning;
+      **MCP + delivery dark until active** (token cache carries status;
+      E_PROJECT_SETUP). Smoke 51-lifecycle 6/6; full suite 419/419.
       - [x] **Deletion — ✅ shipped 2026-07-11 (6bac047).** Danger zone on
         project Settings: plan (counts) + type-the-name confirm, gated to the
         owning workspace's owner/admin (a share can't delete), best-effort R2
