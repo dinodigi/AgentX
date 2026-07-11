@@ -81,9 +81,17 @@ while we watch every tenant from an operator console.
 
 ## Track B — the business layer (Phase 20, reshaped)
 
-- [ ] B1 (M) **Workspaces.** Sign-up → workspace; workspace owns projects;
+- [~] B1 (M) **Workspaces.** Sign-up → workspace; workspace owns projects;
       members ride the existing project_members shape. ADMIN_EMAILS becomes a
-      real platform-operator role. Decided 2026-07-10:
+      real platform-operator role.
+      - **B1a (code done, commit c45f8b1, NOT pushed):** schema (`workspaces`,
+        `workspace_members`, `projects.workspace_id`), the 3-rung access ladder
+        in `lib/access.ts`, `createProject` → personal workspace, dashboard
+        "Your projects / Shared with you". **Blocked on the operator running
+        `scripts/migrate-workspaces.ts` against the shared DB before this can
+        deploy or be verified live.**
+      - **B1b (todo):** workspace member-management UI + workspace switcher.
+      - Decided 2026-07-10:
       - Workspace roles (owner / admin / manager) **cascade** to all workspace
         projects; per-project member rows remain the bottom rung for sharing a
         single project with an outsider (the client-handoff path).
