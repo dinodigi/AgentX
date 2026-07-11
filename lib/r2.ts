@@ -11,27 +11,96 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { controlDb } from "@/db";
 import { tenantDb } from "./data-plane";
-import { assets, assetPointers, entries, entriesTrash, type Asset } from "@/db/schema";
+import { decryptSecret } from "./crypto";
+import { assets, assetPointers, entries, entriesTrash, projectConnectors, type Asset } from "@/db/schema";
 import { ValidationError } from "./validation";
 
 /**
- * Cloudflare R2 via the S3-compatible API. One bucket, keys namespaced per
- * project. Bytes live in R2; metadata lives in the `assets` table. `asset`
- * fields on entries store an asset id.
+ * Object storage via the S3-compatible API. THE STORAGE PLANE RESOLVES PER
+ * PROJECT (A4), mirroring lib/data-plane's tenantDb: a project with an `r2`
+ * connector keeps its bytes in its OWN bucket (BYO or managed) and mints
+ * public URLs from its own base; everyone else uses the shared bucket from
+ * the platform env, keys namespaced per project. Bytes live in R2; metadata
+ * lives in the `assets` table (tenant-plane since A1).
  */
 
-let _client: S3Client | null = null;
-function client(): S3Client {
-  if (_client) return _client;
-  _client = new S3Client({
-    region: "auto",
-    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
-    credentials: {
-      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-    },
-  });
-  return _client;
+export interface ProjectStorage {
+  client: S3Client;
+  bucket: string;
+  /** No trailing slash. Public object URL = `${publicBaseUrl}/${key}`. */
+  publicBaseUrl: string;
+  mode: "shared" | "byo" | "managed";
+}
+
+// One client per distinct endpoint+key pair (the shared one included).
+const clientCache = new Map<string, S3Client>();
+
+function cachedClient(cacheKey: string, make: () => S3Client): S3Client {
+  let c = clientCache.get(cacheKey);
+  if (!c) {
+    c = make();
+    clientCache.set(cacheKey, c);
+  }
+  return c;
+}
+
+/** Drop a cached storage client — call on r2-connector change/disconnect. */
+export function evictStorageClient(endpoint: string, accessKeyId: string): void {
+  clientCache.delete(`${endpoint}|${accessKeyId}`);
+}
+
+export function r2Endpoint(accountId: string): string {
+  return `https://${accountId}.r2.cloudflarestorage.com`;
+}
+
+function sharedStorage(): ProjectStorage {
+  const endpoint = r2Endpoint(process.env.R2_ACCOUNT_ID!);
+  const accessKeyId = process.env.R2_ACCESS_KEY_ID!;
+  return {
+    client: cachedClient(`${endpoint}|${accessKeyId}`, () =>
+      new S3Client({
+        region: "auto",
+        endpoint,
+        credentials: { accessKeyId, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY! },
+      }),
+    ),
+    bucket: process.env.R2_BUCKET!,
+    publicBaseUrl: (process.env.R2_PUBLIC_BASE_URL ?? "").replace(/\/$/, ""),
+    mode: "shared",
+  };
+}
+
+/**
+ * The storage plane for a project. No `r2` connector → the shared bucket
+ * (platform env). With one, FAIL-CLOSED on a malformed row — bytes must never
+ * silently land in the shared bucket when the project owns storage.
+ */
+export async function storageFor(projectId: string): Promise<ProjectStorage> {
+  const [row] = await controlDb
+    .select({ config: projectConnectors.config, secretEnc: projectConnectors.secretEnc })
+    .from(projectConnectors)
+    .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "r2")))
+    .limit(1);
+  if (!row) return sharedStorage();
+
+  const cfg = row.config as { mode?: string; accountId?: string; bucket?: string; publicBaseUrl?: string };
+  if (!cfg?.accountId || !cfg?.bucket || !cfg?.publicBaseUrl || !row.secretEnc) {
+    throw new Error(`r2 connector for project ${projectId} is missing accountId/bucket/publicBaseUrl/credentials (fail-closed)`);
+  }
+  const creds = JSON.parse(decryptSecret(row.secretEnc)) as { accessKeyId: string; secretAccessKey: string };
+  const endpoint = r2Endpoint(cfg.accountId);
+  return {
+    client: cachedClient(`${endpoint}|${creds.accessKeyId}`, () =>
+      new S3Client({
+        region: "auto",
+        endpoint,
+        credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey },
+      }),
+    ),
+    bucket: cfg.bucket,
+    publicBaseUrl: cfg.publicBaseUrl.replace(/\/$/, ""),
+    mode: cfg.mode === "managed" ? "managed" : "byo",
+  };
 }
 
 export interface UploadInput {
@@ -55,17 +124,18 @@ export async function uploadAsset(input: UploadInput): Promise<Asset> {
       `content type "${input.contentType}" not allowed — allowed: ${ALLOWED_TYPE_PREFIXES.join(", ")}`,
     );
   }
+  const st = await storageFor(input.projectId);
   const key = `${input.projectId}/${randomUUID()}/${sanitize(input.filename)}`;
-  await client().send(
+  await st.client.send(
     new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET!,
+      Bucket: st.bucket,
       Key: key,
       Body: input.bytes,
       ContentType: input.contentType,
     }),
   );
 
-  const url = `${process.env.R2_PUBLIC_BASE_URL}/${key}`;
+  const url = `${st.publicBaseUrl}/${key}`;
   const [row] = await (await tenantDb(input.projectId))
     .insert(assets)
     .values({
@@ -91,9 +161,9 @@ function sanitize(name: string): string {
 }
 
 /** True if the object exists (HeadObject). 404 → false; other errors rethrow. */
-export async function objectExists(key: string): Promise<boolean> {
+export async function objectExists(st: ProjectStorage, key: string): Promise<boolean> {
   try {
-    await client().send(new HeadObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: key }));
+    await st.client.send(new HeadObjectCommand({ Bucket: st.bucket, Key: key }));
     return true;
   } catch (e) {
     const status = (e as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
@@ -103,16 +173,16 @@ export async function objectExists(key: string): Promise<boolean> {
 }
 
 /** Fetch an object's bytes. */
-export async function getObjectBytes(key: string): Promise<Buffer> {
-  const res = await client().send(new GetObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: key }));
+export async function getObjectBytes(st: ProjectStorage, key: string): Promise<Buffer> {
+  const res = await st.client.send(new GetObjectCommand({ Bucket: st.bucket, Key: key }));
   return Buffer.from(await res.Body!.transformToByteArray());
 }
 
 /** Store an object with content-type + a long immutable cache (derived images). */
-export async function putObject(key: string, body: Buffer, contentType: string): Promise<void> {
-  await client().send(
+export async function putObject(st: ProjectStorage, key: string, body: Buffer, contentType: string): Promise<void> {
+  await st.client.send(
     new PutObjectCommand({
-      Bucket: process.env.R2_BUCKET!,
+      Bucket: st.bucket,
       Key: key,
       Body: body,
       ContentType: contentType,
@@ -122,12 +192,12 @@ export async function putObject(key: string, body: Buffer, contentType: string):
 }
 
 /** All keys under a prefix (continuation-token loop). */
-export async function listPrefixKeys(prefix: string): Promise<string[]> {
+export async function listPrefixKeys(st: ProjectStorage, prefix: string): Promise<string[]> {
   const keys: string[] = [];
   let token: string | undefined;
   do {
-    const res = await client().send(
-      new ListObjectsV2Command({ Bucket: process.env.R2_BUCKET!, Prefix: prefix, ContinuationToken: token }),
+    const res = await st.client.send(
+      new ListObjectsV2Command({ Bucket: st.bucket, Prefix: prefix, ContinuationToken: token }),
     );
     for (const o of res.Contents ?? []) if (o.Key) keys.push(o.Key);
     token = res.IsTruncated ? res.NextContinuationToken : undefined;
@@ -135,23 +205,31 @@ export async function listPrefixKeys(prefix: string): Promise<string[]> {
   return keys;
 }
 
-/**
- * Delete every R2 object a project owns (B2 project deletion). Keys are minted
- * as `${projectId}/uuid/filename`, so the project prefix cleanly scopes all its
- * originals + image derivatives. Returns the count removed. Best-effort — the
- * caller cascades the metadata rows regardless. (When R2 becomes a per-project
- * connector in A4, a managed bucket is dropped wholesale instead.)
- */
-export async function deleteProjectObjects(projectId: string): Promise<number> {
-  const keys = await listPrefixKeys(`${projectId}/`);
+/** Batched delete of explicit keys (1000/request S3 limit). */
+export async function deleteKeys(st: ProjectStorage, keys: string[]): Promise<void> {
   for (let i = 0; i < keys.length; i += 1000) {
-    await client().send(
+    await st.client.send(
       new DeleteObjectsCommand({
-        Bucket: process.env.R2_BUCKET!,
+        Bucket: st.bucket,
         Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })) },
       }),
     );
   }
+}
+
+/**
+ * Project-delete byte cleanup (B2), MODE-AWARE (A4):
+ * - shared: prefix-delete the project's objects from the platform bucket.
+ * - byo: NEVER touch their bucket — we drop records/routing only.
+ * - managed: objects go with the bucket at deprovision (A4c teardown), which
+ *   project-delete runs before this; emptying here is a harmless no-op path.
+ * Returns the count removed. Best-effort — the caller cascades metadata anyway.
+ */
+export async function deleteProjectObjects(projectId: string): Promise<number> {
+  const st = await storageFor(projectId);
+  if (st.mode === "byo") return 0;
+  const keys = await listPrefixKeys(st, `${projectId}/`);
+  await deleteKeys(st, keys);
   return keys.length;
 }
 
@@ -207,27 +285,20 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
     );
   }
 
-  // Remove the original AND any cached image derivatives (under the asset's dir).
-  // Prefix-delete ONLY when the key has the minted `projectId/uuid/filename`
-  // shape — otherwise a malformed/legacy key could prefix-match unrelated
-  // objects, so fall back to a single-object delete.
+  // Remove the original AND any cached image derivatives (under the asset's dir)
+  // from the PROJECT'S storage plane. Prefix-delete ONLY when the key has the
+  // minted `projectId/uuid/filename` shape — otherwise a malformed/legacy key
+  // could prefix-match unrelated objects, so fall back to a single-object delete.
+  const st = await storageFor(projectId);
   const parts = asset.r2Key.split("/");
   const dir = asset.r2Key.slice(0, asset.r2Key.lastIndexOf("/"));
   const shapeOk = parts.length === 3 && parts[0] === projectId && parts[1].length > 0 && parts[2].length > 0;
   if (shapeOk) {
-    const keys = new Set(await listPrefixKeys(`${dir}/`));
+    const keys = new Set(await listPrefixKeys(st, `${dir}/`));
     keys.add(asset.r2Key); // ensure the original goes even if listing lagged
-    const all = [...keys];
-    for (let i = 0; i < all.length; i += 1000) {
-      await client().send(
-        new DeleteObjectsCommand({
-          Bucket: process.env.R2_BUCKET!,
-          Delete: { Objects: all.slice(i, i + 1000).map((Key) => ({ Key })) },
-        }),
-      );
-    }
+    await deleteKeys(st, [...keys]);
   } else {
-    await client().send(new DeleteObjectCommand({ Bucket: process.env.R2_BUCKET!, Key: asset.r2Key }));
+    await st.client.send(new DeleteObjectCommand({ Bucket: st.bucket, Key: asset.r2Key }));
   }
   await tdb.delete(assets).where(eq(assets.id, assetId));
   await controlDb.delete(assetPointers).where(eq(assetPointers.assetId, assetId));

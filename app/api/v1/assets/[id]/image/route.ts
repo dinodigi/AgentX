@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { assets, assetPointers } from "@/db/schema";
 import { tenantDb } from "@/lib/data-plane";
 import { parseTransformParams, ensureDerivative, isTransformable } from "@/lib/image-transform";
+import { storageFor } from "@/lib/r2";
 import { CORS_HEADERS, preflight } from "@/lib/cors";
 import { deliveryError } from "@/lib/delivery-http";
 import { ValidationError } from "@/lib/entries";
@@ -58,7 +59,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-  const result = await ensureDerivative(asset, tp, ip);
+  // Derivatives live in (and redirect to) the OWNING project's storage plane
+  // (A4) — the asset row carries the projectId either way it was found.
+  const storage = await storageFor(asset.projectId);
+  const result = await ensureDerivative(storage, asset, tp, ip);
   if (!result.ok) {
     return deliveryError(
       result.status,
@@ -71,7 +75,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     status: 302,
     headers: {
       ...CORS_HEADERS,
-      location: `${process.env.R2_PUBLIC_BASE_URL}/${result.key}`,
+      location: `${storage.publicBaseUrl}/${result.key}`,
       "cache-control": "public, max-age=31536000, immutable",
     },
   });

@@ -186,6 +186,19 @@ export async function connectNeon(projectId, connString) {
       config = EXCLUDED.config, secret_enc = EXCLUDED.secret_enc, status = 'connected'`;
 }
 
+/** Attach a BYO r2 storage connector with decryptable credentials (direct SQL,
+ * mirroring what lib/r2-connector stores). Tests typically point it at the
+ * REAL shared bucket/keys but a DISTINCT publicBaseUrl, so URL minting proves
+ * the resolver picked the connector while bytes stay physically testable. */
+export async function connectR2(projectId, { accountId, accessKeyId, secretAccessKey, bucket, publicBaseUrl }) {
+  const config = { mode: "byo", accountId, bucket, publicBaseUrl: publicBaseUrl.replace(/\/$/, "") };
+  const secret = encryptSecret(JSON.stringify({ accessKeyId, secretAccessKey }));
+  await sql`INSERT INTO project_connectors (project_id, type, config, secret_enc, status)
+    VALUES (${projectId}, 'r2', ${JSON.stringify(config)}::jsonb, ${secret}, 'connected')
+    ON CONFLICT (project_id, type) DO UPDATE SET
+      config = EXCLUDED.config, secret_enc = EXCLUDED.secret_enc, status = 'connected'`;
+}
+
 /** Local webhook receiver capturing POST bodies + headers — deterministic, no httpbin.
  * setStatus(500) makes it fail deliveries until flipped back (re-fire tests). */
 export async function startWebhookReceiver() {

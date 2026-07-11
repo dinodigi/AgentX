@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getProjectRole } from "@/lib/access";
 import { listConnectors, CONNECTOR_SPECS, type FormConnectorType } from "@/lib/connectors";
-import { ConnectorCard, NeonConnectorCard } from "../settings/sections";
+import { ConnectorCard, NeonConnectorCard, R2ConnectorCard } from "../settings/sections";
 
 /** Connectors tab — the project's bring-your-own infrastructure. Operator-only. */
 export default async function ConnectorsPage({
@@ -16,6 +16,7 @@ export default async function ConnectorsPage({
   const connectors = await listConnectors(projectId);
   const byType = new Map(connectors.map((c) => [c.type, c]));
   const neon = byType.get("neon");
+  const r2 = byType.get("r2");
 
   return (
     <>
@@ -34,6 +35,13 @@ export default async function ConnectorsPage({
           status={neon?.status ?? "disconnected"}
           host={neon?.config.host ?? null}
           mode={neon?.config.mode ?? null}
+        />
+        <R2ConnectorCard
+          projectId={projectId}
+          connected={Boolean(r2)}
+          status={r2?.status ?? "disconnected"}
+          bucket={r2?.config.bucket ?? null}
+          mode={r2?.config.mode ?? null}
         />
         {(Object.keys(CONNECTOR_SPECS) as FormConnectorType[]).map((type) => {
           const spec = CONNECTOR_SPECS[type];

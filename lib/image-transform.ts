@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import { z } from "zod";
-import { objectExists, getObjectBytes, putObject, listPrefixKeys } from "./r2";
+import { objectExists, getObjectBytes, putObject, listPrefixKeys, type ProjectStorage } from "./r2";
 import { rateLimit } from "./ratelimit";
 import { ValidationError } from "./validation";
 
@@ -107,21 +107,22 @@ export type EnsureResult =
   | { ok: false; status: 429 | 422; error: string; retryAfterSec?: number };
 
 /**
- * Ensure the derivative exists in R2, returning its key. On a cache miss:
- * enforce the per-asset budget, then per-IP rate limits, then generate with
- * sharp and store. Idempotent — a concurrent generate just re-writes the same
- * deterministic key.
+ * Ensure the derivative exists in the PROJECT'S storage plane (A4), returning
+ * its key. On a cache miss: enforce the per-asset budget, then per-IP rate
+ * limits, then generate with sharp and store. Idempotent — a concurrent
+ * generate just re-writes the same deterministic key.
  */
 export async function ensureDerivative(
+  st: ProjectStorage,
   asset: { r2Key: string },
   params: TransformParams,
   ip: string,
 ): Promise<EnsureResult> {
   const key = derivedKey(asset.r2Key, params);
-  if (await objectExists(key)) return { ok: true, key };
+  if (await objectExists(st, key)) return { ok: true, key };
 
   // Budget: cap distinct derivatives per asset (bounds R2 cost + abuse).
-  const existing = await listPrefixKeys(`${dirname(asset.r2Key)}/_t/`);
+  const existing = await listPrefixKeys(st, `${dirname(asset.r2Key)}/_t/`);
   if (existing.length >= DERIVATIVE_BUDGET && !existing.includes(key)) {
     return {
       ok: false,
@@ -138,7 +139,7 @@ export async function ensureDerivative(
     }
   }
 
-  const original = await getObjectBytes(asset.r2Key);
+  const original = await getObjectBytes(st, asset.r2Key);
   // Content sniff (not the declared contentType): refuse SVG/XML/polyglots that
   // would otherwise reach sharp's librsvg decoder.
   if (!looksLikeRaster(original)) {
@@ -156,7 +157,7 @@ export async function ensureDerivative(
       ? await pipeline.webp({ quality: QUALITY.webp }).toBuffer()
       : await pipeline.jpeg({ quality: QUALITY.jpeg }).toBuffer();
 
-  await putObject(key, body, `image/${params.format}`);
+  await putObject(st, key, body, `image/${params.format}`);
   return { ok: true, key };
 }
 

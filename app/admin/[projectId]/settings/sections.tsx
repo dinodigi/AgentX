@@ -18,6 +18,7 @@ import {
   connectNeonAction,
   provisionManagedAction,
   deprovisionManagedAction,
+  connectR2Action,
 } from "./actions";
 
 const inputClass = "field-input";
@@ -652,6 +653,136 @@ export function NeonConnectorCard(p: {
                   const res = await disconnectConnector(p.projectId, "neon");
                   setError(res.error ?? null);
                   if (!res.error) setNote("Disconnected — your database was not touched");
+                }}
+              >
+                Disconnect
+              </button>
+            )}
+          </>
+        )}
+        {note && <span className="text-xs text-ink-mute">{note}</span>}
+      </div>
+      <ErrorLine error={error} />
+    </form>
+  );
+}
+
+/**
+ * The storage connector (A4). Like Neon, its own card: Connect runs a live
+ * write-then-publicly-read-back probe before anything is stored, which the
+ * generic save flow can't do. Managed buckets arrive with A4c.
+ */
+export function R2ConnectorCard(p: {
+  projectId: string;
+  connected: boolean;
+  status: string;
+  bucket: string | null;
+  mode: string | null;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const managed = p.mode === "managed";
+
+  const fields = [
+    { key: "accountId", label: "Cloudflare account ID (32-hex)", placeholder: "8f3a…", type: "text" },
+    { key: "accessKeyId", label: "R2 access key ID", placeholder: "", type: "password" },
+    { key: "secretAccessKey", label: "R2 secret access key", placeholder: "", type: "password" },
+    { key: "bucket", label: "Bucket name", placeholder: "my-site-media", type: "text" },
+    {
+      key: "publicBaseUrl",
+      label: "Public base URL (your custom domain or enabled r2.dev URL)",
+      placeholder: "https://media.example.com",
+      type: "text",
+    },
+  ] as const;
+
+  return (
+    <form
+      action={async (fd) => {
+        setBusy(true);
+        setNote(null);
+        setError(null);
+        const res = await connectR2Action(p.projectId, fd);
+        setBusy(false);
+        setError(res.error ?? null);
+        if (!res.error) setNote(res.detail ?? "Connected");
+      }}
+      className="card max-w-md p-5"
+    >
+      <div className="mb-3 flex items-center gap-2">
+        <span
+          className="h-2 w-2 rounded-full"
+          style={{
+            background: !p.connected
+              ? "var(--color-line-strong)"
+              : p.status === "connected"
+                ? "var(--color-ok)"
+                : "var(--color-err)",
+          }}
+        />
+        <p className="text-sm font-medium">R2 storage (project bucket)</p>
+        {p.connected && (
+          <span className="text-xs text-ink-mute">
+            {p.status === "connected" ? `${managed ? "managed" : "your bucket"} — ${p.bucket ?? ""}` : p.status}
+          </span>
+        )}
+      </div>
+
+      <p className="mb-3 text-xs text-ink-mute">
+        Keep this project's uploads and image derivatives in its own bucket,
+        served from your URL. Connect writes a probe object with your keys and
+        reads it back through your public URL before storing anything. Set it up{" "}
+        <em>before</em> uploading: existing assets are not migrated.
+      </p>
+
+      {!managed &&
+        fields.map((f) => (
+          <div key={f.key} className="mb-3">
+            <label className="mb-1 block text-xs text-ink-mute">{f.label}</label>
+            <input name={f.key} type={f.type} placeholder={f.placeholder} className={inputClass} />
+          </div>
+        ))}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {!managed && (
+          <button type="submit" disabled={busy} className={buttonClass}>
+            {busy ? "Probing…" : p.connected ? "Reconnect" : "Connect"}
+          </button>
+        )}
+        {p.connected && (
+          <>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setNote(null);
+                const res = await testConnector(p.projectId, "r2");
+                setBusy(false);
+                setError(res.error ?? null);
+                if (!res.error) setNote(res.ok ? `OK — ${res.detail}` : `Failed — ${res.detail}`);
+              }}
+            >
+              Test
+            </button>
+            {!managed && (
+              <button
+                type="button"
+                className="btn btn-danger-ghost"
+                disabled={busy}
+                onClick={async () => {
+                  if (
+                    !window.confirm(
+                      "Disconnect this bucket? Your bucket and its objects are NEVER deleted. Already-uploaded assets keep serving from your URL; new uploads use the shared plane.",
+                    )
+                  ) {
+                    return;
+                  }
+                  const res = await disconnectConnector(p.projectId, "r2");
+                  setError(res.error ?? null);
+                  if (!res.error) setNote("Disconnected — your bucket was not touched");
                 }}
               >
                 Disconnect

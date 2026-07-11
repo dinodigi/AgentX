@@ -624,3 +624,29 @@ Then A5 only branches the connector, mints `dev` tokens, and makes
    (keeps the smoke harness and fallback teardown untouched), or unify to
    app-level cascade everywhere for a single schema shape? Recommendation: accept
    the asymmetry — it's the lower-risk, zero-harness-change path.
+
+7. **A4 R2-connector facts (researched 2026-07-11, live Cloudflare docs):**
+   - **Bucket create/delete work over the plain S3 API** (CreateBucket /
+     DeleteBucket implemented; region is always `auto`; no ACLs) — managed
+     bucket provisioning rides the S3 client we already ship, PROVIDED the
+     platform R2 token is **account-scoped** (Admin R&W), not bucket-scoped.
+     DeleteBucket requires the bucket to be emptied first.
+   - **Public access for managed buckets:** the r2.dev “public development
+     URL” IS API-enableable — `PUT /accounts/{account_id}/r2/buckets/{bucket}
+     /domains/managed` (Cloudflare REST, needs a `CF_API_TOKEN` with R2:Edit —
+     a NEW platform secret) → serves at `https://{bucket}.{account_id}.r2.dev`.
+     Cloudflare labels r2.dev non-production and rate-limits it around
+     hundreds of req/s per bucket — **accepted for launch** (a tenant site's
+     media stays well under that); the production upgrade is a custom domain
+     per bucket (e.g. `{slug}.media.pluggie.app`), a post-launch increment.
+     Rejected alternative: app-proxied private buckets (changes the absolute-
+     URL delivery contract everywhere + pays app egress on every media hit).
+   - **BYO shape:** tenant supplies Cloudflare account id, access key id,
+     secret, bucket name, and THEIR public base URL (custom domain or r2.dev
+     they enabled). Validation = write a probe object via their keys, fetch it
+     through their public base URL, delete it — proves credentials AND public
+     serving in one pass. Zero-asset guard mirrors A2 (asset URLs are minted
+     absolute at upload, so attaching storage mid-life would strand them).
+   - **B2 interplay:** deleteProjectObjects becomes mode-aware — fallback =
+     prefix-delete in the shared bucket (today's behavior); BYO = never touch
+     their bucket; managed = empty + DeleteBucket.

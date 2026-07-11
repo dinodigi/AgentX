@@ -233,16 +233,23 @@ export async function saveConnector(
 
 export async function disconnectConnector(
   projectId: string,
-  type: "clerk" | "resend" | "stripe" | "neon",
+  type: "clerk" | "resend" | "stripe" | "neon" | "r2",
 ): Promise<{ error?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
   if (type === "neon") {
     // Dedicated flow: evicts cached tenant clients; never touches their DB.
     const { disconnectNeonDatabase } = await import("@/lib/neon-connector");
-    await disconnectNeonDatabase(projectId);
+    const res = await disconnectNeonDatabase(projectId);
     revalidatePath(`/admin/${projectId}/connectors`);
-    return {};
+    return res.ok ? {} : { error: res.detail };
+  }
+  if (type === "r2") {
+    // Dedicated flow: evicts cached storage clients; never touches their bucket.
+    const { disconnectR2Bucket } = await import("@/lib/r2-connector");
+    const res = await disconnectR2Bucket(projectId);
+    revalidatePath(`/admin/${projectId}/connectors`);
+    return res.ok ? {} : { error: res.detail };
   }
   const { removeConnector, deprovisionStripeWebhook } = await import("@/lib/connectors");
   // Best-effort: delete the Stripe webhook endpoint we provisioned before we
@@ -269,6 +276,30 @@ export async function connectNeonAction(
   if (!connString) return { error: "Paste the database's connection string" };
   const { connectNeonDatabase } = await import("@/lib/neon-connector");
   const result = await connectNeonDatabase(projectId, connString);
+  revalidatePath(`/admin/${projectId}/connectors`);
+  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+}
+
+/**
+ * A4: attach a BYO R2 bucket as this project's storage plane. The probe
+ * writes with their keys and reads back through their public base URL before
+ * anything is stored — the generic saveConnector cannot express type r2.
+ */
+export async function connectR2Action(
+  projectId: string,
+  formData: FormData,
+): Promise<{ error?: string; ok?: boolean; detail?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const field = (k: string) => String(formData.get(k) ?? "").trim();
+  const { connectR2Bucket } = await import("@/lib/r2-connector");
+  const result = await connectR2Bucket(projectId, {
+    accountId: field("accountId"),
+    accessKeyId: field("accessKeyId"),
+    secretAccessKey: field("secretAccessKey"),
+    bucket: field("bucket"),
+    publicBaseUrl: field("publicBaseUrl"),
+  });
   revalidatePath(`/admin/${projectId}/connectors`);
   return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
 }
@@ -322,7 +353,7 @@ export async function provisionStripeWebhook(
 
 export async function testConnector(
   projectId: string,
-  type: "clerk" | "resend" | "stripe" | "neon",
+  type: "clerk" | "resend" | "stripe" | "neon" | "r2",
 ): Promise<{ error?: string; ok?: boolean; detail?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };

@@ -17,15 +17,16 @@ import {
  * they don't need, never secrets.
  */
 
-export type ConnectorType = "clerk" | "resend" | "stripe" | "neon";
+export type ConnectorType = "clerk" | "resend" | "stripe" | "neon" | "r2";
 
 /**
- * The connectors the GENERIC settings form may save. `neon` is deliberately
- * not in this set: its connect flow validates + installs the data-plane schema
- * before anything is stored (lib/neon-connector.ts) — a plain form save would
- * bypass that, so the form action's type simply cannot express it.
+ * The connectors the GENERIC settings form may save. `neon` and `r2` are
+ * deliberately not in this set: their connect flows validate the target (and
+ * install schema / probe public serving) BEFORE anything is stored
+ * (lib/neon-connector.ts, lib/r2-connector.ts) — a plain form save would
+ * bypass that, so the form action's type simply cannot express them.
  */
-export type FormConnectorType = Exclude<ConnectorType, "neon">;
+export type FormConnectorType = Exclude<ConnectorType, "neon" | "r2">;
 
 export const CONNECTOR_SPECS: Record<
   FormConnectorType,
@@ -304,6 +305,24 @@ export async function checkConnectorHealth(
         : v === 0
           ? "database reachable but the data-plane schema is not installed — reconnect to install"
           : `database reachable but schema v${v} ≠ expected v${TENANT_SCHEMA_VERSION} — content ops are quarantined until it migrates`;
+    } else if (type === "r2") {
+      // The full-loop storage probe: write with their keys, read back through
+      // their public base, delete — the same check connect ran (A4).
+      const c = await getConnector(projectId, "r2");
+      if (!c?.secretEnc || !c.config.bucket || !c.config.accountId || !c.config.publicBaseUrl) {
+        return { ok: false, detail: "no bucket configured" };
+      }
+      const { probeBucket } = await import("./r2-connector");
+      const creds = JSON.parse(decryptSecret(c.secretEnc)) as { accessKeyId: string; secretAccessKey: string };
+      const res = await probeBucket({
+        accountId: c.config.accountId,
+        accessKeyId: creds.accessKeyId,
+        secretAccessKey: creds.secretAccessKey,
+        bucket: c.config.bucket,
+        publicBaseUrl: c.config.publicBaseUrl,
+      });
+      ok = res.ok;
+      detail = res.detail;
     } else if (type === "clerk") {
       const auth = await getAuthConfig(projectId);
       if (!auth) return { ok: false, detail: "no issuer configured" };
