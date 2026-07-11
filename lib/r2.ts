@@ -128,6 +128,26 @@ export async function listPrefixKeys(prefix: string): Promise<string[]> {
   return keys;
 }
 
+/**
+ * Delete every R2 object a project owns (B2 project deletion). Keys are minted
+ * as `${projectId}/uuid/filename`, so the project prefix cleanly scopes all its
+ * originals + image derivatives. Returns the count removed. Best-effort — the
+ * caller cascades the metadata rows regardless. (When R2 becomes a per-project
+ * connector in A4, a managed bucket is dropped wholesale instead.)
+ */
+export async function deleteProjectObjects(projectId: string): Promise<number> {
+  const keys = await listPrefixKeys(`${projectId}/`);
+  for (let i = 0; i < keys.length; i += 1000) {
+    await client().send(
+      new DeleteObjectsCommand({
+        Bucket: process.env.R2_BUCKET!,
+        Delete: { Objects: keys.slice(i, i + 1000).map((Key) => ({ Key })) },
+      }),
+    );
+  }
+  return keys.length;
+}
+
 export async function listAssets(
   projectId: string,
   page?: { limit: number; offset: number },

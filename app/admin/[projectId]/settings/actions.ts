@@ -1,12 +1,23 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
+import { redirect } from "next/navigation";
 import { clerkClient } from "@clerk/nextjs/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { projects, projectTokens, projectMembers } from "@/db/schema";
+import {
+  entriesTrash,
+  entryVersions,
+  projectConnectors,
+  projects,
+  projectTokens,
+  projectMembers,
+  transactReceipts,
+} from "@/db/schema";
 import { generateToken, hashToken } from "@/lib/tokens";
-import { getProjectRole } from "@/lib/access";
+import { getProjectRole, getViewer } from "@/lib/access";
+import { canDeleteProject } from "@/lib/workspaces";
+import { deleteProjectObjects } from "@/lib/r2";
 import { updateCollectionSettings } from "@/lib/collections";
 
 /** Settings mutations. All require the operator role on the project. */
@@ -305,4 +316,68 @@ export async function removeMember(
     .where(and(eq(projectMembers.id, memberId), eq(projectMembers.projectId, projectId)));
   revalidatePath(`/admin/${projectId}/settings`);
   return {};
+}
+
+/**
+ * Permanently delete a project (B2). Destructive = type-the-name confirm.
+ * Gated stricter than operator: only the owning workspace's owner/admin (or a
+ * platform operator). Deletes the project's R2 objects best-effort, then the
+ * `projects` row — FK cascade wipes collections/entries/trash/versions/changes/
+ * tokens/members/connectors/jobs/schedules in the control plane. (When a project
+ * has a managed data-plane connector, A3/A4 add deprovisioning its Neon DB + R2
+ * bucket before this; none exist yet, so the cascade is complete today.)
+ */
+export async function deleteProjectAction(
+  projectId: string,
+  formData: FormData,
+): Promise<{ error?: string }> {
+  const viewer = await getViewer();
+  if (!viewer) return { error: "not signed in" };
+  if (!(await canDeleteProject(projectId, viewer))) {
+    return { error: "Only the workspace owner or an admin can delete a project" };
+  }
+
+  const [project] = await db
+    .select({ name: projects.name, branding: projects.branding })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!project) return { error: "Project not found" };
+
+  const label = project.branding?.displayName ?? project.name;
+  const typed = String(formData.get("confirm") ?? "").trim();
+  if (typed !== label) {
+    return { error: `Type the project name exactly to confirm: ${label}` };
+  }
+
+  // Future-proofing: a managed data-plane connector would need deprovisioning
+  // first (A3/A4). Refuse rather than silently orphan a paid tenant DB.
+  const [dataPlane] = await db
+    .select({ id: projectConnectors.id })
+    .from(projectConnectors)
+    .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "neon")))
+    .limit(1);
+  if (dataPlane) {
+    return { error: "This project has a managed database connector — data-plane teardown isn't wired yet (A3)." };
+  }
+
+  try {
+    await deleteProjectObjects(projectId);
+  } catch (e) {
+    // Orphaned bytes are recoverable later; never block the delete on R2.
+    console.error("R2 cleanup failed during project delete", projectId, e);
+  }
+
+  // These four tables are MISSING their project_id FK cascade in the live DB
+  // (db:push-vs-PG18 drift, verified by FK audit) — deleting the project would
+  // orphan them. Delete explicitly so teardown is complete regardless of the
+  // DB's FK state. The other ten tables cascade from `projects` correctly.
+  await Promise.all([
+    db.delete(projectMembers).where(eq(projectMembers.projectId, projectId)),
+    db.delete(entriesTrash).where(eq(entriesTrash.projectId, projectId)),
+    db.delete(entryVersions).where(eq(entryVersions.projectId, projectId)),
+    db.delete(transactReceipts).where(eq(transactReceipts.projectId, projectId)),
+  ]);
+  await db.delete(projects).where(eq(projects.id, projectId));
+  redirect("/admin");
 }

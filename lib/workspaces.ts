@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { workspaces, workspaceMembers, type WorkspaceRole } from "@/db/schema";
+import { projects, workspaces, workspaceMembers, type WorkspaceRole } from "@/db/schema";
 import type { Viewer } from "./access";
 
 export interface WorkspaceMemberRow {
@@ -53,6 +53,20 @@ export async function listWorkspaceMembers(workspaceId: string): Promise<Workspa
     .where(eq(workspaceMembers.workspaceId, workspaceId))
     .orderBy(asc(workspaceMembers.createdAt));
   return rows as WorkspaceMemberRow[];
+}
+
+/**
+ * Whether the viewer may delete/rename-lifecycle a project (B2). Stricter than
+ * `operator` access: only a platform operator or the OWNING workspace's
+ * owner/admin — never a project_members outsider share (B1: sharing never
+ * spreads deletion).
+ */
+export async function canDeleteProject(projectId: string, viewer: Viewer): Promise<boolean> {
+  if (viewer.isPlatformOperator) return true;
+  const [p] = await db.select({ workspaceId: projects.workspaceId }).from(projects).where(eq(projects.id, projectId)).limit(1);
+  if (!p?.workspaceId) return false;
+  const role = await getWorkspaceRole(p.workspaceId, viewer.userId);
+  return role === "owner" || role === "admin";
 }
 
 /** Workspace ids the viewer belongs to (any role). */

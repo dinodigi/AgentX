@@ -1,11 +1,13 @@
 import { notFound } from "next/navigation";
-import { desc, eq, inArray, and } from "drizzle-orm";
+import { count, desc, eq, inArray, and } from "drizzle-orm";
 import { db } from "@/db";
-import { projects, projectTokens, projectMembers, webhookDeliveries, jobs } from "@/db/schema";
-import { getProjectRole } from "@/lib/access";
+import { assets, entries, projects, projectTokens, projectMembers, webhookDeliveries, jobs } from "@/db/schema";
+import { getProjectRole, getViewer } from "@/lib/access";
+import { canDeleteProject } from "@/lib/workspaces";
 import { listCollections } from "@/lib/collections";
 import { listSchedules } from "@/lib/schedules";
 import { TokensSection, WebhookForm, MembersSection, SecretReveal } from "./sections";
+import { DeleteProjectSection } from "./DeleteProjectSection";
 import { refireDeliveryAction, cancelJobAction, toggleScheduleAction } from "./actions";
 
 /**
@@ -20,6 +22,9 @@ export default async function SettingsPage({
   const { projectId } = await params;
   const role = await getProjectRole(projectId);
   if (role !== "operator") notFound();
+
+  const viewer = await getViewer();
+  const canDelete = viewer ? await canDeleteProject(projectId, viewer) : false;
 
   const [collections, tokens, members, deliveries, projectRow, automationJobs, schedules] = await Promise.all([
     listCollections(projectId),
@@ -41,7 +46,7 @@ export default async function SettingsPage({
       .orderBy(desc(webhookDeliveries.createdAt))
       .limit(15),
     db
-      .select({ secret: projects.webhookSigningSecret })
+      .select({ secret: projects.webhookSigningSecret, name: projects.name, branding: projects.branding })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1)
@@ -58,6 +63,15 @@ export default async function SettingsPage({
   ]);
 
   const formCollections = collections.filter((c) => c.publicWrite);
+
+  const projectLabel = projectRow?.branding?.displayName ?? projectRow?.name ?? "project";
+  const deleteCounts = canDelete
+    ? {
+        collections: collections.length,
+        entries: (await db.select({ n: count() }).from(entries).where(eq(entries.projectId, projectId)))[0]?.n ?? 0,
+        assets: (await db.select({ n: count() }).from(assets).where(eq(assets.projectId, projectId)))[0]?.n ?? 0,
+      }
+    : null;
 
   return (
     <>
@@ -285,6 +299,16 @@ export default async function SettingsPage({
           members={members.map((m) => ({ id: m.id, email: m.email, role: m.role }))}
         />
       </section>
+
+      {canDelete && deleteCounts && (
+        <section className="mt-10 border-t border-line pt-8">
+          <h2 className="section-label mb-1 text-err">Danger zone</h2>
+          <p className="mb-3 max-w-md text-sm text-ink-mute">
+            Delete this project and everything in it. Only workspace owners and admins can.
+          </p>
+          <DeleteProjectSection projectId={projectId} label={projectLabel} counts={deleteCounts} />
+        </section>
+      )}
     </>
   );
 }
