@@ -87,8 +87,23 @@ while we watch every tenant from an operator console.
       - **Ownership is singular:** a project belongs to exactly one paying
         workspace. Sharing spreads access, never billing, keys, or deletion.
 - [ ] B2 (M) **Project lifecycle.** Create → *setup* state (choose BYO or
-      managed, connect or provision) → active. Self-serve creation reopens here,
-      behind a plan. MCP token + delivery API light up only on active.
+      managed, connect or provision) → active → **deleted**. Self-serve creation
+      reopens here, behind a plan. MCP token + delivery API light up only on
+      active. Decided 2026-07-10 — users can delete their own projects:
+      - Destructive = **plan + confirm** (design rule): the delete plan discloses
+        what goes (collections, entries, assets, tokens, connectors) and requires
+        an explicit confirm (type-the-name gate).
+      - **Managed** projects deprovision their infra on delete — tear down the
+        project's Neon database/branch and R2 bucket so we stop paying for
+        orphaned resources (ties to Track A's provisioning). **BYO** projects
+        drop our control-plane records and stop routing but NEVER delete the
+        tenant's own database/bucket — it's theirs.
+      - Delete **stops the per-project subscription** (coordinate with B3) and
+        removes the project from every member's dashboard.
+      - Gated to the owning workspace's owner/admin — a shared manager can work
+        in a project but cannot delete it (B1: sharing never spreads deletion).
+      - Consider a soft-delete grace window (restore-able for N days) before the
+        managed-infra teardown actually fires, mirroring entry trash.
 - [ ] B3 (L) **Billing + caps.** Our own Stripe (subscriptions per project —
       new work; Phase 15 was tenants' checkout). Usage counters (requests,
       storage, entries) → daily rollups → hard-cap enforcement with clear
