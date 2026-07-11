@@ -1,27 +1,34 @@
+import { redirect } from "next/navigation";
 import { count, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { collections, entries, projectConnectors } from "@/db/schema";
-import { accessibleProjectsGrouped, getViewer } from "@/lib/access";
-import type { Project } from "@/db/schema";
+import { collections, entries, projectConnectors, type Project } from "@/db/schema";
+import { getViewer } from "@/lib/access";
 import { brandInk } from "@/lib/brand";
 import { getWorkspaceTheme } from "@/lib/theme";
+import { getActiveWorkspace, listViewerWorkspaces, projectsInWorkspace } from "@/lib/workspaces";
 import { ProjectFleet, type FleetProject } from "@/components/admin/ProjectFleet";
 import { WorkspaceSidebar } from "@/components/admin/WorkspaceSidebar";
 import type { SwitcherProject } from "@/components/admin/ProjectSwitcher";
 
 /**
- * The studio — the operator's workspace over every client backend. The unified
- * sidebar frames it (switcher + account + theme); the main area is the fleet,
- * each project a live system with scale, connector health and a last-write pulse.
+ * The studio home — the fleet for ONE workspace at a time (B1c). The sidebar's
+ * workspace switcher picks which; this scopes to it. Cross-tenant is the
+ * operator console, not here.
  */
 export default async function AdminHome() {
-  const [{ owned, shared }, theme, viewer] = await Promise.all([
-    accessibleProjectsGrouped(),
+  const viewer = await getViewer();
+  if (!viewer) redirect("/sign-in");
+
+  const [active, workspaceList, theme] = await Promise.all([
+    getActiveWorkspace(viewer),
+    listViewerWorkspaces(viewer.userId),
     getWorkspaceTheme(),
-    getViewer(),
   ]);
-  const canCreate = viewer?.isPlatformOperator ?? false;
-  const projects = [...owned, ...shared];
+  // getActiveWorkspace may have just created a personal workspace that the
+  // (concurrent) list didn't see — guarantee the switcher includes the active one.
+  const workspaces = workspaceList.some((w) => w.id === active.id) ? workspaceList : [active, ...workspaceList];
+  const canCreate = viewer.isPlatformOperator;
+  const projects = await projectsInWorkspace(active.id);
 
   const [collectionCounts, entryCounts, connectorRows, activityRows] = await Promise.all([
     db.select({ projectId: collections.projectId, n: count() }).from(collections).groupBy(collections.projectId),
@@ -69,15 +76,20 @@ export default async function AdminHome() {
       createdAt: p.createdAt.toISOString(),
     };
   };
-  const byActivity = (a: FleetProject, b: FleetProject) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? "");
-  const ownedFleet = owned.map(toFleet).sort(byActivity);
-  const sharedFleet = shared.map(toFleet).sort(byActivity);
+  const fleet = projects.map(toFleet).sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""));
 
   return (
     <div className="flex min-h-screen">
-      <WorkspaceSidebar projects={switcher} theme={theme} canCreateProjects={canCreate} isPlatformOperator={canCreate} />
+      <WorkspaceSidebar
+        projects={switcher}
+        theme={theme}
+        canCreateProjects={canCreate}
+        isPlatformOperator={viewer.isPlatformOperator}
+        workspaces={workspaces}
+        activeWorkspaceId={active.id}
+      />
       <div className="page-enter min-w-0 flex-1">
-        <ProjectFleet owned={ownedFleet} shared={sharedFleet} canCreate={canCreate} />
+        <ProjectFleet projects={fleet} canCreate={canCreate} workspaceName={active.name} />
       </div>
     </div>
   );

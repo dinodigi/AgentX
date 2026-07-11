@@ -19,3 +19,11 @@ export async function getSidebarCollapsed(): Promise<boolean> {
   const c = await cookies();
   return c.get(SIDEBAR_COOKIE)?.value === "1";
 }
+
+/** The dashboard's active-workspace context (B1c); the switcher writes it. */
+export const WORKSPACE_COOKIE = "ax_workspace";
+
+export async function getActiveWorkspaceCookie(): Promise<string | undefined> {
+  const c = await cookies();
+  return c.get(WORKSPACE_COOKIE)?.value;
+}

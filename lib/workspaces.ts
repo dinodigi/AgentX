@@ -1,7 +1,8 @@
 import "server-only";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { projects, workspaces, workspaceMembers, type WorkspaceRole } from "@/db/schema";
+import { projects, workspaces, workspaceMembers, type Project, type WorkspaceRole } from "@/db/schema";
+import { getActiveWorkspaceCookie } from "./theme";
 import type { Viewer } from "./access";
 
 export interface WorkspaceMemberRow {
@@ -9,6 +10,14 @@ export interface WorkspaceMemberRow {
   email: string;
   role: WorkspaceRole;
   clerkUserId: string;
+}
+
+/** A workspace as it appears in the switcher — name, the viewer's role, scale. */
+export interface ViewerWorkspace {
+  id: string;
+  name: string;
+  role: WorkspaceRole;
+  projects: number;
 }
 
 /**
@@ -76,6 +85,50 @@ export async function workspaceIdsForUser(userId: string): Promise<string[]> {
     .from(workspaceMembers)
     .where(eq(workspaceMembers.clerkUserId, userId));
   return rows.map((r) => r.id);
+}
+
+/** The viewer's workspaces for the switcher — owned first, then by name. */
+export async function listViewerWorkspaces(userId: string): Promise<ViewerWorkspace[]> {
+  const rows = await db
+    .select({ id: workspaces.id, name: workspaces.name, role: workspaceMembers.role })
+    .from(workspaceMembers)
+    .innerJoin(workspaces, eq(workspaces.id, workspaceMembers.workspaceId))
+    .where(eq(workspaceMembers.clerkUserId, userId));
+  if (rows.length === 0) return [];
+
+  const ids = rows.map((r) => r.id);
+  const counts = await db
+    .select({ workspaceId: projects.workspaceId })
+    .from(projects)
+    .where(inArray(projects.workspaceId, ids));
+  const countBy = new Map<string, number>();
+  for (const c of counts) if (c.workspaceId) countBy.set(c.workspaceId, (countBy.get(c.workspaceId) ?? 0) + 1);
+
+  const rank = (r: WorkspaceRole) => (r === "owner" ? 0 : r === "admin" ? 1 : 2);
+  return rows
+    .map((r) => ({ id: r.id, name: r.name, role: r.role as WorkspaceRole, projects: countBy.get(r.id) ?? 0 }))
+    .sort((a, b) => rank(a.role) - rank(b.role) || a.name.localeCompare(b.name));
+}
+
+/**
+ * The dashboard's active workspace (B1c). Reads the cookie, validates it's one
+ * the viewer actually belongs to (never trust it to point at a workspace they
+ * left), and falls back to their owned/first workspace — creating a personal one
+ * if they have none.
+ */
+export async function getActiveWorkspace(viewer: Viewer): Promise<ViewerWorkspace> {
+  const [cookieId, list] = await Promise.all([getActiveWorkspaceCookie(), listViewerWorkspaces(viewer.userId)]);
+  if (list.length === 0) {
+    const id = await ensurePersonalWorkspace(viewer);
+    const [w] = await db.select({ name: workspaces.name }).from(workspaces).where(eq(workspaces.id, id)).limit(1);
+    return { id, name: w?.name ?? "Workspace", role: "owner", projects: 0 };
+  }
+  return list.find((w) => w.id === cookieId) ?? list.find((w) => w.role === "owner") ?? list[0];
+}
+
+/** Projects belonging to one workspace (the dashboard fleet, scoped). */
+export async function projectsInWorkspace(workspaceId: string): Promise<Project[]> {
+  return db.select().from(projects).where(eq(projects.workspaceId, workspaceId));
 }
 
 /**

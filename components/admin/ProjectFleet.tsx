@@ -22,25 +22,21 @@ export interface FleetProject {
 }
 
 export function ProjectFleet({
-  owned,
-  shared = [],
+  projects,
   canCreate = false,
+  workspaceName,
 }: {
-  /** Projects reached via workspace membership (the viewer's own). */
-  owned: FleetProject[];
-  /** Projects reached only via a per-project share (an outsider handoff). */
-  shared?: FleetProject[];
+  /** Projects in the active workspace (B1c). */
+  projects: FleetProject[];
   /** LAUNCH-PLAN 0.1: creation is operator-only until B2 reopens it. */
   canCreate?: boolean;
+  /** The active workspace, shown as the fleet's context (B1c). */
+  workspaceName?: string;
 }) {
-  const projects = [...owned, ...shared];
   const totalCollections = projects.reduce((s, p) => s + p.collections, 0);
   const totalEntries = projects.reduce((s, p) => s + p.entries, 0);
   // Fleet is "green" when no connected project has a connector in error.
   const anyError = projects.some((p) => p.connectors.some((c) => c.status === "error"));
-  // Only label the groups when there's something in both — otherwise the page
-  // heading already says "Projects" and a lone label is noise.
-  const labelGroups = owned.length > 0 && shared.length > 0;
 
   return (
     <div className="mx-auto max-w-[1200px] px-5 py-8 md:px-10 md:py-10">
@@ -71,7 +67,7 @@ export function ProjectFleet({
 
       <div className="mb-4 flex items-end justify-between">
         <div>
-          <p className="eyebrow mb-1">Studio</p>
+          <p className="eyebrow mb-1">{workspaceName ?? "Studio"}</p>
           <h1 className="display text-[22px] font-semibold leading-none">Projects</h1>
         </div>
         {canCreate && (
@@ -85,12 +81,12 @@ export function ProjectFleet({
       {projects.length === 0 ? (
         <div className="card flex flex-col items-center gap-3 p-14 text-center">
           <p className="display text-lg font-semibold">
-            {canCreate ? "No backends yet" : "No projects yet"}
+            {canCreate ? "No projects in this workspace yet" : "No projects yet"}
           </p>
           <p className="max-w-sm text-sm text-ink-mute">
             {canCreate
               ? "A project gives you a branded admin, an MCP endpoint, and a delivery API — defined by an agent, handed to a client."
-              : "Projects shared with you appear here. During the beta we onboard new projects by hand — request a spot and we'll set yours up with you."}
+              : "Projects in this workspace appear here. During the beta we onboard new projects by hand — request a spot and we'll set yours up with you."}
           </p>
           {canCreate ? (
             <Link href="/admin/new" className="btn btn-ink mt-1">
@@ -104,35 +100,14 @@ export function ProjectFleet({
           )}
         </div>
       ) : (
-        <div className="flex flex-col gap-7">
-          {owned.length > 0 && (
-            <section>
-              {labelGroups && <GroupLabel>Your projects</GroupLabel>}
-              <ul className="flex flex-col gap-2.5">
-                {owned.map((p) => (
-                  <ProjectRow key={p.id} p={p} />
-                ))}
-              </ul>
-            </section>
-          )}
-          {shared.length > 0 && (
-            <section>
-              <GroupLabel>Shared with you</GroupLabel>
-              <ul className="flex flex-col gap-2.5">
-                {shared.map((p) => (
-                  <ProjectRow key={p.id} p={p} />
-                ))}
-              </ul>
-            </section>
-          )}
-        </div>
+        <ul className="flex flex-col gap-2.5">
+          {projects.map((p) => (
+            <ProjectRow key={p.id} p={p} />
+          ))}
+        </ul>
       )}
     </div>
   );
-}
-
-function GroupLabel({ children }: { children: React.ReactNode }) {
-  return <p className="eyebrow mb-2.5">{children}</p>;
 }
 
 function ProjectRow({ p }: { p: FleetProject }) {

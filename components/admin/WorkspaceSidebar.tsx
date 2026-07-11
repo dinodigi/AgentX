@@ -21,6 +21,8 @@ import {
 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { ProjectSwitcher, type SwitcherProject } from "./ProjectSwitcher";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import type { ViewerWorkspace } from "@/lib/workspaces";
 
 /**
  * The left workspace rail (studio + project chrome). A bounded set — switcher,
@@ -33,6 +35,8 @@ export function WorkspaceSidebar({
   theme,
   canCreateProjects = false,
   isPlatformOperator = false,
+  workspaces = [],
+  activeWorkspaceId,
 }: {
   projects: SwitcherProject[];
   currentId?: string;
@@ -41,6 +45,9 @@ export function WorkspaceSidebar({
   canCreateProjects?: boolean;
   /** B4: platform operators get the console link (the god view). */
   isPlatformOperator?: boolean;
+  /** B1c: the viewer's workspaces + active one, for the dashboard switcher. */
+  workspaces?: ViewerWorkspace[];
+  activeWorkspaceId?: string;
 }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -96,7 +103,11 @@ export function WorkspaceSidebar({
         {/* PINNED: switcher */}
         <div className="flex items-center gap-1 border-b border-line p-2.5">
           <div className="min-w-0 flex-1">
-            <ProjectSwitcher projects={projects} currentId={currentId} canCreate={canCreateProjects} />
+            {inProject || workspaces.length === 0 ? (
+              <ProjectSwitcher projects={projects} currentId={currentId} canCreate={canCreateProjects} />
+            ) : (
+              <WorkspaceSwitcher workspaces={workspaces} activeId={activeWorkspaceId ?? workspaces[0].id} />
+            )}
           </div>
           <button
             type="button"
