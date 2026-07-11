@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, count, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { db } from "@/db";
+import { db, controlDb } from "@/db";
+import { tenantDb, withTenantTransaction } from "./data-plane";
 import {
   entries,
   entriesTrash,
@@ -42,7 +43,7 @@ import { recordChange, recordChanges, type ChangeInput } from "./changes";
 import type { WorkflowActor } from "@/db/schema";
 import { recordAudit } from "./audit";
 import { defer } from "./defer";
-import { withTransaction, type DbExecutor } from "./db-tx";
+import { type DbExecutor } from "./db-tx";
 import { recordVersion } from "./versions";
 import { getCollection } from "./collections";
 import { orgClaimValue } from "./access-rules";
@@ -95,11 +96,17 @@ async function verifyRefs(
   }
   if (assetIds.length === 0 && relByTarget.size === 0) return;
 
+  // Data-plane split (A1): assets + entries live in the tenant DB, collections in
+  // the control plane — so the old `entries ⨝ collections` join can't run in one
+  // query. Resolve each relation target's name → collectionId in the control
+  // plane first, then check existence with a single-table entries query on the
+  // tenant DB.
+  const tdb = await tenantDb(projectId);
   const checks: Promise<void>[] = [];
 
   if (assetIds.length > 0) {
     checks.push(
-      db
+      tdb
         .select({ id: assets.id })
         .from(assets)
         .where(
@@ -125,21 +132,26 @@ async function verifyRefs(
     );
   }
 
-  for (const [targetName, refs] of relByTarget) {
-    checks.push(
-      db
-        .select({ id: entries.id })
-        .from(entries)
-        .innerJoin(collections, eq(entries.collectionId, collections.id))
-        .where(
-          and(
-            inArray(entries.id, refs.map((r) => r.id)),
-            eq(collections.projectId, projectId),
-            eq(collections.name, targetName),
-          ),
-        )
-        .then((found) => {
-          const ok = new Set(found.map((f) => f.id));
+  if (relByTarget.size > 0) {
+    const targetNames = [...relByTarget.keys()];
+    const targetCols = await controlDb
+      .select({ id: collections.id, name: collections.name })
+      .from(collections)
+      .where(and(eq(collections.projectId, projectId), inArray(collections.name, targetNames)));
+    const colIdByName = new Map(targetCols.map((c) => [c.name, c.id]));
+
+    for (const [targetName, refs] of relByTarget) {
+      const colId = colIdByName.get(targetName);
+      // A missing target collection means every ref into it is invalid.
+      const foundPromise = colId
+        ? tdb
+            .select({ id: entries.id })
+            .from(entries)
+            .where(and(inArray(entries.id, refs.map((r) => r.id)), eq(entries.collectionId, colId)))
+            .then((rows) => new Set(rows.map((f) => f.id)))
+        : Promise.resolve(new Set<string>());
+      checks.push(
+        foundPromise.then((ok) => {
           for (const r of refs) {
             if (!ok.has(r.id)) {
               throw new ValidationError(`${r.field}: no entry ${r.id} in "${targetName}"`, "E_VALIDATION", [
@@ -152,7 +164,8 @@ async function verifyRefs(
             }
           }
         }),
-    );
+      );
+    }
   }
 
   await Promise.all(checks);
@@ -376,7 +389,7 @@ export async function createEntry(
     ? validate(collection.fields, evaluateComputed(collection.fields, finalData), false, "storage", locales)
     : finalData;
 
-  const { entry, emit } = await createEntryCore(db, projectId, collection, toWrite, {
+  const { entry, emit } = await createEntryCore(await tenantDb(projectId), projectId, collection, toWrite, {
     idempotencyKey: opts.idempotencyKey,
   });
   if (emit) {
@@ -635,7 +648,7 @@ export async function updateEntry(
     }
   }
 
-  const { entry, emit } = await updateEntryCore(db, collection, id, patch, workflowActor(actor), {
+  const { entry, emit } = await updateEntryCore(await tenantDb(collection.projectId), collection, id, patch, workflowActor(actor), {
     localizedReplace,
   });
   await recordChange({
@@ -1085,7 +1098,7 @@ export async function updateEntryIf(
   opts: UpdateIfOpts,
 ): Promise<UpdateIfResult> {
   const plan = await prepareUpdateIf(projectId, collection, opts);
-  const result = await updateEntryIfCore(db, collection, id, opts, plan, false);
+  const result = await updateEntryIfCore(await tenantDb(collection.projectId), collection, id, opts, plan, false);
   if (!result.ok) return result.diagnosis;
 
   const { entry, emit, changedFields } = result;
@@ -1287,7 +1300,7 @@ export async function deleteEntry(
   id: string,
   actor: AuditActor = UNKNOWN_ACTOR,
 ): Promise<void> {
-  const result = await deleteEntryCore(db, collection, id, actor);
+  const result = await deleteEntryCore(await tenantDb(collection.projectId), collection, id, actor);
   if (result) {
     const { entry, emit } = result;
     // Feed tombstone (pre-delete snapshot) — inline so a synced client converges.
@@ -1565,7 +1578,7 @@ export async function transact(
   }));
 
   try {
-    await withTransaction(async (tx) => {
+    await withTenantTransaction(projectId, async (tx) => {
       if (runOpts.idempotencyKey) {
         // First statement: claim the key. A duplicate means this batch already
         // ran — abort (rolling back before any op) and replay the stored result.
@@ -1629,7 +1642,8 @@ export async function transact(
   } catch (e) {
     if (e instanceof ReplaySignal) {
       // The batch was already applied under this key — return the stored result.
-      const [receipt] = await db
+      // Receipts live in the tenant DB (written inside the tx), so read them there.
+      const [receipt] = await (await tenantDb(projectId))
         .select()
         .from(transactReceipts)
         .where(
