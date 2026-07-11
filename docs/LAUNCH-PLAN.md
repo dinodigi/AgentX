@@ -208,10 +208,17 @@ in the launch plan.
       **✅ REAL-API RUN PASSED 2026-07-11** (operator's CF_API_TOKEN): actual
       bucket + live r2.dev public URL, upload served byte-exact over the
       public internet, torn down — managed infra fully operational.
-- [ ] A5 (L) **Dev/prod environments.** Managed: dev = Neon branch of prod,
-      promote = schema-diff apply (engine exists). BYO shape to be settled in A0
-      (two connection strings vs a granted Neon API key). Per-env MCP tokens +
-      delivery endpoints; environment switcher in the admin shell.
+- [x] A5 **Dev/prod environments — ✂️ CUT FROM LAUNCH SCOPE (operator decision
+      2026-07-11).** The second-project pattern covers it with zero new code:
+      make `myapp-dev` (its own data plane by construction — stronger isolation
+      than any env), iterate there, and promote the schema with the EXISTING
+      export/import manifest diff. The plumbing shipped along the way stays
+      dormant and forward-compatible (project_tokens.env, tenantDb/secretsEnc
+      env slots); the full design (content-envs via AsyncLocalStorage + Neon
+      branch-per-env, and the bigger schema-envs variant) is recorded in the
+      design doc §13.8 for the post-launch version. Consideration passed to
+      B3: a dev-twin pricing knob (discount or lean on the free sandbox).
+      **⇒ TRACK A IS COMPLETE.**
 
 ## Track B — the business layer (Phase 20, reshaped)
 
@@ -271,7 +278,10 @@ in the launch plan.
 - [ ] B3 (L) **Billing + caps.** Our own Stripe (subscriptions per project —
       new work; Phase 15 was tenants' checkout). Usage counters (requests,
       storage, entries) → daily rollups → hard-cap enforcement with clear
-      errors + upgrade prompts.
+      errors + upgrade prompts. **Anchors decided: $19 BYO / $29 managed per
+      project/mo; free hard-capped sandbox per workspace.** Consider (from the
+      A5 cut): a dev-twin pricing knob — a discounted second project linked as
+      an app's dev copy, or lean on the sandbox as the play-space.
 - [~] B4 (M) **Operator console — read view ✅ shipped 2026-07-11 (d8e00c3 +
       fe6a7f8).** `/admin/console` (operator-gated) shows all workspaces + all
       projects with scale + connector health, link into any project for support.
@@ -310,12 +320,12 @@ in the launch plan.
 ## Sequencing
 
 ```
-0.1  0.2  0.3            ── immediately
-A0 → A1 → A2 → A3 → A4 → A5
-            ↘ B1 → B2 → B3 → B4     (B1 can start once A2 proves the seam)
-                 A3 → C1 (dogfood)
-C2/C4/C5 slot into gaps; C3/C6 on the operator; C7 last.
-Launch gate = A-track + B-track + C1 + C4 + C5 + C7 all green.
+0.1  0.2  0.3            ── ✅ done
+A0 → A1 → A2 → A3 → A4   ── ✅ TRACK A COMPLETE (A5 cut from launch scope)
+B1 ✅ → B2 setup → B3 billing → B4 finish      ← THE CRITICAL PATH NOW
+                 C1 (dogfood, after B2 setup — needs the operator)
+C2/C4/C5 slot into gaps; C3 has real numbers now; C6 on the operator; C7 last.
+Launch gate = A-track ✅ + B-track + C1 + C4 + C5 + C7 all green.
 ```
 
 ## Decisions needed from the operator (blocking marked ⚑)

@@ -650,3 +650,68 @@ Then A5 only branches the connector, mints `dev` tokens, and makes
    - **B2 interplay:** deleteProjectObjects becomes mode-aware — fallback =
      prefix-delete in the shared bucket (today's behavior); BYO = never touch
      their bucket; managed = empty + DeleteBucket.
+
+8. **A5 design (drafted 2026-07-11) — dev/prod environments. ✂️ CUT FROM
+   LAUNCH SCOPE the same day (operator): the second-project pattern +
+   the existing manifest schema-promote already deliver the workflow; this
+   section is the POST-LAUNCH design of record for the native version.**
+
+   **The two possible meanings of "dev environment", the decision that shapes
+   everything:**
+   - **(A) CONTENT environments (recommended for launch).** One schema
+     (collections stay control-plane, shared across envs); each env gets its
+     own CONTENT plane — entries, trash, versions, changes, assets metadata,
+     receipts, logs. Dev = a content sandbox: agents and admins iterate with
+     test data that can never touch live rows; schema changes apply to both
+     envs at once, guarded by the existing define_collection plans/warnings.
+     "Promote" isn't needed (schema is shared; nobody promotes test content).
+     Fits the original pain ("mixing test content with live content"), the
+     existing seams (tenantDb/storageFor already take env; tokens already
+     carry env), and is one session of work.
+   - **(B) FULL environments (schema + content).** Collections gain an env
+     dimension; define_collection targets the token's env; promote = manifest
+     schema-diff apply dev→prod. Doubles the admin/MCP surface (per-env
+     schema caches, per-env index syncs, env-scoped agent tools) — a 2–3
+     session lift that reopens nearly every surface A1 threaded. The safety
+     argument for it is weaker than it looks: live schema evolution is
+     already the product's core competency (diff plans, confirm gates,
+     constraint scans, non-destructive defaults), and an agent can rehearse a
+     schema change against dev CONTENT under (A) because both envs share it.
+     Record as the post-launch "schema environments" upgrade path.
+
+   **Mechanics under (A):**
+   - **Env propagation: request-scoped context (AsyncLocalStorage), not
+     another signature-threading pass.** `lib/env-context.ts`:
+     `runWithEnv(env, fn)` + `currentEnv()` (default 'prod').
+     tenantDb/withTenantTransaction/storageFor consult `currentEnv()` when no
+     explicit env is passed. Exactly four boundaries set it: the MCP route
+     (token.env), the delivery routes (token.env), the admin surface (env
+     switcher cookie, validated), and the jobs drain (env captured on the job
+     row at enqueue). `defer()` snapshots `currentEnv()` and re-enters it in
+     the runner — one central fix covers every deferred derived write.
+     Fail-safe: missing context = 'prod' (never a crash); the smoke proves
+     dev writes land dev-side.
+   - **Managed dev plane = a Neon BRANCH of the tenant's own project**
+     (research §13.5: 10–25 branches included) — created via
+     `POST /projects/{id}/branches` + an endpoint, stored as
+     `secretsEnc.dev`; the resolver already reads `secretsEnc[env]`.
+     Copy-on-write branch = instant, cheap, and starts as a snapshot of prod
+     content (a realistic sandbox).
+   - **BYO dev plane = a second connection string** (settles A0 open q #4 —
+     a granted Neon API key is more power than needed). Optional: a BYO
+     project without a dev string simply has no dev env. Validated +
+     installed exactly like prod (probe → migrateTenantDb → store in
+     `secretsEnc.dev`).
+   - **Fallback projects:** dev env shares the control DB with an env
+     discriminator? NO — out of scope; envs are a connector-backed feature
+     (sandbox/free projects live on the shared plane, prod-only). Honest
+     boundary: "environments need the project's own database".
+   - **Storage:** same bucket for both envs at launch (asset METADATA is
+     already per-env once content splits; object keys are per-asset UUIDs —
+     no collision, deletes only touch their env's known keys). Per-env
+     buckets recorded as a later nicety.
+   - **Tokens/delivery/MCP:** minting UI gains an env choice (column + gate
+     shipped in A1.3); the same endpoints serve both envs — the token IS the
+     env selector. Admin content views scope by the switcher's env.
+   - **Migration runner:** dev branches carry the same `_schema_migrations`;
+     the migrate-on-first-use gate already verifies per connection string.
