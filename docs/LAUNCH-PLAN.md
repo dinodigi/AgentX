@@ -31,18 +31,22 @@ while we watch every tenant from an operator console.
 
 ---
 
+> **Progress note:** this file is the durable source of truth for launch
+> progress — `[ ]` todo, `[~]` in progress / drafted, `[x]` shipped. Update it as
+> items land.
+
 ## Step 0 — this week, before any track work
 
-- [ ] 0.1 (S) **Gate project creation to platform operators.** `createProject`
-      currently only checks signed-in; sign-up is open. One authz check + hide
-      the "New project" affordance for non-operators. Reopened self-serve at B2,
-      behind billing.
-- [ ] 0.2 (S) **Real marketing intake — dogfooded on AgentX itself.** The
-      waitlist/beta forms are local-state dead ends. Create an AgentX project
-      with a publicWrite `signups` collection; the marketing forms POST to its
-      delivery API. First real dogfood, and signups stop falling on the floor.
-- [ ] 0.3 (S) **ROADMAP.md refresh** — Netlify→Render corrections, mark this
-      plan as superseding the Phase 19/20 ordering, note plugins on hold.
+- [x] 0.1 (S) **Gate project creation to platform operators.** ✅ shipped
+      2026-07-11 (commit 7ea1ee1, pushed). Server action + `/admin/new` page +
+      all four New-project affordances gated on `getViewer().isPlatformOperator`.
+- [x] 0.2 (S) **Real marketing intake — dogfooded on AgentX itself.** ✅ shipped
+      2026-07-11 (commit cb0e084, pushed). "Pluggie Marketing" project + publicWrite
+      `signups` collection; forms POST via a server action to our delivery API;
+      verified end-to-end. **Pending you: set `MARKETING_INTAKE_TOKEN` in Render**
+      or prod signups stay dark.
+- [x] 0.3 (S) **ROADMAP.md refresh** — ✅ shipped 2026-07-11 (commit feadecc,
+      pushed). Render corrections, launch-plan supersession, plugins on hold.
 
 ## Track A — the data plane (Phase 19, reshaped for greenfield)
 
