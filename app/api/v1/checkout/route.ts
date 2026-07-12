@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
   if (!projectId) return deliveryError(401, "invalid or missing project token");
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-  const rl = await rateLimit(`${projectId}:${ip}`);
+  const rl = await rateLimit(`${projectId}:${ip}`, { projectId });
   if (!rl.allowed) {
     return deliveryError(429, "too many checkout requests — try again shortly", {
       headers: { "retry-after": String(rl.retryAfterSec) },

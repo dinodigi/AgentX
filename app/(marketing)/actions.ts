@@ -66,11 +66,16 @@ export async function submitSignup(input: {
   const base = selfBase(h);
 
   try {
+    // Forward the visitor's IP chain — without it every signup shares the
+    // server's own rate-limit bucket (C2 made that bucket durable, which
+    // would turn >20 signups/min GLOBALLY into 429s for real visitors).
+    const xff = h.get("x-forwarded-for");
     const res = await fetch(`${base}/api/v1/signups`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
+        ...(xff ? { "x-forwarded-for": xff } : {}),
       },
       body: JSON.stringify({ email, product: input.product, ...(about ? { about } : {}) }),
       cache: "no-store",

@@ -114,7 +114,7 @@ export type EnsureResult =
  */
 export async function ensureDerivative(
   st: ProjectStorage,
-  asset: { r2Key: string },
+  asset: { r2Key: string; projectId?: string },
   params: TransformParams,
   ip: string,
 ): Promise<EnsureResult> {
@@ -132,8 +132,14 @@ export async function ensureDerivative(
   }
 
   // Rate-limit generation per IP (global) and per asset+IP (hot-asset abuse).
-  for (const k of [`img:${ip}`, `img:${asset.r2Key}:${ip}`]) {
-    const rl = await rateLimit(k);
+  // Only the asset-scoped key is attributed for metering — attributing the
+  // global key too would double-count one transform.
+  const keys = [
+    { key: `img:${ip}`, projectId: undefined },
+    { key: `img:${asset.r2Key}:${ip}`, projectId: asset.projectId },
+  ];
+  for (const k of keys) {
+    const rl = await rateLimit(k.key, { projectId: k.projectId });
     if (!rl.allowed) {
       return { ok: false, status: 429, error: "too many image transforms — try again shortly", retryAfterSec: rl.retryAfterSec };
     }

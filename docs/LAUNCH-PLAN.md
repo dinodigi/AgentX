@@ -338,8 +338,21 @@ in the launch plan.
 - [ ] C1 **★ Dogfood milestone** (after A3): rebuild a real Currents site as
       tenant #1 on the new data plane. The friction log is the launch
       go/no-go input. Needs the operator's involvement.
-- [ ] C2 (M) **Durable rate-limit store** (long-standing infra item — matters
-      the moment strangers arrive).
+- [x] C2 (M) **Durable rate-limit store — ✅ COMPLETE 2026-07-11.** The
+      in-memory sliding window became fixed one-minute windows in the control
+      DB (`rate_windows`, one atomic UPSERT per limited request — shared
+      across instances/restarts; fail-OPEN on store errors: the gate protects
+      capacity, not authz). Same rows double as **B3's deferred request
+      metering**: hits carry projectId; the drain's rollup folds expired
+      windows into `usage_daily` (single-statement CTE, concurrent-drain
+      safe); console shows a live "req today" column (rollup + unrolled
+      windows). Bonus fix: the marketing intake now forwards the visitor's
+      x-forwarded-for — previously every signup shared ONE rate bucket, which
+      a durable store would have turned into a real global 429 at >20
+      signups/min. Smoke 54 (burst 25 → exactly 20 pass + 5 429s w/
+      retry-after; durability + attribution + rollup proven); full suite
+      green. Plain cached reads stay unmetered by design (no control-plane
+      write on the hot read path).
 - [ ] C3 (S) **Pricing page goes real** — numbers from the operator; marketing
       copy shifts from "private beta" to launch.
 - [ ] C4 (M) **Security pass** — control-plane isolation audit (what little
@@ -357,7 +370,7 @@ in the launch plan.
 A0 → A1 → A2 → A3 → A4   ── ✅ TRACK A COMPLETE (A5 cut from launch scope)
 B1 → B2 → B3 → B4        ── ✅ TRACK B COMPLETE (B3 awaits Stripe keys to take real money)
 C1 (dogfood — needs the operator) ← THE CRITICAL PATH NOW
-C2 → C4 (audit rate limits in final form) → C5; C3 has real numbers; C6 on the operator; C7 last.
+C2 ✅ → C4 (audits rate limits in final form) → C5; C3 has real numbers; C6 on the operator; C7 last.
 Launch gate = A ✅ + B ✅ + C1 + C4 + C5 + C7 all green.
 ```
 

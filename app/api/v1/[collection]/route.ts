@@ -241,7 +241,7 @@ export async function GET(
     if (sort) return deliveryError(422, "search results are rank-ordered — drop ?sort");
     // Keyword search is CPU-bound SQL on an unauthenticated GET — rate-limit it.
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-    const rl = await rateLimit(`${projectId}:${ip}`);
+    const rl = await rateLimit(`${projectId}:${ip}`, { projectId });
     if (!rl.allowed) {
       return deliveryError(429, "too many searches — try again shortly", {
         headers: { "retry-after": String(rl.retryAfterSec) },
@@ -314,7 +314,7 @@ export async function POST(
   if (!gate.ok) return deliveryError(gate.status, gate.error);
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-  const limit = await rateLimit(`${projectId}:${ip}`);
+  const limit = await rateLimit(`${projectId}:${ip}`, { projectId });
   if (!limit.allowed) {
     return deliveryError(429, "too many submissions — try again shortly", {
       headers: { "retry-after": String(limit.retryAfterSec) },

@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { bearerFrom } from "@/lib/tokens";
 import { drainJobs, reclaimStale } from "@/lib/jobs";
 import { tickSchedules } from "@/lib/schedules";
+import { rollupUsage } from "@/lib/ratelimit";
 import { HANDLERS } from "@/lib/job-handlers";
 
 /**
@@ -36,7 +37,15 @@ export async function POST(req: NextRequest) {
   // Tick BEFORE draining so a due schedule's fire runs in this same pass.
   const ticked = await tickSchedules();
   const result = await drainJobs(HANDLERS, { maxJobs: 10, budgetMs: 15_000 });
-  return json(200, { ...result, reclaimed, ticked });
+  // C2: fold expired rate windows into usage_daily. Never fails the drain —
+  // the next pass sweeps whatever this one missed.
+  let rolledUp = 0;
+  try {
+    rolledUp = await rollupUsage();
+  } catch (e) {
+    console.error("usage rollup failed (will retry next drain)", e instanceof Error ? e.message : e);
+  }
+  return json(200, { ...result, reclaimed, ticked, rolledUp });
 }
 
 function constantTimeEqual(a: string, b: string): boolean {

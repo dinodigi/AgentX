@@ -5,10 +5,12 @@ import {
   boolean,
   integer,
   bigserial,
+  date,
   jsonb,
   timestamp,
   uniqueIndex,
   index,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -364,6 +366,48 @@ export const platformEvents = pgTable(
 );
 
 export type PlatformEventRow = typeof platformEvents.$inferSelect;
+
+/**
+ * Durable rate-limit windows (C2): one row per (key, minute-window), counted
+ * up by an atomic UPSERT on every limited request — survives restarts and is
+ * shared across instances, which the old in-memory store was not. Rows live
+ * minutes: the drain's rollup folds expired windows into usage_daily and
+ * deletes them. `projectId` attributes the hit for metering (null = an
+ * unattributable surface, e.g. global image-transform keys).
+ */
+export const rateWindows = pgTable(
+  "rate_windows",
+  {
+    key: text("key").notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "cascade" }),
+    count: integer("count").notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ columns: [t.key, t.windowStart] }),
+    index("rate_windows_start_idx").on(t.windowStart),
+  ],
+);
+
+/**
+ * Per-project daily request counts (B3's deferred "request metering", riding
+ * C2's store as planned): accumulated from expired rate windows by the drain
+ * rollup. Counts LIMITED surfaces (writes, search, uploads, checkout,
+ * transforms) — plain cached reads are deliberately unmetered to keep the hot
+ * read path free of a control-plane write. Caps-not-metering still stands:
+ * this is operator visibility, not billing.
+ */
+export const usageDaily = pgTable(
+  "usage_daily",
+  {
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    day: date("day").notNull(),
+    count: integer("count").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.day] })],
+);
 
 /**
  * Per-project external service connections (BYO infra). Non-secret config in

@@ -37,7 +37,7 @@ export async function POST(
   if (!gate.ok) return deliveryError(gate.status, gate.error);
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-  const limit = await rateLimit(`${projectId}:${ip}`);
+  const limit = await rateLimit(`${projectId}:${ip}`, { projectId });
   if (!limit.allowed) {
     return deliveryError(429, "too many uploads — try again shortly", {
       headers: { "retry-after": String(limit.retryAfterSec) },

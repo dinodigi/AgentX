@@ -135,6 +135,7 @@ export function PlatformConsole({
                 <Usage value={p.entries} cap={p.caps?.entries} label="entries" />
                 <Usage value={p.collections} cap={p.caps?.collections} label="collections" />
                 <Usage value={p.assetBytes} cap={p.caps?.assetBytes} label="media" bytes />
+                <Usage value={p.requestsToday} label="req today" />
               </div>
               <div className="hidden items-center gap-6 md:flex">
                 <span className="hidden h-9 w-px bg-line xl:block" />

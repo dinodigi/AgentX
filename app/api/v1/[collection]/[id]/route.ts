@@ -42,7 +42,7 @@ async function resolve(req: NextRequest, name: string) {
  * window POST/search already enforce. Returns a 429 Response when over budget. */
 async function throttle(req: NextRequest, projectId: string) {
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
-  const rl = await rateLimit(`${projectId}:${ip}`);
+  const rl = await rateLimit(`${projectId}:${ip}`, { projectId });
   if (!rl.allowed) {
     return err(429, "too many requests — try again shortly", {
       headers: { "retry-after": String(rl.retryAfterSec) },

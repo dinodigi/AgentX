@@ -1,7 +1,17 @@
 import "server-only";
-import { count, sql } from "drizzle-orm";
+import { count, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { assets, collections, entries, projectConnectors, projects, workspaceMembers, workspaces } from "@/db/schema";
+import {
+  assets,
+  collections,
+  entries,
+  projectConnectors,
+  projects,
+  rateWindows,
+  usageDaily,
+  workspaceMembers,
+  workspaces,
+} from "@/db/schema";
 import { tenantContentStats } from "./data-plane";
 import { getViewer } from "./access";
 import { brandInk } from "./brand";
@@ -45,6 +55,8 @@ export interface PlatformProject {
   billing: string | null;
   /** The plan's caps (B2 sandbox / B3 paid ceilings); null = uncapped legacy. */
   caps: { entries: number; collections: number; assetBytes: number } | null;
+  /** C2 metering: today's limited-surface requests (UTC day, rollup + live windows). */
+  requestsToday: number;
 }
 
 export interface PlatformOverview {
@@ -56,7 +68,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
   const viewer = await getViewer();
   if (!viewer?.isPlatformOperator) return null;
 
-  const [allWorkspaces, memberCounts, allProjects, collectionCounts, entryCounts, connectorRows, activityRows, assetSums] =
+  const [allWorkspaces, memberCounts, allProjects, collectionCounts, entryCounts, connectorRows, activityRows, assetSums, requestsById] =
     await Promise.all([
       db.select({ id: workspaces.id, name: workspaces.name, createdAt: workspaces.createdAt }).from(workspaces),
       db.select({ workspaceId: workspaceMembers.workspaceId, n: count() }).from(workspaceMembers).groupBy(workspaceMembers.workspaceId),
@@ -66,6 +78,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
       db.select({ projectId: projectConnectors.projectId, type: projectConnectors.type, status: projectConnectors.status }).from(projectConnectors),
       db.select({ projectId: entries.projectId, last: sql<string | null>`max(${entries.updatedAt})` }).from(entries).groupBy(entries.projectId),
       db.select({ projectId: assets.projectId, total: sql<string>`coalesce(sum(${assets.size}::bigint), 0)` }).from(assets).groupBy(assets.projectId),
+      requestsTodayByProject(),
     ]);
 
   const wsName = new Map(allWorkspaces.map((w) => [w.id, w.name]));
@@ -124,9 +137,33 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
         plan: p.plan ?? null,
         billing: p.billingExempt ? "exempt" : (p.billingStatus ?? null),
         caps: p.plan === "sandbox" ? SANDBOX_CAPS : p.plan === "byo" || p.plan === "managed" ? PAID_CAPS : null,
+        requestsToday: requestsById.get(p.id) ?? 0,
       };
     })
     .sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""));
 
   return { workspaces: workspacesOut, projects: projectsOut };
+}
+
+/**
+ * Today's (UTC) limited-surface request count per project: the rolled-up
+ * usage_daily row PLUS the still-live rate windows the rollup hasn't folded
+ * yet — so the console reads current, not two-drains-behind.
+ */
+async function requestsTodayByProject(): Promise<Map<string, number>> {
+  const today = new Date().toISOString().slice(0, 10);
+  const [rolled, live] = await Promise.all([
+    db.select({ projectId: usageDaily.projectId, n: usageDaily.count }).from(usageDaily).where(eq(usageDaily.day, today)),
+    db
+      .select({ projectId: rateWindows.projectId, n: sql<string>`sum(${rateWindows.count})` })
+      .from(rateWindows)
+      .where(sql`${rateWindows.projectId} IS NOT NULL AND (${rateWindows.windowStart} AT TIME ZONE 'UTC')::date = ${today}`)
+      .groupBy(rateWindows.projectId),
+  ]);
+  const out = new Map<string, number>();
+  for (const r of rolled) out.set(r.projectId, r.n);
+  for (const l of live) {
+    if (l.projectId) out.set(l.projectId, (out.get(l.projectId) ?? 0) + Number(l.n));
+  }
+  return out;
 }
