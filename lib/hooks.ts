@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { tenantDb } from "./data-plane";
+import { webhookTargetRefusal } from "./net-guard";
 import { projects, webhookDeliveries, type Collection, type WriteHook } from "@/db/schema";
 
 /**
@@ -99,7 +100,14 @@ export async function callWriteHook(
   let outcome: HookOutcome;
   let responseSummary: Record<string, unknown>;
 
-  if (!secret) {
+  // C4 SSRF guard — same rule as webhooks: no private/loopback targets from
+  // our network. "unavailable" routes into each hook's onUnavailable policy.
+  const targetRefusal = await webhookTargetRefusal(hook.url);
+
+  if (targetRefusal) {
+    outcome = { kind: "unavailable", reason: targetRefusal };
+    responseSummary = { error: targetRefusal };
+  } else if (!secret) {
     // validateHooks requires the secret at define time; if it was cleared since,
     // fail closed here rather than sending an UNSIGNED consult the tenant can't trust.
     outcome = { kind: "unavailable", reason: "project signing secret is not set" };

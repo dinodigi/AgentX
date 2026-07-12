@@ -93,9 +93,17 @@ describe("recurring schedules (G3)", () => {
     assert.equal(r1.status, 200);
     assert.equal(r2.status, 200);
 
-    const hit = await waitFor(() =>
-      receiver.received.find((r) => r.event === "schedule.fired" && r.schedule?.name === "digest"),
-    );
+    // Re-drain while waiting: the concurrent ticks above CAS-advance + enqueue
+    // the fire, but the just-enqueued job's run_at (app clock) can sit a few ms
+    // ahead of Postgres's now() under clock skew, so neither concurrent drain
+    // claims it in the same pass. In production the minute-ly cron drain claims
+    // it on the next tick — mirror that here rather than assuming a single pass.
+    // The CAS-advance + dedupe key still guarantee exactly ONE fire (asserted
+    // below), so re-draining is safe.
+    const hit = await waitFor(async () => {
+      await drain();
+      return receiver.received.find((r) => r.event === "schedule.fired" && r.schedule?.name === "digest");
+    });
     assert.ok(hit, "schedule.fired webhook must arrive");
     assert.ok(hit.scheduledFor && hit.firedAt, "payload carries scheduledFor + firedAt");
     // Drain once more to flush any second (deduped→absent) job, then count.

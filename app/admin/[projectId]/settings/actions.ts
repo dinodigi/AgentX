@@ -15,6 +15,7 @@ import {
   transactReceipts,
 } from "@/db/schema";
 import { generateToken, hashToken } from "@/lib/tokens";
+import { webhookUrlShapeRefusal } from "@/lib/net-guard";
 import { getProjectRole, getViewer } from "@/lib/access";
 import { canDeleteProject } from "@/lib/workspaces";
 import { deleteProjectObjects } from "@/lib/r2";
@@ -60,8 +61,9 @@ export async function refireDeliveryAction(
   projectId: string,
   deliveryId: string,
 ): Promise<void> {
-  const role = await getProjectRole(projectId);
-  if (!role) return;
+  // C4: operator-only like every settings mutation — a client-role share must
+  // not be able to re-POST to the tenant's endpoints (duplicate webhooks/emails).
+  if (await requireOperator(projectId)) return;
   const { refireDelivery } = await import("@/lib/events");
   try {
     await refireDelivery(projectId, deliveryId);
@@ -139,7 +141,10 @@ export async function updateWebhook(
   if (denied) return { error: denied };
 
   const url = String(formData.get("webhookUrl") ?? "").trim();
-  if (url && !/^https?:\/\//.test(url)) return { error: "Webhook must be an http(s) URL" };
+  if (url) {
+    const shape = webhookUrlShapeRefusal(url);
+    if (shape) return { error: `Webhook ${shape}` };
+  }
   await updateCollectionSettings(projectId, collectionName, { webhookUrl: url || null });
   revalidatePath(`/admin/${projectId}/settings`);
   return {};

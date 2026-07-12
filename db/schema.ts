@@ -171,7 +171,13 @@ export const projects = pgTable("projects", {
   /** Operator-created paid projects skip billing (ours/dogfood/support). */
   billingExempt: boolean("billing_exempt").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-});
+}, (t) => [
+  // C4: ONE free sandbox per workspace, enforced at the DB — the action's
+  // count-then-insert check alone is raceable by concurrent creates.
+  uniqueIndex("projects_one_sandbox_per_ws_idx")
+    .on(t.workspaceId)
+    .where(sql`plan = 'sandbox'`),
+]);
 
 /**
  * Bearer tokens that scope the single MCP server to one project.

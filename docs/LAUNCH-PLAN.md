@@ -353,13 +353,35 @@ in the launch plan.
       retry-after; durability + attribution + rollup proven); full suite
       green. Plain cached reads stay unmetered by design (no control-plane
       write on the hot read path).
-- [ ] C3 (S) **Pricing page goes real** — numbers from the operator; marketing
-      copy shifts from "private beta" to launch.
-- [ ] C4 (M) **Security pass** — control-plane isolation audit (what little
-      stays shared), token hygiene (old 2.5), secret rotation, `createProject`
-      hardening review.
-- [ ] C5 (M) **Ops** — backups/PITR on control plane + managed org, Render
-      monitoring/alerts, error tracking.
+- [x] C3 (S) **Pricing page goes real — ✅ COMPLETE 2026-07-11.** `/pricing`
+      now shows the three decided tiers (free Sandbox w/ caps · $19 BYO · $29
+      managed, per project = per application) with real caps and the
+      per-project framing, keeping the hand-onboarded-beta CTA ("beta testers
+      keep these prices"). The private-beta→full-launch copy flip (drop the
+      beta framing, open self-serve) stays a launch-time toggle.
+- [x] C4 (M) **Security pass — ✅ COMPLETE 2026-07-11 (audit: docs/SECURITY-PASS.md).**
+      37-action authz sweep + outbound-fetch review. Three findings fixed:
+      (1) **SSRF** in tenant webhooks/hooks/actions/schedules — new
+      `lib/net-guard.ts` refuses private/loopback/link-local/metadata targets
+      at fire time (prod-gated, escape hatch `ALLOW_PRIVATE_WEBHOOK_TARGETS`),
+      wired into both fire paths + a save-time shape check; 15/15 probe matrix.
+      (2) `refireDeliveryAction` accepted the client role → operator-gated like
+      its siblings. (3) One-sandbox-per-workspace was raceable →
+      partial unique index `projects_one_sandbox_per_ws_idx` (applied to live
+      DB; action catches the violation). Verified sound: token model (2.5 —
+      hashed/scoped/fail-closed, 23-token inventory clean), keyed-envelope
+      crypto + rotation runbook, unauthenticated surfaces (both Stripe
+      webhooks + drain fail-closed), control-plane isolation choke points.
+      Operator follow-ups recorded in the audit (Clerk email verification;
+      sweep operator-era test projects at C1/C7).
+- [~] C5 (M) **Ops — code half ✅ 2026-07-11; operator half ⚑ (runbook:
+      docs/OPS.md).** Shipped: `GET /api/health` (DB-aware, 200/503) wired to
+      Render `healthCheckPath` so a DB-down instance restarts instead of
+      serving 500s; drain cron already exits non-zero on a bad tick.
+      **Operator, in consoles:** confirm Neon PITR ≥7d on the control DB (and
+      the managed org), turn on Render health + cron-failure alerts, pick an
+      error tracker (Sentry wiring steps in the runbook — a self-contained
+      fast-follow, doesn't block the gate). The restore drill is C7.
 - [ ] C6 **Legal basics** — ToS, privacy. Operator's court; flagged early.
 - [ ] C7 **Launch checklist** — full smoke vs prod, restore drill, load sanity.
 
@@ -370,8 +392,9 @@ in the launch plan.
 A0 → A1 → A2 → A3 → A4   ── ✅ TRACK A COMPLETE (A5 cut from launch scope)
 B1 → B2 → B3 → B4        ── ✅ TRACK B COMPLETE (B3 awaits Stripe keys to take real money)
 C1 (dogfood — needs the operator) ← THE CRITICAL PATH NOW
-C2 ✅ → C4 (audits rate limits in final form) → C5; C3 has real numbers; C6 on the operator; C7 last.
-Launch gate = A ✅ + B ✅ + C1 + C4 + C5 + C7 all green.
+C2 ✅  C3 ✅  C4 ✅  C5 code ✅ (ops-console half ⚑ operator)
+C6 on the operator; C7 (launch checklist + restore drill) last.
+Launch gate = A ✅ + B ✅ + C1 + C4 ✅ + C5 + C7 all green ⇒ remaining: C1, C5 operator half, C6, C7.
 ```
 
 ## Decisions needed from the operator (blocking marked ⚑)

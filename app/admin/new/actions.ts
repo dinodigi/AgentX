@@ -56,22 +56,32 @@ export async function createProject(formData: FormData): Promise<CreateProjectRe
     }
   }
 
-  const [project] = await db
-    .insert(projects)
-    .values({
-      name,
-      workspaceId: workspace.id,
-      branding: { displayName: name, primaryColor: color },
-      webhookSigningSecret: randomBytes(32).toString("hex"),
-      plan: plan as "sandbox" | "byo" | "managed",
-      // Sandbox lives on the shared plane — nothing to set up; paid picks a
-      // data plane on the setup screen (B2) and subscribes there (B3) before
-      // the agent surfaces light up.
-      status: plan === "sandbox" ? "active" : "setup",
-      // Operator-created paid projects (ours/dogfood/support) skip billing.
-      billingExempt: plan !== "sandbox" && viewer.isPlatformOperator,
-    })
-    .returning();
+  let project;
+  try {
+    [project] = await db
+      .insert(projects)
+      .values({
+        name,
+        workspaceId: workspace.id,
+        branding: { displayName: name, primaryColor: color },
+        webhookSigningSecret: randomBytes(32).toString("hex"),
+        plan: plan as "sandbox" | "byo" | "managed",
+        // Sandbox lives on the shared plane — nothing to set up; paid picks a
+        // data plane on the setup screen (B2) and subscribes there (B3) before
+        // the agent surfaces light up.
+        status: plan === "sandbox" ? "active" : "setup",
+        // Operator-created paid projects (ours/dogfood/support) skip billing.
+        billingExempt: plan !== "sandbox" && viewer.isPlatformOperator,
+      })
+      .returning();
+  } catch (e) {
+    // The partial unique index (C4) is the real one-sandbox gate — the count
+    // check above is just the friendly fast path and is raceable.
+    if (plan === "sandbox" && e instanceof Error && /projects_one_sandbox_per_ws_idx|duplicate key/.test(e.message)) {
+      return { error: "This workspace already has its free sandbox — upgrade it or create a paid project." };
+    }
+    throw e;
+  }
 
   const raw = generateToken();
   await db.insert(projectTokens).values({

@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { tenantDb } from "./data-plane";
+import { webhookTargetRefusal } from "./net-guard";
 import { projects, webhookDeliveries, type WebhookDelivery } from "@/db/schema";
 
 /**
@@ -24,6 +25,16 @@ export async function deliverWebhook(opts: {
 }): Promise<"success" | "failed"> {
   const body = JSON.stringify({ event: opts.event, ...opts.payload });
   let lastError = "";
+
+  // C4 SSRF guard: refuse private/loopback/link-local targets BEFORE any
+  // attempt — the delivery log echoes status codes, so an unguarded fetch is
+  // a blind port scanner into our network. The refusal lands in the log like
+  // any failure (visible, diagnosable), and no retry can bypass it.
+  const refusal = await webhookTargetRefusal(opts.url);
+  if (refusal) {
+    await log(opts, "failed", 0, refusal);
+    return "failed";
+  }
 
   // Stripe-style signature so receivers can verify authenticity + freshness:
   //   X-AgentX-Signature: t=<unix>,v1=HMAC_SHA256(secret, `${t}.${body}`)

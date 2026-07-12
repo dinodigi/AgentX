@@ -31,9 +31,10 @@ services:
     branch: master
     buildCommand: npm ci && npm run build
     startCommand: npm start # next start binds Render's $PORT
-    # No healthCheckPath — Render's TCP port check is enough for a first deploy and
-    # can't false-fail it. Add `healthCheckPath: /api/mcp` (GET → 200) later if you
-    # want app-level restarts.
+    # App-level health (C5): /api/health returns 200 iff the control DB is
+    # reachable, 503 otherwise — so a DB-down instance is pulled from rotation /
+    # restarted instead of serving 500s. Public + uncached, no secrets.
+    healthCheckPath: /api/health
     autoDeploy: true
     envVars:
       - fromGroup: agentx-shared # CRON_SECRET
