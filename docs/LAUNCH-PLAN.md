@@ -282,13 +282,21 @@ in the launch plan.
         in a project but cannot delete it (B1: sharing never spreads deletion).
       - Consider a soft-delete grace window (restore-able for N days) before the
         managed-infra teardown actually fires, mirroring entry trash.
-- [ ] B3 (L) **Billing + caps.** Our own Stripe (subscriptions per project —
-      new work; Phase 15 was tenants' checkout). Usage counters (requests,
-      storage, entries) → daily rollups → hard-cap enforcement with clear
-      errors + upgrade prompts. **Anchors decided: $19 BYO / $29 managed per
-      project/mo; free hard-capped sandbox per workspace.** Consider (from the
-      A5 cut): a dev-twin pricing knob — a discounted second project linked as
-      an app's dev copy, or lean on the sandbox as the play-space.
+- [x] B3 (L) **Billing + caps — ✅ CORE COMPLETE 2026-07-11 (0cfd1f0).**
+      Platform Stripe subscriptions at the decided anchors ($19 BYO / $29
+      managed): prices self-provision via lookup keys; setup surface carries
+      the Subscribe step; the `/api/platform-stripe` webhook is the only
+      writer of billingStatus (activation, past_due, canceled — canceled
+      darkens the project's surfaces immediately, delete blocks if the
+      subscription can't be canceled). Paid abuse ceilings (250k entries /
+      500 collections / 25GB media) on the caps machinery; console shows
+      plan + billing. **Deferred, explicitly:** (a) request metering + daily
+      rollups → C2's durable store (same infrastructure); (b) dev-twin
+      pricing knob — revisit on dogfood feedback. **Pending operator to take
+      real money:** PLATFORM_STRIPE_SECRET_KEY + PLATFORM_STRIPE_WEBHOOK_SECRET
+      in Render, and register `/api/platform-stripe` in the Stripe dashboard
+      (events: checkout.session.completed, customer.subscription.updated,
+      customer.subscription.deleted).
 - [~] B4 (M) **Operator console — read view ✅ shipped 2026-07-11 (d8e00c3 +
       fe6a7f8).** `/admin/console` (operator-gated) shows all workspaces + all
       projects with scale + connector health, link into any project for support.
