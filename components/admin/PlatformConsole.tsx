@@ -104,6 +104,17 @@ export function PlatformConsole({
                   </div>
                   <div className="truncate font-mono text-[11px] text-line-strong">
                     {p.workspaceName} · prj_{p.id.slice(0, 8)}
+                    {p.plan && (
+                      <>
+                        {" · "}
+                        <span className="text-ink-soft">{p.plan}</span>
+                        {p.billing && p.billing !== "active" && (
+                          <span style={{ color: p.billing === "exempt" ? undefined : "var(--color-warn)" }}>
+                            {" "}({p.billing})
+                          </span>
+                        )}
+                      </>
+                    )}
                   </div>
                   <div className="mt-2 flex items-center gap-3 md:hidden">
                     <span className="font-mono text-[11px] text-ink-mute">

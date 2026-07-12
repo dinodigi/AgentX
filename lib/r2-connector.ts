@@ -12,7 +12,7 @@ import {
 import { revalidateTag } from "next/cache";
 import { controlDb } from "@/db";
 import { assets, projectConnectors, type ProjectConnector } from "@/db/schema";
-import { assertConnectorAllowed } from "./caps";
+import { connectorRefusal } from "./caps";
 import { tenantDb } from "./data-plane";
 import { connectorsTag } from "./connectors";
 import { encryptSecret, decryptSecret } from "./crypto";
@@ -118,7 +118,8 @@ export async function probeBucket(input: R2ConnectInput): Promise<StorageConnect
  * changes (same-config re-connect is an allowed heal).
  */
 export async function connectR2Bucket(projectId: string, input: R2ConnectInput): Promise<StorageConnectResult> {
-  await assertConnectorAllowed(projectId); // B2: sandboxes stay on the shared plane
+  const refusal = await connectorRefusal(projectId); // B2: sandboxes stay on the shared plane
+  if (refusal) return { ok: false, detail: refusal };
   for (const [k, v] of Object.entries(input)) {
     if (!String(v ?? "").trim()) return { ok: false, detail: `${k} is required` };
   }
@@ -244,7 +245,8 @@ async function enableManagedDomain(bucket: string): Promise<string> {
  * (CreateBucket tolerates already-owned; the domain PUT is idempotent).
  */
 export async function provisionManagedBucket(projectId: string): Promise<StorageConnectResult> {
-  await assertConnectorAllowed(projectId); // B2: sandboxes stay on the shared plane
+  const refusal = await connectorRefusal(projectId); // B2: sandboxes stay on the shared plane
+  if (refusal) return { ok: false, detail: refusal };
   const existing = await r2Row(projectId);
   if (existing?.config?.mode === "byo") {
     return { ok: false, detail: "this project uses a BYO bucket — disconnect it first if you want a managed one" };

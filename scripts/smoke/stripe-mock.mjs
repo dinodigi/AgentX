@@ -13,6 +13,7 @@ export const STRIPE_MOCK_PORT = 4242;
 
 export async function startStripeMock(port = STRIPE_MOCK_PORT) {
   const requests = [];
+  const prices = new Map(); // B3: lookup_key-provisioned platform prices
   const server = http.createServer((req, res) => {
     let raw = "";
     req.on("data", (c) => (raw += c));
@@ -59,6 +60,25 @@ export async function startStripeMock(port = STRIPE_MOCK_PORT) {
       }
       if (epMatch && req.method === "DELETE") {
         return send(200, { id: epMatch[1], object: "webhook_endpoint", deleted: true });
+      }
+      // ── Platform billing (B3): price self-provisioning + subscriptions ──
+      if (req.method === "GET" && req.url.startsWith("/v1/prices")) {
+        const lookup = new URL(req.url, "http://x").searchParams.get("lookup_keys[]");
+        const hit = [...prices.values()].filter((p) => p.lookup_key === lookup);
+        return send(200, { object: "list", data: hit });
+      }
+      if (req.method === "POST" && req.url === "/v1/products") {
+        return send(200, { id: "prod_test_" + randomBytes(6).toString("hex"), name: form.name });
+      }
+      if (req.method === "POST" && req.url === "/v1/prices") {
+        const id = "price_test_" + randomBytes(6).toString("hex");
+        const price = { id, object: "price", lookup_key: form.lookup_key, unit_amount: Number(form.unit_amount) };
+        prices.set(id, price);
+        return send(200, price);
+      }
+      const subMatch = /^\/v1\/subscriptions\/(sub_[a-zA-Z0-9_]+)$/.exec(req.url);
+      if (subMatch && req.method === "DELETE") {
+        return send(200, { id: subMatch[1], object: "subscription", status: "canceled" });
       }
       // Anything else: mimic Stripe's error envelope.
       send(404, { error: { message: `mock: no route for ${req.method} ${req.url}` } });

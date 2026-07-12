@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getProjectRole } from "@/lib/access";
+import { getProject } from "@/lib/admin";
 import { listConnectors, CONNECTOR_SPECS, type FormConnectorType } from "@/lib/connectors";
 import { ConnectorCard, NeonConnectorCard, R2ConnectorCard } from "../settings/sections";
 
@@ -13,10 +14,13 @@ export default async function ConnectorsPage({
   const role = await getProjectRole(projectId);
   if (role !== "operator") notFound();
 
-  const connectors = await listConnectors(projectId);
+  const [connectors, project] = await Promise.all([listConnectors(projectId), getProject(projectId)]);
   const byType = new Map(connectors.map((c) => [c.type, c]));
   const neon = byType.get("neon");
   const r2 = byType.get("r2");
+  // B2: sandboxes run on the shared planes — don't render provision/connect
+  // affordances that can only refuse (found live: reads as a bug, not a rule).
+  const sandbox = project?.plan === "sandbox";
 
   return (
     <>
@@ -29,20 +33,33 @@ export default async function ConnectorsPage({
         exposed to agents.
       </p>
       <div className="space-y-4">
-        <NeonConnectorCard
-          projectId={projectId}
-          connected={Boolean(neon)}
-          status={neon?.status ?? "disconnected"}
-          host={neon?.config.host ?? null}
-          mode={neon?.config.mode ?? null}
-        />
-        <R2ConnectorCard
-          projectId={projectId}
-          connected={Boolean(r2)}
-          status={r2?.status ?? "disconnected"}
-          bucket={r2?.config.bucket ?? null}
-          mode={r2?.config.mode ?? null}
-        />
+        {sandbox ? (
+          <div className="card max-w-md p-5">
+            <p className="mb-1 text-sm font-medium">Database &amp; storage</p>
+            <p className="text-sm text-ink-mute">
+              Sandbox projects run on the shared infrastructure — that&apos;s
+              what makes them free. Upgrade to a paid project to give this one
+              its own database and bucket.
+            </p>
+          </div>
+        ) : (
+          <>
+            <NeonConnectorCard
+              projectId={projectId}
+              connected={Boolean(neon)}
+              status={neon?.status ?? "disconnected"}
+              host={neon?.config.host ?? null}
+              mode={neon?.config.mode ?? null}
+            />
+            <R2ConnectorCard
+              projectId={projectId}
+              connected={Boolean(r2)}
+              status={r2?.status ?? "disconnected"}
+              bucket={r2?.config.bucket ?? null}
+              mode={r2?.config.mode ?? null}
+            />
+          </>
+        )}
         {(Object.keys(CONNECTOR_SPECS) as FormConnectorType[]).map((type) => {
           const spec = CONNECTOR_SPECS[type];
           const row = byType.get(type);

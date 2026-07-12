@@ -67,6 +67,12 @@ export async function POST(req: NextRequest) {
       { status: 403 },
     );
   }
+  if (info.billing === "canceled") {
+    return new Response(
+      "Forbidden [E_BILLING_CANCELED]: this project's subscription has ended — restart it from the project's admin to bring the surfaces back (content is retained).",
+      { status: 403 },
+    );
+  }
   const projectId = info.projectId;
 
   let msg: JsonRpcRequest;

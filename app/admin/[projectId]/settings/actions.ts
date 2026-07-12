@@ -27,6 +27,20 @@ async function requireOperator(projectId: string): Promise<string | null> {
   return role === "operator" ? null : "You need the operator role for this";
 }
 
+/**
+ * A thrown error inside a server action reaches the browser as an opaque 500
+ * digest (found live 2026-07-12: a sandbox clicking provision saw a 500, not
+ * the refusal message). Connector/billing actions wrap their risky work here
+ * so every failure surfaces as the card's error line instead.
+ */
+async function safe<T extends { error?: string }>(fn: () => Promise<T>): Promise<T | { error: string }> {
+  try {
+    return await fn();
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** Rotate a connector secret — the new key is validated BEFORE the old one is replaced. */
 export async function rotateConnectorSecretAction(
   projectId: string,
@@ -239,17 +253,21 @@ export async function disconnectConnector(
   if (denied) return { error: denied };
   if (type === "neon") {
     // Dedicated flow: evicts cached tenant clients; never touches their DB.
-    const { disconnectNeonDatabase } = await import("@/lib/neon-connector");
-    const res = await disconnectNeonDatabase(projectId);
-    revalidatePath(`/admin/${projectId}/connectors`);
-    return res.ok ? {} : { error: res.detail };
+    return safe(async () => {
+      const { disconnectNeonDatabase } = await import("@/lib/neon-connector");
+      const res = await disconnectNeonDatabase(projectId);
+      revalidatePath(`/admin/${projectId}/connectors`);
+      return res.ok ? {} : { error: res.detail };
+    });
   }
   if (type === "r2") {
     // Dedicated flow: evicts cached storage clients; never touches their bucket.
-    const { disconnectR2Bucket } = await import("@/lib/r2-connector");
-    const res = await disconnectR2Bucket(projectId);
-    revalidatePath(`/admin/${projectId}/connectors`);
-    return res.ok ? {} : { error: res.detail };
+    return safe(async () => {
+      const { disconnectR2Bucket } = await import("@/lib/r2-connector");
+      const res = await disconnectR2Bucket(projectId);
+      revalidatePath(`/admin/${projectId}/connectors`);
+      return res.ok ? {} : { error: res.detail };
+    });
   }
   const { removeConnector, deprovisionStripeWebhook } = await import("@/lib/connectors");
   // Best-effort: delete the Stripe webhook endpoint we provisioned before we
@@ -274,10 +292,12 @@ export async function connectNeonAction(
   if (denied) return { error: denied };
   const connString = String(formData.get("connectionString") ?? "").trim();
   if (!connString) return { error: "Paste the database's connection string" };
-  const { connectNeonDatabase } = await import("@/lib/neon-connector");
-  const result = await connectNeonDatabase(projectId, connString);
-  revalidatePath(`/admin/${projectId}/connectors`);
-  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  return safe(async () => {
+    const { connectNeonDatabase } = await import("@/lib/neon-connector");
+    const result = await connectNeonDatabase(projectId, connString);
+    revalidatePath(`/admin/${projectId}/connectors`);
+    return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  });
 }
 
 /**
@@ -292,28 +312,36 @@ export async function connectR2Action(
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
   const field = (k: string) => String(formData.get(k) ?? "").trim();
-  const { connectR2Bucket } = await import("@/lib/r2-connector");
-  const result = await connectR2Bucket(projectId, {
-    accountId: field("accountId"),
-    accessKeyId: field("accessKeyId"),
-    secretAccessKey: field("secretAccessKey"),
-    bucket: field("bucket"),
-    publicBaseUrl: field("publicBaseUrl"),
+  return safe(async () => {
+    const { connectR2Bucket } = await import("@/lib/r2-connector");
+    const result = await connectR2Bucket(projectId, {
+      accountId: field("accountId"),
+      accessKeyId: field("accessKeyId"),
+      secretAccessKey: field("secretAccessKey"),
+      bucket: field("bucket"),
+      publicBaseUrl: field("publicBaseUrl"),
+    });
+    revalidatePath(`/admin/${projectId}/connectors`);
+    return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
   });
-  revalidatePath(`/admin/${projectId}/connectors`);
-  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
 }
 
 /**
  * B2: flip a setup-state project live. Paid planes need their database
- * connected first (that's what setup IS); activation lights up the MCP +
- * delivery surfaces by revalidating the token cache.
+ * connected AND (B3) their subscription live (unless operator-exempt);
+ * activation lights up the MCP + delivery surfaces by revalidating the token
+ * cache.
  */
 export async function activateProject(projectId: string): Promise<{ error?: string; ok?: boolean }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
   const [project] = await db
-    .select({ status: projects.status, plan: projects.plan })
+    .select({
+      status: projects.status,
+      plan: projects.plan,
+      billingStatus: projects.billingStatus,
+      billingExempt: projects.billingExempt,
+    })
     .from(projects)
     .where(eq(projects.id, projectId))
     .limit(1);
@@ -321,6 +349,9 @@ export async function activateProject(projectId: string): Promise<{ error?: stri
   if (project.status === "active") return { ok: true };
 
   if (project.plan === "byo" || project.plan === "managed") {
+    if (!project.billingExempt && project.billingStatus !== "active") {
+      return { error: "Start this project's subscription first — the payment step on this page." };
+    }
     const [dataPlaneRow] = await db
       .select({ status: projectConnectors.status })
       .from(projectConnectors)
@@ -338,16 +369,63 @@ export async function activateProject(projectId: string): Promise<{ error?: stri
   return { ok: true };
 }
 
+/**
+ * B3: start the project's subscription — a subscription-mode Stripe Checkout
+ * on OUR platform account. The webhook (not the redirect) flips
+ * billingStatus, so a user closing the tab mid-payment still converges.
+ */
+export async function createBillingCheckoutAction(
+  projectId: string,
+): Promise<{ error?: string; url?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const viewer = await getViewer();
+  if (!viewer) return { error: "not signed in" };
+  const [project] = await db
+    .select({ plan: projects.plan, billingStatus: projects.billingStatus, billingExempt: projects.billingExempt })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!project) return { error: "Project not found" };
+  if (project.plan !== "byo" && project.plan !== "managed") {
+    return { error: "This project has no paid plan to subscribe to" };
+  }
+  if (project.billingExempt) return { error: "This project is billing-exempt" };
+  if (project.billingStatus === "active") return { error: "Subscription already active" };
+
+  const { headers } = await import("next/headers");
+  const { originFromHeaders } = await import("@/lib/origin");
+  const h = await headers();
+  const origin = originFromHeaders((n) => h.get(n));
+  if (!origin) return { error: "could not determine the app URL — set APP_URL in the environment" };
+
+  const { createSubscriptionCheckout } = await import("@/lib/platform-billing");
+  try {
+    const { url } = await createSubscriptionCheckout({
+      projectId,
+      plan: project.plan,
+      customerEmail: viewer.email,
+      successUrl: `${origin}/admin/${projectId}?billing=success`,
+      cancelUrl: `${origin}/admin/${projectId}?billing=canceled`,
+    });
+    return { url };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** A4c: one-click managed bucket in our account (handle-first, resumable). */
 export async function provisionManagedBucketAction(
   projectId: string,
 ): Promise<{ error?: string; ok?: boolean; detail?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
-  const { provisionManagedBucket } = await import("@/lib/r2-connector");
-  const result = await provisionManagedBucket(projectId);
-  revalidatePath(`/admin/${projectId}/connectors`);
-  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  return safe(async () => {
+    const { provisionManagedBucket } = await import("@/lib/r2-connector");
+    const result = await provisionManagedBucket(projectId);
+    revalidatePath(`/admin/${projectId}/connectors`);
+    return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  });
 }
 
 /** A4c: delete the managed bucket + its media (confirm-gated in the card). */
@@ -356,10 +434,12 @@ export async function deprovisionManagedBucketAction(
 ): Promise<{ error?: string; ok?: boolean; detail?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
-  const { deprovisionManagedBucket } = await import("@/lib/r2-connector");
-  const result = await deprovisionManagedBucket(projectId);
-  revalidatePath(`/admin/${projectId}/connectors`);
-  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  return safe(async () => {
+    const { deprovisionManagedBucket } = await import("@/lib/r2-connector");
+    const result = await deprovisionManagedBucket(projectId);
+    revalidatePath(`/admin/${projectId}/connectors`);
+    return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  });
 }
 
 /** A3: one-click managed database — a Neon project of the tenant's own,
@@ -369,10 +449,12 @@ export async function provisionManagedAction(
 ): Promise<{ error?: string; ok?: boolean; detail?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
-  const { provisionManagedDatabase } = await import("@/lib/neon-connector");
-  const result = await provisionManagedDatabase(projectId);
-  revalidatePath(`/admin/${projectId}/connectors`);
-  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  return safe(async () => {
+    const { provisionManagedDatabase } = await import("@/lib/neon-connector");
+    const result = await provisionManagedDatabase(projectId);
+    revalidatePath(`/admin/${projectId}/connectors`);
+    return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  });
 }
 
 /** A3: tear down the managed database (deletes it; Neon keeps it recoverable
@@ -382,10 +464,12 @@ export async function deprovisionManagedAction(
 ): Promise<{ error?: string; ok?: boolean; detail?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
-  const { deprovisionManagedDatabase } = await import("@/lib/neon-connector");
-  const result = await deprovisionManagedDatabase(projectId);
-  revalidatePath(`/admin/${projectId}/connectors`);
-  return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  return safe(async () => {
+    const { deprovisionManagedDatabase } = await import("@/lib/neon-connector");
+    const result = await deprovisionManagedDatabase(projectId);
+    revalidatePath(`/admin/${projectId}/connectors`);
+    return result.ok ? { ok: true, detail: result.detail } : { error: result.detail };
+  });
 }
 
 /**
@@ -521,6 +605,24 @@ export async function deleteProjectAction(
     const teardown = await deprovisionManagedBucket(projectId);
     if (!teardown.ok) {
       return { error: `Managed bucket teardown failed — project not deleted. ${teardown.detail}` };
+    }
+  }
+
+  // B3 (B2 decision): delete STOPS the subscription — and a cancel failure
+  // blocks the delete, because "project gone, card still charged" is the one
+  // outcome that must never happen silently. 404 (already gone) is success.
+  const [billing] = await db
+    .select({ subId: projects.stripeSubscriptionId, status: projects.billingStatus })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (billing?.subId && billing.status !== "canceled") {
+    const { cancelSubscription } = await import("@/lib/platform-billing");
+    try {
+      await cancelSubscription(billing.subId);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return { error: `Could not cancel the subscription (${msg}) — project not deleted; retry.` };
     }
   }
 

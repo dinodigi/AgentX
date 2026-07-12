@@ -36,13 +36,17 @@ export default async function ProjectHome({
   if (project.status === "setup") {
     const conns = await listConnectors(projectId);
     const neon = conns.find((c) => c.type === "neon");
+    const paidPlan = project.plan === "byo" || project.plan === "managed" ? project.plan : null;
     return (
       <SetupPanel
         projectId={projectId}
         name={project.branding?.displayName ?? project.name}
-        plan={(project.plan === "byo" || project.plan === "managed" ? project.plan : null) as "byo" | "managed" | null}
+        plan={paidPlan}
         dbConnected={neon?.status === "connected"}
         dbStatus={neon?.status ?? null}
+        billingRequired={paidPlan !== null && !project.billingExempt}
+        billingActive={project.billingStatus === "active"}
+        priceLabel={paidPlan === "managed" ? "$29/mo" : "$19/mo"}
       />
     );
   }

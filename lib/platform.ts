@@ -34,6 +34,10 @@ export interface PlatformProject {
   connectors: { type: string; status: string }[];
   lastActivity: string | null;
   createdAt: string;
+  /** B3: 'sandbox' | 'byo' | 'managed' | null (legacy/operator-era). */
+  plan: string | null;
+  /** B3: 'active' | 'past_due' | 'canceled' | 'exempt' | null (unbilled). */
+  billing: string | null;
 }
 
 export interface PlatformOverview {
@@ -106,6 +110,8 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
         connectors: connectorsById.get(p.id) ?? [],
         lastActivity: tenant ? tenant.lastActivity : last ? new Date(last).toISOString() : null,
         createdAt: p.createdAt.toISOString(),
+        plan: p.plan ?? null,
+        billing: p.billingExempt ? "exempt" : (p.billingStatus ?? null),
       };
     })
     .sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""));

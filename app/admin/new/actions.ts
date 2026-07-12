@@ -54,9 +54,6 @@ export async function createProject(formData: FormData): Promise<CreateProjectRe
     if ((existing?.n ?? 0) >= 1) {
       return { error: "This workspace already has its free sandbox — upgrade it or create a paid project." };
     }
-  } else if (!viewer.isPlatformOperator) {
-    // B3 replaces this gate with the subscription checkout on the same seam.
-    return { error: "Paid projects are invite-only during the beta — your free sandbox is available now." };
   }
 
   const [project] = await db
@@ -68,8 +65,11 @@ export async function createProject(formData: FormData): Promise<CreateProjectRe
       webhookSigningSecret: randomBytes(32).toString("hex"),
       plan: plan as "sandbox" | "byo" | "managed",
       // Sandbox lives on the shared plane — nothing to set up; paid picks a
-      // data plane on the setup screen before the agent surfaces light up.
+      // data plane on the setup screen (B2) and subscribes there (B3) before
+      // the agent surfaces light up.
       status: plan === "sandbox" ? "active" : "setup",
+      // Operator-created paid projects (ours/dogfood/support) skip billing.
+      billingExempt: plan !== "sandbox" && viewer.isPlatformOperator,
     })
     .returning();
 

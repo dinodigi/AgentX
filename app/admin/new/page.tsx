@@ -46,10 +46,7 @@ export default async function NewProjectPage() {
           A branded admin, MCP token, and delivery API — ready for an agent to
           define the data model. Creating in <span className="text-ink">{workspace.name}</span>.
         </p>
-        <NewProjectForm
-          sandboxUsed={(sandboxes?.n ?? 0) >= 1}
-          canCreatePaid={viewer.isPlatformOperator}
-        />
+        <NewProjectForm sandboxUsed={(sandboxes?.n ?? 0) >= 1} />
       </main>
     </div>
   );

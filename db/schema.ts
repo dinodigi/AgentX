@@ -156,6 +156,16 @@ export const projects = pgTable("projects", {
    * B3). NULL = legacy/operator-era project — ungated, uncapped.
    */
   plan: text("plan").$type<"sandbox" | "byo" | "managed">(),
+  /**
+   * B3 platform billing (OUR Stripe — distinct from tenant stripe connectors).
+   * NULL billingStatus = unbilled (sandbox/legacy/exempt). The webhook is the
+   * only writer of 'active'/'past_due'/'canceled'.
+   */
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  billingStatus: text("billing_status").$type<"active" | "past_due" | "canceled">(),
+  /** Operator-created paid projects skip billing (ours/dogfood/support). */
+  billingExempt: boolean("billing_exempt").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 

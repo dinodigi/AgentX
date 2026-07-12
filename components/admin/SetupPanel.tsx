@@ -3,13 +3,18 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CircleCheck, Circle, Database, HardDrive } from "lucide-react";
-import { activateProject, provisionManagedAction } from "@/app/admin/[projectId]/settings/actions";
+import { CircleCheck, Circle, CreditCard, Database, HardDrive } from "lucide-react";
+import {
+  activateProject,
+  provisionManagedAction,
+  createBillingCheckoutAction,
+} from "@/app/admin/[projectId]/settings/actions";
 
 /**
- * The setup surface (B2): what a paid project shows instead of its overview
- * until a data plane exists and the operator activates it. The MCP token and
- * delivery API stay dark until then — agents come in on an active project.
+ * The setup surface (B2/B3): what a paid project shows instead of its
+ * overview until the subscription is live (unless exempt), a data plane
+ * exists, and the operator activates it. The MCP token and delivery API stay
+ * dark until then — agents come in on an active project.
  */
 export function SetupPanel(p: {
   projectId: string;
@@ -17,21 +22,63 @@ export function SetupPanel(p: {
   plan: "byo" | "managed" | null;
   dbConnected: boolean;
   dbStatus: string | null;
+  /** B3: this project needs a live subscription before activation. */
+  billingRequired: boolean;
+  billingActive: boolean;
+  priceLabel: string;
 }) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const billingSatisfied = !p.billingRequired || p.billingActive;
 
   return (
     <div className="mx-auto max-w-xl">
       <p className="eyebrow mb-1">Setup</p>
       <h1 className="display mb-1 text-xl font-semibold">{p.name} isn&apos;t live yet</h1>
       <p className="mb-6 max-w-md text-sm text-ink-mute">
-        Pick where this project&apos;s content lives, then activate. The MCP
-        token and delivery API stay dark until it&apos;s active — set up the
-        plane <em>before</em> the agent starts building.
+        {p.billingRequired ? "Start the subscription, pick" : "Pick"} where this
+        project&apos;s content lives, then activate. The MCP token and delivery
+        API stay dark until it&apos;s active — set up the plane <em>before</em>{" "}
+        the agent starts building.
       </p>
+
+      {p.billingRequired && (
+        <div className="card mb-4 p-5">
+          <div className="mb-2 flex items-center gap-2">
+            {p.billingActive ? (
+              <CircleCheck className="h-4 w-4" style={{ color: "var(--color-ok)" }} />
+            ) : (
+              <Circle className="h-4 w-4 text-ink-mute" />
+            )}
+            <CreditCard className="h-4 w-4 text-ink-mute" />
+            <p className="text-sm font-medium">1 · Subscription ({p.priceLabel})</p>
+          </div>
+          {p.billingActive ? (
+            <p className="text-sm text-ink-mute">Active — thank you.</p>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="btn btn-primary disabled:opacity-60"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  setError(null);
+                  const res = await createBillingCheckoutAction(p.projectId);
+                  setBusy(false);
+                  if (res.error) setError(res.error);
+                  else if (res.url) window.location.href = res.url;
+                }}
+              >
+                {busy ? "Opening checkout…" : `Subscribe — ${p.priceLabel}`}
+              </button>
+              <span className="text-xs text-ink-mute">Stripe checkout; cancel any time</span>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="card mb-4 p-5">
         <div className="mb-2 flex items-center gap-2">
@@ -41,7 +88,7 @@ export function SetupPanel(p: {
             <Circle className="h-4 w-4 text-ink-mute" />
           )}
           <Database className="h-4 w-4 text-ink-mute" />
-          <p className="text-sm font-medium">1 · Database (required)</p>
+          <p className="text-sm font-medium">{p.billingRequired ? "2" : "1"} · Database (required)</p>
           {p.dbStatus && !p.dbConnected && <span className="text-xs text-ink-mute">{p.dbStatus}</span>}
         </div>
         {p.dbConnected ? (
@@ -84,7 +131,7 @@ export function SetupPanel(p: {
         <div className="mb-2 flex items-center gap-2">
           <Circle className="h-4 w-4 text-ink-mute" />
           <HardDrive className="h-4 w-4 text-ink-mute" />
-          <p className="text-sm font-medium">2 · Storage (optional)</p>
+          <p className="text-sm font-medium">{p.billingRequired ? "3" : "2"} · Storage (optional)</p>
         </div>
         <p className="text-sm text-ink-mute">
           Media uses the shared plane unless you attach a bucket on the{" "}
@@ -99,8 +146,14 @@ export function SetupPanel(p: {
         <button
           type="button"
           className="btn btn-ink disabled:opacity-60"
-          disabled={busy || !p.dbConnected}
-          title={p.dbConnected ? undefined : "Connect or provision the database first"}
+          disabled={busy || !p.dbConnected || !billingSatisfied}
+          title={
+            !billingSatisfied
+              ? "Start the subscription first"
+              : p.dbConnected
+                ? undefined
+                : "Connect or provision the database first"
+          }
           onClick={async () => {
             setBusy(true);
             setError(null);

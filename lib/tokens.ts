@@ -29,6 +29,10 @@ export interface TokenInfo {
   /** B2 lifecycle: the agent + delivery surfaces only serve 'active' projects.
    * Activation must revalidateTag("project-tokens") so it takes effect fast. */
   projectStatus: "setup" | "active";
+  /** B3: 'canceled' = a paid, non-exempt project whose subscription ended —
+   * surfaces go dark with a resubscribe message. past_due keeps serving
+   * (Stripe dunning is the grace window). */
+  billing: "ok" | "canceled";
 }
 
 /**
@@ -48,6 +52,9 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
           scope: projectTokens.scope,
           env: projectTokens.env,
           projectStatus: projects.status,
+          plan: projects.plan,
+          billingStatus: projects.billingStatus,
+          billingExempt: projects.billingExempt,
         })
         .from(projectTokens)
         .innerJoin(projects, eq(projects.id, projectTokens.projectId))
@@ -60,15 +67,18 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
         .set({ lastUsedAt: new Date() })
         .where(eq(projectTokens.tokenHash, hash))
         .catch(() => {});
+      const r = rows[0];
+      const paid = r.plan === "byo" || r.plan === "managed";
       return {
-        projectId: rows[0].projectId,
-        scope: rows[0].scope as TokenInfo["scope"],
-        env: rows[0].env,
-        projectStatus: rows[0].projectStatus,
+        projectId: r.projectId,
+        scope: r.scope as TokenInfo["scope"],
+        env: r.env,
+        projectStatus: r.projectStatus,
+        billing: (paid && !r.billingExempt && r.billingStatus === "canceled" ? "canceled" : "ok") as TokenInfo["billing"],
       };
     },
-    // v4: value shape gained `projectStatus` — never serve a cached v3 shape.
-    ["token-v4", hash],
+    // v5: value shape gained `billing` — never serve a cached v4 shape.
+    ["token-v5", hash],
     // TTL as defense-in-depth: a token revoked outside the app (script, other
     // instance) dies within 5 minutes even if no revalidateTag fires.
     { tags: ["project-tokens"], revalidate: 300 },
@@ -83,7 +93,7 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
  */
 export async function resolveProjectId(rawToken: string): Promise<string | null> {
   const info = await resolveToken(rawToken);
-  return info && info.projectStatus === "active" ? info.projectId : null;
+  return info && info.projectStatus === "active" && info.billing === "ok" ? info.projectId : null;
 }
 
 /** Extract a bearer token from an Authorization header value. */

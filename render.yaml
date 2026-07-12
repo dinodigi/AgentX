@@ -82,6 +82,16 @@ services:
       # refuse at the public-URL step; BYO + shared plane unaffected.
       - key: CF_API_TOKEN
         sync: false
+      # Platform billing (B3): OUR Stripe account (per-project subscriptions,
+      # $19 BYO / $29 managed) — distinct from tenants' stripe connectors.
+      # Prices self-provision via lookup keys; the webhook endpoint is
+      # /api/platform-stripe (register it in the Stripe dashboard, events:
+      # checkout.session.completed + customer.subscription.updated/deleted).
+      # Unset = paid checkout refuses with a clear error; everything else runs.
+      - key: PLATFORM_STRIPE_SECRET_KEY
+        sync: false
+      - key: PLATFORM_STRIPE_WEBHOOK_SECRET
+        sync: false
 
   # ── The job drain (replaces the Netlify scheduled function) ───────────────
   # Every minute, POST /api/jobs/drain with the shared CRON_SECRET. Uses node's

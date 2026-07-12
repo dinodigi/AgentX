@@ -35,12 +35,9 @@ const PLANS = [
  */
 export function NewProjectForm({
   sandboxUsed,
-  canCreatePaid,
 }: {
   /** The active workspace already has its free sandbox. */
   sandboxUsed: boolean;
-  /** Paid planes stay invite-only until B3 wires billing (operators bypass). */
-  canCreatePaid: boolean;
 }) {
   const [color, setColor] = useState(PRESETS[0]);
   const [plan, setPlan] = useState<string>(sandboxUsed ? "byo" : "sandbox");
@@ -125,28 +122,22 @@ export function NewProjectForm({
       <div className="mb-4 space-y-2">
         {PLANS.map((p) => {
           const sandboxTaken = p.id === "sandbox" && sandboxUsed;
-          const paidLocked = p.id !== "sandbox" && !canCreatePaid;
-          const disabled = sandboxTaken || paidLocked;
           return (
             <button
               key={p.id}
               type="button"
-              disabled={disabled}
+              disabled={sandboxTaken}
               onClick={() => setPlan(p.id)}
               className={`w-full rounded-lg border px-3 py-2.5 text-left transition-colors ${
                 plan === p.id ? "border-ink bg-paper" : "border-line hover:border-line-strong"
-              } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+              } ${sandboxTaken ? "cursor-not-allowed opacity-50" : ""}`}
             >
               <span className="flex items-baseline justify-between">
                 <span className="text-sm font-medium">{p.label}</span>
                 <span className="text-xs text-ink-mute">{p.price}</span>
               </span>
               <span className="mt-0.5 block text-xs leading-relaxed text-ink-mute">
-                {sandboxTaken
-                  ? "This workspace already has its free sandbox."
-                  : paidLocked
-                    ? "Invite-only during the beta — your free sandbox is available now."
-                    : p.blurb}
+                {sandboxTaken ? "This workspace already has its free sandbox." : p.blurb}
               </span>
             </button>
           );

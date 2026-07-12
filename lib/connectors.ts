@@ -306,14 +306,22 @@ export async function checkConnectorHealth(
           ? "database reachable but the data-plane schema is not installed — reconnect to install"
           : `database reachable but schema v${v} ≠ expected v${TENANT_SCHEMA_VERSION} — content ops are quarantined until it migrates`;
     } else if (type === "r2") {
-      // The full-loop storage probe: write with their keys, read back through
-      // their public base, delete — the same check connect ran (A4).
+      // The full-loop storage probe: write, read back through the public base,
+      // delete — the same check connect/provision ran (A4). MANAGED rows carry
+      // no stored secret by design (platform credentials); only BYO decrypts.
       const c = await getConnector(projectId, "r2");
-      if (!c?.secretEnc || !c.config.bucket || !c.config.accountId || !c.config.publicBaseUrl) {
+      if (!c?.config.bucket || !c.config.accountId) {
         return { ok: false, detail: "no bucket configured" };
       }
+      if (!c.config.publicBaseUrl) {
+        return { ok: false, detail: "bucket exists but its public URL isn't live yet — retry provisioning" };
+      }
+      const managed = c.config.mode === "managed";
+      if (!managed && !c.secretEnc) return { ok: false, detail: "no credentials stored" };
+      const creds = managed
+        ? { accessKeyId: process.env.R2_ACCESS_KEY_ID!, secretAccessKey: process.env.R2_SECRET_ACCESS_KEY! }
+        : (JSON.parse(decryptSecret(c.secretEnc!)) as { accessKeyId: string; secretAccessKey: string });
       const { probeBucket } = await import("./r2-connector");
-      const creds = JSON.parse(decryptSecret(c.secretEnc)) as { accessKeyId: string; secretAccessKey: string };
       const res = await probeBucket({
         accountId: c.config.accountId,
         accessKeyId: creds.accessKeyId,
