@@ -35,6 +35,8 @@ export interface PlatformWorkspace {
 export interface PlatformProject {
   id: string;
   name: string;
+  /** Grouping key for the console; null = legacy/operator-era (no workspace). */
+  workspaceId: string | null;
   workspaceName: string;
   initial: string;
   brand: string;
@@ -122,6 +124,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
       return {
         id: p.id,
         name,
+        workspaceId: p.workspaceId ?? null,
         workspaceName: p.workspaceId ? (wsName.get(p.workspaceId) ?? "—") : "— (no workspace)",
         initial: name.charAt(0).toUpperCase(),
         brand,
