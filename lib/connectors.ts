@@ -103,6 +103,23 @@ export function deriveClerkIssuer(publishableKey: string): string | null {
   }
 }
 
+/**
+ * A secret-shaped value must NEVER sit in a non-secret config field. `config`
+ * is returned verbatim by list_connectors (and readable by the agent), so a
+ * secret mis-pasted into e.g. Clerk's publishableKey would leak — a dogfood
+ * build hit exactly this. Reject it at save time instead of faithfully storing
+ * it. sk_/rk_ (Clerk + Stripe secret/restricted keys) and whsec_ (webhook
+ * signing secrets) are never legitimately public config values.
+ */
+export function secretShapedConfigRefusal(config: Record<string, string>): string | null {
+  for (const [key, value] of Object.entries(config)) {
+    if (/^(sk|rk)_(test|live)_/.test(value) || /^whsec_/.test(value)) {
+      return `That looks like a SECRET key in the "${key}" field — that field is PUBLIC (it's returned by list_connectors, readable by the agent). Put the secret in the secret field; use only the public key (pk_…) here.`;
+    }
+  }
+  return null;
+}
+
 export async function getConnector(
   projectId: string,
   type: ConnectorType,

@@ -187,12 +187,17 @@ export async function saveConnector(
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
 
-  const { CONNECTOR_SPECS, upsertConnector, deriveClerkIssuer } = await import("@/lib/connectors");
+  const { CONNECTOR_SPECS, upsertConnector, deriveClerkIssuer, secretShapedConfigRefusal } =
+    await import("@/lib/connectors");
   const spec = CONNECTOR_SPECS[type];
   const config: Record<string, string> = {};
   for (const f of spec.configFields) {
     config[f.key] = String(formData.get(f.key) ?? "").trim();
   }
+  // Guard the public config surface: a secret mis-pasted into a non-secret
+  // field (e.g. an sk_ in Clerk's publishableKey) would leak via list_connectors.
+  const secretInConfig = secretShapedConfigRefusal(config);
+  if (secretInConfig) return { error: secretInConfig };
   if (type === "clerk") {
     // One-paste connect: the publishable key alone is enough — derive the issuer.
     if (!config.issuer && config.publishableKey) {
@@ -220,7 +225,7 @@ export async function saveConnector(
       return { error: "Couldn't reach that Clerk instance — check the key/issuer and try again" };
     }
   }
-  if (type === "stripe" && config.publishableKey && !/^pk_(test|live)_/.test(config.publishableKey)) {
+  if ((type === "stripe" || type === "clerk") && config.publishableKey && !/^pk_(test|live)_/.test(config.publishableKey)) {
     return { error: "Publishable key should start with pk_test_ or pk_live_" };
   }
   const secret = String(formData.get("secret") ?? "").trim();
