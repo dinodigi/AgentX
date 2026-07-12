@@ -1,10 +1,11 @@
 import "server-only";
 import { count, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { collections, entries, projectConnectors, projects, workspaceMembers, workspaces } from "@/db/schema";
+import { assets, collections, entries, projectConnectors, projects, workspaceMembers, workspaces } from "@/db/schema";
 import { tenantContentStats } from "./data-plane";
 import { getViewer } from "./access";
 import { brandInk } from "./brand";
+import { PAID_CAPS, SANDBOX_CAPS } from "./caps";
 
 /**
  * Platform-wide (god-view) reads for the operator console (B4). Operator-gated
@@ -31,13 +32,19 @@ export interface PlatformProject {
   logoUrl: string | null;
   collections: number;
   entries: number;
+  /** Media bytes (shared-plane sum, tenant-DB overlay for connector-backed). */
+  assetBytes: number;
   connectors: { type: string; status: string }[];
   lastActivity: string | null;
   createdAt: string;
+  /** B2/B4 lifecycle: 'setup' | 'active' | 'suspended'. */
+  status: string;
   /** B3: 'sandbox' | 'byo' | 'managed' | null (legacy/operator-era). */
   plan: string | null;
   /** B3: 'active' | 'past_due' | 'canceled' | 'exempt' | null (unbilled). */
   billing: string | null;
+  /** The plan's caps (B2 sandbox / B3 paid ceilings); null = uncapped legacy. */
+  caps: { entries: number; collections: number; assetBytes: number } | null;
 }
 
 export interface PlatformOverview {
@@ -49,7 +56,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
   const viewer = await getViewer();
   if (!viewer?.isPlatformOperator) return null;
 
-  const [allWorkspaces, memberCounts, allProjects, collectionCounts, entryCounts, connectorRows, activityRows] =
+  const [allWorkspaces, memberCounts, allProjects, collectionCounts, entryCounts, connectorRows, activityRows, assetSums] =
     await Promise.all([
       db.select({ id: workspaces.id, name: workspaces.name, createdAt: workspaces.createdAt }).from(workspaces),
       db.select({ workspaceId: workspaceMembers.workspaceId, n: count() }).from(workspaceMembers).groupBy(workspaceMembers.workspaceId),
@@ -58,6 +65,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
       db.select({ projectId: entries.projectId, n: count() }).from(entries).groupBy(entries.projectId),
       db.select({ projectId: projectConnectors.projectId, type: projectConnectors.type, status: projectConnectors.status }).from(projectConnectors),
       db.select({ projectId: entries.projectId, last: sql<string | null>`max(${entries.updatedAt})` }).from(entries).groupBy(entries.projectId),
+      db.select({ projectId: assets.projectId, total: sql<string>`coalesce(sum(${assets.size}::bigint), 0)` }).from(assets).groupBy(assets.projectId),
     ]);
 
   const wsName = new Map(allWorkspaces.map((w) => [w.id, w.name]));
@@ -66,6 +74,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
   const colsById = new Map(collectionCounts.map((c) => [c.projectId, c.n]));
   const entriesById = new Map(entryCounts.map((c) => [c.projectId, c.n]));
   const activityById = new Map(activityRows.map((a) => [a.projectId, a.last]));
+  const bytesById = new Map(assetSums.map((a) => [a.projectId, Number(a.total)]));
   const connectorsById = new Map<string, { type: string; status: string }[]>();
   for (const c of connectorRows) {
     const list = connectorsById.get(c.projectId) ?? [];
@@ -107,11 +116,14 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
         logoUrl: p.branding?.logoUrl ?? null,
         collections: colsById.get(p.id) ?? 0,
         entries: tenant ? tenant.entries : (entriesById.get(p.id) ?? 0),
+        assetBytes: tenant ? tenant.assetBytes : (bytesById.get(p.id) ?? 0),
         connectors: connectorsById.get(p.id) ?? [],
         lastActivity: tenant ? tenant.lastActivity : last ? new Date(last).toISOString() : null,
         createdAt: p.createdAt.toISOString(),
+        status: p.status,
         plan: p.plan ?? null,
         billing: p.billingExempt ? "exempt" : (p.billingStatus ?? null),
+        caps: p.plan === "sandbox" ? SANDBOX_CAPS : p.plan === "byo" || p.plan === "managed" ? PAID_CAPS : null,
       };
     })
     .sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""));

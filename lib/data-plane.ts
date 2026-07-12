@@ -138,6 +138,8 @@ export async function tenantDb(projectId: string, env: Env = "prod"): Promise<Db
 
 export interface TenantContentStats {
   entries: number;
+  /** Sum of assets.size tenant-side — the console's media-vs-cap column (B4). */
+  assetBytes: number;
   lastActivity: string | null;
 }
 
@@ -155,16 +157,23 @@ export async function tenantContentStats(projectIds: string[]): Promise<Map<stri
     projectIds.map(async (pid) => {
       try {
         const tdb = await tenantDb(pid);
-        const [row] = await tdb
-          .select({ n: count(), last: sql<string | null>`max(${schema.entries.updatedAt})` })
-          .from(schema.entries)
-          .where(eq(schema.entries.projectId, pid));
+        const [[row], [bytes]] = await Promise.all([
+          tdb
+            .select({ n: count(), last: sql<string | null>`max(${schema.entries.updatedAt})` })
+            .from(schema.entries)
+            .where(eq(schema.entries.projectId, pid)),
+          tdb
+            .select({ total: sql<string>`coalesce(sum(${schema.assets.size}::bigint), 0)` })
+            .from(schema.assets)
+            .where(eq(schema.assets.projectId, pid)),
+        ]);
         out.set(pid, {
           entries: Number(row?.n ?? 0),
+          assetBytes: Number(bytes?.total ?? 0),
           lastActivity: row?.last ? new Date(row.last).toISOString() : null,
         });
       } catch {
-        out.set(pid, { entries: 0, lastActivity: null });
+        out.set(pid, { entries: 0, assetBytes: 0, lastActivity: null });
       }
     }),
   );

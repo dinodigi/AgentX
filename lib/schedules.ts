@@ -2,6 +2,7 @@ import { z } from "zod";
 import { and, asc, eq, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
+  projects,
   projectSchedules,
   type ProjectSchedule,
   type ScheduleAction,
@@ -166,12 +167,23 @@ export async function deleteSchedule(projectId: string, name: string): Promise<P
  * fires once and never backfills.
  */
 export async function tickSchedules(): Promise<number> {
+  // Non-active projects don't tick (B4): a suspended project's schedules stay
+  // where they are and the missed-window rule ("fires once, never backfills")
+  // gives exactly the right resume behavior on unsuspension — no burst.
   const due = await db
     .select()
     .from(projectSchedules)
-    .where(and(eq(projectSchedules.enabled, true), lte(projectSchedules.nextRunAt, new Date())))
+    .innerJoin(projects, eq(projects.id, projectSchedules.projectId))
+    .where(
+      and(
+        eq(projectSchedules.enabled, true),
+        lte(projectSchedules.nextRunAt, new Date()),
+        eq(projects.status, "active"),
+      ),
+    )
     .orderBy(asc(projectSchedules.nextRunAt))
-    .limit(20);
+    .limit(20)
+    .then((rows) => rows.map((r) => r.project_schedules));
 
   let fired = 0;
   for (const s of due) {

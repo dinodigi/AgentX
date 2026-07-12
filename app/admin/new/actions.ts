@@ -81,5 +81,6 @@ export async function createProject(formData: FormData): Promise<CreateProjectRe
     label: "created with project",
   });
 
-  return { projectId: project.id, token: raw, status: project.status };
+  // A freshly created project is never 'suspended' — narrow for the reveal UI.
+  return { projectId: project.id, token: raw, status: project.status as "setup" | "active" };
 }

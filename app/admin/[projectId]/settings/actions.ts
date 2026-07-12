@@ -347,6 +347,11 @@ export async function activateProject(projectId: string): Promise<{ error?: stri
     .limit(1);
   if (!project) return { error: "Project not found" };
   if (project.status === "active") return { ok: true };
+  // B4: suspension is the OPERATOR's lever — only the console lifts it. Without
+  // this, any project operator could self-unsuspend through this action.
+  if (project.status === "suspended") {
+    return { error: "This project is suspended by the platform operators — contact support." };
+  }
 
   if (project.plan === "byo" || project.plan === "managed") {
     if (!project.billingExempt && project.billingStatus !== "active") {

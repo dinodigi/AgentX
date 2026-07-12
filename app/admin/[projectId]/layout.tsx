@@ -4,7 +4,8 @@ import { and, count, eq, isNull, inArray } from "drizzle-orm";
 import { tenantDb } from "@/lib/data-plane";
 import { entries } from "@/db/schema";
 import { getProject } from "@/lib/admin";
-import { getProjectRole, accessibleProjects, getViewer } from "@/lib/access";
+import { getProjectRole, accessibleProjects, getViewer, hasTenantRung } from "@/lib/access";
+import { latestSuspendNote, recordSupportAccess } from "@/lib/platform-events";
 import { listCollections } from "@/lib/collections";
 import { brandInk } from "@/lib/brand";
 import { getWorkspaceTheme, getSidebarCollapsed } from "@/lib/theme";
@@ -37,6 +38,14 @@ export default async function ProjectLayout({
   ]);
   if (!project || !role) notFound();
 
+  // B4 support access: an operator with no tenant rung into this project is
+  // here for support — banner them, and record the visit (deduped) where the
+  // tenant can see it. Suspension shows its tenant-visible reason the same way.
+  const supportAccess =
+    viewer?.isPlatformOperator === true && !(await hasTenantRung(projectId, viewer));
+  if (supportAccess && viewer) await recordSupportAccess(projectId, viewer.email);
+  const suspendNote = project.status === "suspended" ? await latestSuspendNote(projectId) : null;
+
   const inboxIds = collections.filter((c) => c.publicWrite).map((c) => c.id);
   const unhandled =
     inboxIds.length === 0
@@ -63,6 +72,33 @@ export default async function ProjectLayout({
         isPlatformOperator={viewer?.isPlatformOperator ?? false}
       />
       <main className="page-enter mx-auto min-w-0 max-w-[1400px] flex-1 px-5 py-7 md:px-10 md:py-9">
+        {project.status === "suspended" && (
+          <div
+            className="mb-5 rounded-xl border px-4 py-3 text-[13px] leading-relaxed"
+            style={{
+              borderColor: "color-mix(in srgb, var(--color-err) 40%, transparent)",
+              background: "color-mix(in srgb, var(--color-err) 8%, transparent)",
+            }}
+          >
+            <p className="m-0 font-medium" style={{ color: "var(--color-err)" }}>
+              This project is suspended by the platform operators — its agent and delivery APIs are dark.
+            </p>
+            <p className="m-0 mt-1 text-ink-mute">
+              {suspendNote ? (
+                <>
+                  Reason: {suspendNote}.{" "}
+                </>
+              ) : null}
+              Content and settings remain intact. Contact support to resolve it.
+            </p>
+          </div>
+        )}
+        {supportAccess && (
+          <div className="mb-5 rounded-xl border border-line bg-card px-4 py-2.5 font-mono text-[11.5px] text-ink-mute">
+            <span style={{ color: "var(--color-warn)" }}>support access</span> — you are a platform
+            operator in a tenant&apos;s project. This visit is logged and visible to them in Settings.
+          </div>
+        )}
         {children}
       </main>
       <ContentSidebar

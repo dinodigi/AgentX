@@ -76,6 +76,40 @@ export async function getProjectRole(projectId: string): Promise<Role | null> {
   return member ? (member.role as Role) : null;
 }
 
+/**
+ * B4 support access (decision #6, settled 2026-07-11): does the viewer reach
+ * this project through a TENANT rung — workspace membership or a per-project
+ * share — as opposed to only the platform-operator rung? An operator with no
+ * tenant rung into the project is doing SUPPORT ACCESS: allowed, but recorded
+ * in platform_events and visible to the tenant in Settings.
+ */
+export async function hasTenantRung(projectId: string, viewer: Viewer): Promise<boolean> {
+  const [project] = await db
+    .select({ workspaceId: projects.workspaceId })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (project?.workspaceId) {
+    const [ws] = await db
+      .select({ id: workspaceMembers.id })
+      .from(workspaceMembers)
+      .where(
+        and(
+          eq(workspaceMembers.workspaceId, project.workspaceId),
+          eq(workspaceMembers.clerkUserId, viewer.userId),
+        ),
+      )
+      .limit(1);
+    if (ws) return true;
+  }
+  const [member] = await db
+    .select({ id: projectMembers.id })
+    .from(projectMembers)
+    .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.clerkUserId, viewer.userId)))
+    .limit(1);
+  return Boolean(member);
+}
+
 /** Projects grouped by how the viewer reaches them — for the dashboard. */
 export interface AccessibleProjects {
   /** Reached via workspace membership (the viewer's own workspaces). */

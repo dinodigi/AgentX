@@ -7,6 +7,7 @@ import { getProjectRole, getViewer } from "@/lib/access";
 import { canDeleteProject } from "@/lib/workspaces";
 import { listCollections } from "@/lib/collections";
 import { listSchedules } from "@/lib/schedules";
+import { listProjectPlatformEvents } from "@/lib/platform-events";
 import { TokensSection, WebhookForm, MembersSection, SecretReveal } from "./sections";
 import { DeleteProjectSection } from "./DeleteProjectSection";
 import { refireDeliveryAction, cancelJobAction, toggleScheduleAction } from "./actions";
@@ -30,7 +31,7 @@ export default async function SettingsPage({
   // Tokens/members/jobs/project = control plane; deliveries + the delete-plan
   // counts below read the project's data plane.
   const tdb = await tenantDb(projectId);
-  const [collections, tokens, members, deliveries, projectRow, automationJobs, schedules] = await Promise.all([
+  const [collections, tokens, members, deliveries, projectRow, automationJobs, schedules, platformTrail] = await Promise.all([
     listCollections(projectId),
     db
       .select({
@@ -64,6 +65,7 @@ export default async function SettingsPage({
       .orderBy(desc(jobs.runAt))
       .limit(20),
     listSchedules(projectId),
+    listProjectPlatformEvents(projectId, 12),
   ]);
 
   const formCollections = collections.filter((c) => c.publicWrite);
@@ -292,7 +294,7 @@ export default async function SettingsPage({
         </a>
       </section>
 
-      <section>
+      <section className="mb-9">
         <h2 className="section-label mb-1">Members</h2>
         <p className="mb-3 max-w-md text-sm text-ink-mute">
           Who can open this admin. Operators manage settings; clients manage
@@ -302,6 +304,40 @@ export default async function SettingsPage({
           projectId={projectId}
           members={members.map((m) => ({ id: m.id, email: m.email, role: m.role }))}
         />
+      </section>
+
+      <section>
+        <h2 className="section-label mb-1">Platform access</h2>
+        <p className="mb-3 max-w-md text-sm text-ink-mute">
+          Platform operators can open this project for support. Every such
+          visit — and any suspension — is recorded here, visible to you.
+        </p>
+        {platformTrail.length === 0 ? (
+          <p className="card max-w-md p-4 text-sm text-ink-mute">
+            No platform-operator access recorded.
+          </p>
+        ) : (
+          <div className="card max-w-2xl overflow-x-auto">
+            <table className="w-full text-sm">
+              <tbody>
+                {platformTrail.map((e) => (
+                  <tr key={e.id} className="border-b border-line last:border-0">
+                    <td className="px-4 py-2.5">
+                      <span className={`chip ${e.type === "suspend" ? "chip-bad" : "chip-mute"}`}>
+                        {e.type === "support_access" ? "support access" : e.type}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2.5 font-mono text-xs text-ink-mute">{e.actorEmail}</td>
+                    <td className="max-w-56 truncate px-3 py-2.5 text-xs text-ink-mute">{e.note}</td>
+                    <td className="px-3 py-2.5 text-xs text-ink-mute">
+                      {e.createdAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       {canDelete && deleteCounts && (

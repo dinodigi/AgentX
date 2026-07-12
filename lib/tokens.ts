@@ -27,8 +27,9 @@ export interface TokenInfo {
    * until A5 mints dev tokens; carried here so the boundary already knows. */
   env: "prod" | "dev";
   /** B2 lifecycle: the agent + delivery surfaces only serve 'active' projects.
-   * Activation must revalidateTag("project-tokens") so it takes effect fast. */
-  projectStatus: "setup" | "active";
+   * Activation must revalidateTag("project-tokens") so it takes effect fast.
+   * 'suspended' (B4) = operator abuse lever — same darkness, its own message. */
+  projectStatus: "setup" | "active" | "suspended";
   /** B3: 'canceled' = a paid, non-exempt project whose subscription ended —
    * surfaces go dark with a resubscribe message. past_due keeps serving
    * (Stripe dunning is the grace window). */

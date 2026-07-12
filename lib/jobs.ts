@@ -61,16 +61,20 @@ export async function enqueueJob(input: EnqueueJobInput): Promise<Job | null> {
 }
 
 /** Claim up to n due pending jobs in ONE statement. attempts is incremented on
- * claim, so the RETURNED attempts is the count INCLUDING this attempt. */
+ * claim, so the RETURNED attempts is the count INCLUDING this attempt.
+ * Non-active projects' jobs are NOT claimable (B4): suspension must silence
+ * outbound automation too, not just the APIs — the rows stay pending and
+ * resume when the project does. */
 export async function claimDueJobs(n: number): Promise<ClaimedJob[]> {
   const result = await db.execute(sql`
     UPDATE ${jobs} SET status = 'running', claimed_at = now(), attempts = attempts + 1, updated_at = now()
     WHERE id IN (
-      SELECT id FROM ${jobs}
-      WHERE status = 'pending' AND run_at <= now()
-      ORDER BY run_at
+      SELECT j.id FROM ${jobs} j
+      JOIN projects p ON p.id = j.project_id
+      WHERE j.status = 'pending' AND j.run_at <= now() AND p.status = 'active'
+      ORDER BY j.run_at
       LIMIT ${n}
-      FOR UPDATE SKIP LOCKED )
+      FOR UPDATE OF j SKIP LOCKED )
     RETURNING id, project_id AS "projectId", kind, payload, attempts, max_attempts AS "maxAttempts"`);
   return ((result as { rows?: unknown[] }).rows ?? (result as unknown as unknown[])) as ClaimedJob[];
 }

@@ -265,8 +265,10 @@ in the launch plan.
         prefix cleanup + cascade delete. Refuses if a managed `neon` connector
         exists (data-plane teardown = A3). Caught + worked around a live-DB bug:
         4 tables lack their `project_id` FK cascade (see [[missing-fk-cascades]]),
-        so the action deletes them explicitly. Spawned a task to repair the FKs.
-      - [ ] **Setup state** (choose BYO/managed, provision) — needs Track A.
+        so the action deletes them explicitly. Spawned a task to repair the FKs
+        (repaired 2026-07-11 — all 14 project-child FKs cascade).
+      - [x] **Setup state** (choose BYO/managed, provision) — shipped with the
+        B2 core (setup surface + one-click managed provisioning above).
       - Decided 2026-07-10 — users can delete their own projects:
       - Destructive = **plan + confirm** (design rule): the delete plan discloses
         what goes (collections, entries, assets, tokens, connectors) and requires
@@ -297,14 +299,30 @@ in the launch plan.
       in Render, and register `/api/platform-stripe` in the Stripe dashboard
       (events: checkout.session.completed, customer.subscription.updated,
       customer.subscription.deleted).
-- [~] B4 (M) **Operator console — read view ✅ shipped 2026-07-11 (d8e00c3 +
-      fe6a7f8).** `/admin/console` (operator-gated) shows all workspaces + all
+- [x] B4 (M) **Operator console — ✅ COMPLETE 2026-07-11.** Read view (d8e00c3 +
+      fe6a7f8): `/admin/console` (operator-gated) shows all workspaces + all
       projects with scale + connector health, link into any project for support.
       And the everyday dashboard is now **personal even for operators** — the
       god view moved off `/admin` into the console (operators keep god-mode
-      *access* via getProjectRole, only the listing is scoped). **Still todo:**
-      usage/plan columns (need B3), a suspend control, and the support-access
-      audit-log policy. Decided 2026-07-10:
+      *access* via getProjectRole, only the listing is scoped). Finish pass:
+      - [x] **Usage/plan columns** — per-project plan/billing/status chips +
+        usage-vs-cap columns (entries, collections, media bytes; warn ≥80%),
+        fed by B3 data + the caps machinery; tenant-DB fan-out includes media.
+      - [x] **Suspend control** — `projects.status` gained 'suspended': MCP
+        darkens with E_PROJECT_SUSPENDED, delivery 401s, **jobs stop claiming
+        and schedules stop ticking** (missed-window rule = clean resume, no
+        burst); tenant admin stays reachable with a reason banner;
+        activateProject refuses (no self-unsuspend); console-only,
+        confirm-gated with a mandatory tenant-visible reason. Smoke 53: 4/4.
+      - [x] **Support-access policy (decision #6) — SETTLED as the default:
+        allowed, audit-logged, tenant-visible.** New control-plane
+        `platform_events` table (suspend/unsuspend/support_access; FK SET NULL
+        + name snapshot — the trail survives project deletion, proven in smoke).
+        An operator opening a project they have no tenant rung into gets a
+        "support access" banner; the visit is recorded (12h dedupe per
+        operator+project) and shown to the tenant in Settings → Platform
+        access, alongside any suspensions.
+      Decided 2026-07-10:
       - The console is a **separate surface** (own route, operator-gated, reads
         the control plane). The everyday dashboard shows only our own workspace,
         like any tenant — fixing today's ADMIN_EMAILS behavior of mixing every
@@ -312,8 +330,8 @@ in the launch plan.
       - Platform-account data (who signed up, projects per workspace, cap usage)
         lives HERE — never in the dogfooded marketing project, which only holds
         content-shaped data (waitlist leads via its publicWrite inbox).
-      - Policy to settle during B4: whether operators can enter a tenant's
-        project admin at all (support access), and under what audit logging.
+      - ~~Policy to settle during B4~~ — settled above (allowed + logged +
+        tenant-visible).
 
 ## Track C — launch readiness
 
@@ -337,10 +355,10 @@ in the launch plan.
 ```
 0.1  0.2  0.3            ── ✅ done
 A0 → A1 → A2 → A3 → A4   ── ✅ TRACK A COMPLETE (A5 cut from launch scope)
-B1 ✅ → B2 setup → B3 billing → B4 finish      ← THE CRITICAL PATH NOW
-                 C1 (dogfood, after B2 setup — needs the operator)
-C2/C4/C5 slot into gaps; C3 has real numbers now; C6 on the operator; C7 last.
-Launch gate = A-track ✅ + B-track + C1 + C4 + C5 + C7 all green.
+B1 → B2 → B3 → B4        ── ✅ TRACK B COMPLETE (B3 awaits Stripe keys to take real money)
+C1 (dogfood — needs the operator) ← THE CRITICAL PATH NOW
+C2 → C4 (audit rate limits in final form) → C5; C3 has real numbers; C6 on the operator; C7 last.
+Launch gate = A ✅ + B ✅ + C1 + C4 + C5 + C7 all green.
 ```
 
 ## Decisions needed from the operator (blocking marked ⚑)
@@ -361,9 +379,10 @@ Launch gate = A-track ✅ + B-track + C1 + C4 + C5 + C7 all green.
 4. **BYO environments shape** — two connection strings vs granted Neon API key
    (settled in A0 review).
 5. **Legal entity + ToS/privacy path** (blocks C6).
-6. **Operator support access** — may platform operators open a tenant's project
-   admin, and with what logging? (settled during B4; default leaning: allowed
-   but audit-logged and visible to the tenant).
+6. ~~**Operator support access**~~ — **✅ SETTLED 2026-07-11 (B4, as the default
+   leaning): allowed, but audit-logged (`platform_events`) and visible to the
+   tenant (Settings → Platform access + a support-access banner for the
+   operator).** Revisit only if a tenant objects post-launch.
 
 ## Honest sizing
 

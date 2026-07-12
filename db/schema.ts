@@ -147,9 +147,11 @@ export const projects = pgTable("projects", {
    * Lifecycle (B2): 'setup' = created but no data plane chosen yet — the admin
    * shows the setup surface and the MCP/delivery APIs stay dark; 'active' =
    * live. DB default 'active' keeps every pre-B2 row live with no backfill;
-   * paid creates insert 'setup' explicitly.
+   * paid creates insert 'setup' explicitly. 'suspended' (B4) = the operator
+   * abuse lever — MCP + delivery dark, admin stays reachable (banner), and
+   * ONLY the console can flip it back (activateProject refuses).
    */
-  status: text("status").$type<"setup" | "active">().notNull().default("active"),
+  status: text("status").$type<"setup" | "active" | "suspended">().notNull().default("active"),
   /**
    * Commercial plan (B2/B3): 'sandbox' = the workspace's one free, hard-capped,
    * shared-plane project; 'byo' | 'managed' = paid ($19/$29 anchors, billed in
@@ -333,6 +335,35 @@ export const workspaceMembers = pgTable(
   },
   (t) => [uniqueIndex("workspace_members_user_idx").on(t.workspaceId, t.clerkUserId)],
 );
+
+/**
+ * Control-plane trail of PLATFORM-OPERATOR actions on tenant projects (B4):
+ * suspend/unsuspend and support access. Distinct from the tenant-side
+ * audit_log (entry mutations, tenant DB) — these rows are about us acting on
+ * a tenant, so they live where the tenant cannot reach and survive project
+ * deletion (FK SET NULL + name snapshot: an abuse trail must not be erasable
+ * by deleting the project). Visible to the tenant in project Settings —
+ * that visibility is the support-access policy, not a courtesy.
+ */
+export type PlatformEventType = "suspend" | "unsuspend" | "support_access";
+
+export const platformEvents = pgTable(
+  "platform_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id").references(() => projects.id, { onDelete: "set null" }),
+    /** Snapshot — keeps the row readable after the project is deleted. */
+    projectName: text("project_name").notNull(),
+    type: text("type").$type<PlatformEventType>().notNull(),
+    actorEmail: text("actor_email").notNull(),
+    /** Suspend reason; shown to the tenant on the suspension banner. */
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("platform_events_project_idx").on(t.projectId, t.createdAt)],
+);
+
+export type PlatformEventRow = typeof platformEvents.$inferSelect;
 
 /**
  * Per-project external service connections (BYO infra). Non-secret config in

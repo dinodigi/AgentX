@@ -61,6 +61,12 @@ export async function POST(req: NextRequest) {
       { status: 401 },
     );
   }
+  if (info.projectStatus === "suspended") {
+    return new Response(
+      "Forbidden [E_PROJECT_SUSPENDED]: this project has been suspended by the platform operators. The admin explains why; contact support to resolve it. Retrying will not help.",
+      { status: 403 },
+    );
+  }
   if (info.projectStatus !== "active") {
     return new Response(
       "Forbidden [E_PROJECT_SETUP]: this project hasn't finished setup — pick its data plane (connect or provision a database) in the admin and activate it, then retry.",
