@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { projectIcon } from "./project-icons";
 
 /**
  * Shared presentational helpers for the admin control-plane surfaces (studio
@@ -84,21 +85,24 @@ export function ConnectorHealth({
   );
 }
 
-/** A brand identity tile — the client's color as a fill, initial or logo on it. */
+/** A brand identity tile — the client's color as a fill, with their chosen icon
+ * (or a legacy logo, or the letter monogram) on it. */
 export function BrandTile({
   brand,
   brandInk,
   initial,
+  icon,
   logoUrl,
   size = 40,
 }: {
   brand: string;
   brandInk: string;
   initial: string;
+  icon?: string | null;
   logoUrl?: string | null;
   size?: number;
 }) {
-  if (logoUrl) {
+  if (logoUrl && !icon) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
@@ -109,6 +113,7 @@ export function BrandTile({
       />
     );
   }
+  const Icon = projectIcon(icon);
   return (
     <span
       className="display grid shrink-0 place-items-center rounded-[9px] font-semibold"
@@ -121,7 +126,7 @@ export function BrandTile({
         boxShadow: `inset 0 0 0 1px color-mix(in srgb, white 14%, transparent)`,
       }}
     >
-      {initial}
+      {Icon ? <Icon style={{ width: size * 0.5, height: size * 0.5 }} strokeWidth={2} /> : initial}
     </span>
   );
 }

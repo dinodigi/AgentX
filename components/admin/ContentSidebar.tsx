@@ -106,7 +106,7 @@ export function ContentSidebar({
         type="button"
         aria-label="Open content"
         onClick={() => setOpen(true)}
-        className="fixed right-3 top-2.5 z-40 rounded-lg border border-line bg-card p-2 text-ink-mute md:hidden"
+        className="fixed bottom-4 right-4 z-40 rounded-lg border border-line bg-card p-2 text-ink-mute shadow-lg md:hidden"
       >
         <LayoutList className="h-4 w-4" />
         {totalUnhandled > 0 && (
@@ -130,7 +130,7 @@ export function ContentSidebar({
 
       {/* DESKTOP: expanded panel or collapsed strip */}
       {collapsed ? (
-        <aside className="sticky top-0 hidden h-screen w-11 shrink-0 flex-col items-center gap-3 border-l border-line bg-card py-3 md:flex">
+        <aside className="sticky top-[52px] hidden h-[calc(100vh-52px)] w-11 shrink-0 flex-col items-center gap-3 border-l border-line bg-card py-3 md:flex">
           <button
             type="button"
             onClick={() => setColl(false)}
@@ -153,7 +153,7 @@ export function ContentSidebar({
           </div>
         </aside>
       ) : (
-        <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-l border-line bg-card md:flex">
+        <aside className="sticky top-[52px] hidden h-[calc(100vh-52px)] w-60 shrink-0 flex-col border-l border-line bg-card md:flex">
           <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
             {heading}
             <button

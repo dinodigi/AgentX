@@ -93,6 +93,7 @@ export default async function ProjectHome({
       projectId={projectId}
       name={name}
       initial={name.charAt(0).toUpperCase()}
+      icon={project.branding.icon ?? null}
       logoUrl={project.branding.logoUrl ?? null}
       brand={brand}
       brandInk={brandInk(brand)}

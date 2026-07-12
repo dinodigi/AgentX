@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
-import { Check, Copy, Eye, EyeOff, Trash2 } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Check, Copy, Eye, EyeOff, Search, Trash2, Type } from "lucide-react";
 import { McpSnippet } from "@/components/McpSnippet";
+import { PROJECT_ICON_NAMES, PROJECT_ICONS, projectIcon } from "@/components/admin/project-icons";
+import { brandInk } from "@/lib/brand";
 import {
   updateBranding,
   mintToken,
@@ -36,24 +38,22 @@ export function BrandingForm({
   initial,
 }: {
   projectId: string;
-  initial: { displayName: string; primaryColor: string; logoUrl: string };
+  initial: { displayName: string; primaryColor: string; icon: string };
 }) {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const [logoUrl, setLogoUrl] = useState(initial.logoUrl);
-  const [uploading, setUploading] = useState(false);
+  // Controlled so the preview tile updates live as you edit.
+  const [name, setName] = useState(initial.displayName);
+  const [color, setColor] = useState(initial.primaryColor || "#4f46e5");
+  const [icon, setIcon] = useState(initial.icon);
+  const [q, setQ] = useState("");
 
-  async function onLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setUploading(true);
-    const fd = new FormData();
-    fd.append("projectId", projectId);
-    fd.append("file", file);
-    const res = await fetch("/api/admin/upload", { method: "POST", body: fd });
-    setUploading(false);
-    if (res.ok) setLogoUrl((await res.json()).url);
-  }
+  const ink = brandInk(color);
+  const PreviewIcon = projectIcon(icon);
+  const matches = useMemo(
+    () => (q ? PROJECT_ICON_NAMES.filter((n) => n.includes(q.toLowerCase())) : PROJECT_ICON_NAMES),
+    [q],
+  );
 
   return (
     <form
@@ -65,30 +65,93 @@ export function BrandingForm({
       }}
       className="card max-w-md p-5"
     >
+      {/* Live preview — the tile as it appears across the admin. */}
+      <div className="mb-5 flex items-center gap-3 rounded-lg border border-line bg-paper p-3">
+        <span
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-[10px] font-semibold"
+          style={{ background: color, color: ink, boxShadow: "inset 0 0 0 1px color-mix(in srgb, white 14%, transparent)" }}
+        >
+          {PreviewIcon ? <PreviewIcon className="h-5 w-5" strokeWidth={2} /> : name.charAt(0).toUpperCase() || "P"}
+        </span>
+        <div className="min-w-0">
+          <p className="m-0 truncate text-sm font-semibold text-ink">{name || "Project name"}</p>
+          <p className="m-0 font-mono text-[11px] text-line-strong">how it looks everywhere</p>
+        </div>
+      </div>
+
       <label className="mb-1 block text-sm font-medium">Display name</label>
-      <input name="displayName" defaultValue={initial.displayName} className={`${inputClass} mb-3`} />
+      <input name="displayName" value={name} onChange={(e) => setName(e.target.value)} className={`${inputClass} mb-3`} />
 
       <label className="mb-1 block text-sm font-medium">Brand color</label>
       <input
         type="color"
         name="primaryColor"
-        defaultValue={initial.primaryColor}
-        className="mb-3 h-9 w-14 cursor-pointer rounded border border-line"
+        value={color}
+        onChange={(e) => setColor(e.target.value)}
+        className="mb-4 h-9 w-14 cursor-pointer rounded border border-line"
       />
 
-      <label className="mb-1 block text-sm font-medium">Logo</label>
-      <input type="hidden" name="logoUrl" value={logoUrl} />
-      <div className="mb-3 flex items-center gap-3">
-        {logoUrl && <img src={logoUrl} alt="" className="h-9 w-9 rounded-lg border border-line object-cover" />}
-        <input type="file" accept="image/*" onChange={onLogoFile} disabled={uploading} className="text-sm text-ink-soft" />
+      <label className="mb-1 block text-sm font-medium">Icon</label>
+      <input type="hidden" name="icon" value={icon} />
+      <div className="mb-2 flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5">
+        <Search className="h-3.5 w-3.5 shrink-0 text-line-strong" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search icons…"
+          className="w-full bg-transparent text-[13px] text-ink outline-none placeholder:text-line-strong"
+        />
       </div>
-
+      <div className="mb-4 grid max-h-[188px] grid-cols-8 gap-1 overflow-y-auto rounded-lg border border-line p-2">
+        {/* Monogram (no icon) option. */}
+        <IconCell selected={!icon} onClick={() => setIcon("")} label="Letter monogram">
+          <Type className="h-4 w-4" />
+        </IconCell>
+        {matches.map((n) => {
+          const Ico = PROJECT_ICONS[n];
+          return (
+            <IconCell key={n} selected={icon === n} onClick={() => setIcon(n)} label={n}>
+              <Ico className="h-4 w-4" />
+            </IconCell>
+          );
+        })}
+        {matches.length === 0 && (
+          <p className="col-span-8 px-1 py-3 text-center font-mono text-[11px] text-line-strong">no icons match</p>
+        )}
+      </div>
 
       <button type="submit" className={buttonClass}>
         {saved ? "Saved" : "Save branding"}
       </button>
       <ErrorLine error={error} />
     </form>
+  );
+}
+
+function IconCell({
+  selected,
+  onClick,
+  label,
+  children,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`grid aspect-square place-items-center rounded-md border transition-colors ${
+        selected ? "border-transparent" : "border-line text-ink-mute hover:bg-raised hover:text-ink"
+      }`}
+      style={selected ? { background: "var(--brand)", color: "var(--brand-ink)" } : undefined}
+    >
+      {children}
+    </button>
   );
 }
 

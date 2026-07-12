@@ -82,14 +82,16 @@ export async function updateBranding(
 
   const displayName = String(formData.get("displayName") ?? "").trim();
   const primaryColor = String(formData.get("primaryColor") ?? "").trim();
-  const logoUrl = String(formData.get("logoUrl") ?? "").trim();
-  const theme = formData.get("theme") === "light" ? "light" : "dark";
+  const icon = String(formData.get("icon") ?? "").trim();
   if (!displayName) return { error: "Enter a display name" };
   if (!/^#[0-9a-fA-F]{6}$/.test(primaryColor)) return { error: "Pick a valid color" };
 
+  // Merge so a legacy uploaded logo (no longer editable here) survives, and an
+  // icon choice takes precedence over it in the tile.
+  const [row] = await db.select({ branding: projects.branding }).from(projects).where(eq(projects.id, projectId)).limit(1);
   await db
     .update(projects)
-    .set({ branding: { displayName, primaryColor, logoUrl: logoUrl || undefined, theme } })
+    .set({ branding: { ...row?.branding, displayName, primaryColor, icon: icon || undefined } })
     .where(eq(projects.id, projectId));
   revalidateTag(`project:${projectId}`);
   revalidatePath(`/admin/${projectId}`, "layout");

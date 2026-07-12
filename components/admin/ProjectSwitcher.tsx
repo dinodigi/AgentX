@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Check, ChevronsUpDown, LayoutGrid, Plus, Search } from "lucide-react";
+import { projectIcon } from "./project-icons";
 
 /**
  * The workspace switcher — pinned at the top of the sidebar so switching
@@ -15,6 +16,7 @@ export interface SwitcherProject {
   initial: string;
   brand: string;
   brandInk: string;
+  icon?: string | null;
   logoUrl?: string | null;
 }
 
@@ -131,16 +133,17 @@ export function ProjectSwitcher({
 
 function Tile({ p, sm = false }: { p: SwitcherProject; sm?: boolean }) {
   const s = sm ? 22 : 28;
-  if (p.logoUrl) {
+  if (p.logoUrl && !p.icon) {
     // eslint-disable-next-line @next/next/no-img-element
     return <img src={p.logoUrl} alt="" className="shrink-0 rounded-md object-cover" style={{ width: s, height: s }} />;
   }
+  const Icon = projectIcon(p.icon);
   return (
     <span
       className="display grid shrink-0 place-items-center rounded-md font-semibold"
       style={{ width: s, height: s, background: p.brand, color: p.brandInk, fontSize: s * 0.42 }}
     >
-      {p.initial}
+      {Icon ? <Icon style={{ width: s * 0.5, height: s * 0.5 }} strokeWidth={2} /> : p.initial}
     </span>
   );
 }

@@ -749,6 +749,9 @@ export const entryChanges = pgTable(
 
 export interface Branding {
   displayName?: string;
+  /** Curated lucide icon key (Appearance tab) — see components/admin/project-icons. */
+  icon?: string;
+  /** Legacy: uploaded logo. Retired from the Appearance form; still rendered if set. */
   logoUrl?: string;
   primaryColor?: string;
   /** Admin register for this project's workspace: dark (default) | light. */

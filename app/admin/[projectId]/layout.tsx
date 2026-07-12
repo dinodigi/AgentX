@@ -4,14 +4,13 @@ import { and, count, eq, isNull, inArray } from "drizzle-orm";
 import { tenantDb } from "@/lib/data-plane";
 import { entries } from "@/db/schema";
 import { getProject } from "@/lib/admin";
-import { getProjectRole, accessibleProjects, getViewer, hasTenantRung } from "@/lib/access";
+import { getProjectRole, getViewer, hasTenantRung } from "@/lib/access";
 import { latestSuspendNote, recordSupportAccess } from "@/lib/platform-events";
 import { listCollections } from "@/lib/collections";
 import { brandInk } from "@/lib/brand";
-import { getWorkspaceTheme, getSidebarCollapsed } from "@/lib/theme";
+import { getSidebarCollapsed } from "@/lib/theme";
 import { WorkspaceSidebar } from "@/components/admin/WorkspaceSidebar";
 import { ContentSidebar } from "@/components/admin/ContentSidebar";
-import type { SwitcherProject } from "@/components/admin/ProjectSwitcher";
 
 /**
  * The project workspace shell — three columns: the left chrome rail (switcher +
@@ -27,12 +26,10 @@ export default async function ProjectLayout({
   children: ReactNode;
 }) {
   const { projectId } = await params;
-  const [project, collections, role, allProjects, theme, collapsed, viewer] = await Promise.all([
+  const [project, collections, role, collapsed, viewer] = await Promise.all([
     getProject(projectId),
     listCollections(projectId),
     getProjectRole(projectId),
-    accessibleProjects(),
-    getWorkspaceTheme(),
     getSidebarCollapsed(),
     getViewer(),
   ]);
@@ -61,16 +58,10 @@ export default async function ProjectLayout({
 
   return (
     <div
-      className="flex min-h-screen"
+      className="flex min-h-0 w-full flex-1"
       style={{ "--brand": brand, "--brand-ink": brandInk(brand) } as CSSProperties}
     >
-      <WorkspaceSidebar
-        projects={allProjects.map(toSwitcher)}
-        currentId={projectId}
-        theme={theme}
-        canCreateProjects={viewer?.isPlatformOperator ?? false}
-        isPlatformOperator={viewer?.isPlatformOperator ?? false}
-      />
+      <WorkspaceSidebar currentId={projectId} isPlatformOperator={viewer?.isPlatformOperator ?? false} />
       <main className="page-enter mx-auto min-w-0 max-w-[1400px] flex-1 px-5 py-7 md:px-10 md:py-9">
         {project.status === "suspended" && (
           <div
@@ -119,21 +110,4 @@ export default async function ProjectLayout({
 function safeColor(v: string | undefined): string {
   if (v && /^#[0-9a-fA-F]{3,8}$/.test(v)) return v;
   return "#4f46e5";
-}
-
-function toSwitcher(p: {
-  id: string;
-  name: string;
-  branding: { displayName?: string; primaryColor?: string; logoUrl?: string };
-}): SwitcherProject {
-  const name = p.branding?.displayName ?? p.name;
-  const brand = p.branding?.primaryColor ?? "#4f46e5";
-  return {
-    id: p.id,
-    name,
-    initial: name.charAt(0).toUpperCase(),
-    brand,
-    brandInk: brandInk(brand),
-    logoUrl: p.branding?.logoUrl ?? null,
-  };
 }

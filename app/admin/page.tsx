@@ -5,11 +5,9 @@ import { collections, entries, projectConnectors, type Project } from "@/db/sche
 import { tenantContentStats } from "@/lib/data-plane";
 import { getViewer } from "@/lib/access";
 import { brandInk } from "@/lib/brand";
-import { getWorkspaceTheme } from "@/lib/theme";
-import { getActiveWorkspace, listViewerWorkspaces, projectsInWorkspace } from "@/lib/workspaces";
+import { getActiveWorkspace, projectsInWorkspace } from "@/lib/workspaces";
 import { ProjectFleet, type FleetProject } from "@/components/admin/ProjectFleet";
 import { WorkspaceSidebar } from "@/components/admin/WorkspaceSidebar";
-import type { SwitcherProject } from "@/components/admin/ProjectSwitcher";
 
 /**
  * The studio home — the fleet for ONE workspace at a time (B1c). The sidebar's
@@ -20,14 +18,7 @@ export default async function AdminHome() {
   const viewer = await getViewer();
   if (!viewer) redirect("/sign-in");
 
-  const [active, workspaceList, theme] = await Promise.all([
-    getActiveWorkspace(viewer),
-    listViewerWorkspaces(viewer.userId),
-    getWorkspaceTheme(),
-  ]);
-  // getActiveWorkspace may have just created a personal workspace that the
-  // (concurrent) list didn't see — guarantee the switcher includes the active one.
-  const workspaces = workspaceList.some((w) => w.id === active.id) ? workspaceList : [active, ...workspaceList];
+  const active = await getActiveWorkspace(viewer);
   // B2: creation is self-serve for workspace owners/admins (the free-sandbox
   // path; the paid planes stay gated inside the form until B3).
   const canCreate = viewer.isPlatformOperator || active.role === "owner" || active.role === "admin";
@@ -63,12 +54,6 @@ export default async function AdminHome() {
     .map((c) => c.projectId);
   const tenantStats = await tenantContentStats(neonIds);
 
-  const switcher: SwitcherProject[] = projects.map((p) => {
-    const name = p.branding?.displayName ?? p.name;
-    const brand = p.branding?.primaryColor ?? "#4f46e5";
-    return { id: p.id, name, initial: name.charAt(0).toUpperCase(), brand, brandInk: brandInk(brand), logoUrl: p.branding?.logoUrl ?? null };
-  });
-
   const toFleet = (p: Project): FleetProject => {
     const brand = p.branding?.primaryColor ?? "#4f46e5";
     const name = p.branding?.displayName ?? p.name;
@@ -78,6 +63,7 @@ export default async function AdminHome() {
       id: p.id,
       name,
       initial: name.charAt(0).toUpperCase(),
+      icon: p.branding?.icon ?? null,
       logoUrl: p.branding?.logoUrl ?? null,
       brand,
       brandInk: brandInk(brand),
@@ -91,18 +77,11 @@ export default async function AdminHome() {
   const fleet = projects.map(toFleet).sort((a, b) => (b.lastActivity ?? "").localeCompare(a.lastActivity ?? ""));
 
   return (
-    <div className="flex min-h-screen">
-      <WorkspaceSidebar
-        projects={switcher}
-        theme={theme}
-        canCreateProjects={canCreate}
-        isPlatformOperator={viewer.isPlatformOperator}
-        workspaces={workspaces}
-        activeWorkspaceId={active.id}
-      />
+    <>
+      <WorkspaceSidebar canCreateProjects={canCreate} isPlatformOperator={viewer.isPlatformOperator} />
       <div className="page-enter min-w-0 flex-1">
         <ProjectFleet projects={fleet} canCreate={canCreate} workspaceName={active.name} />
       </div>
-    </div>
+    </>
   );
 }

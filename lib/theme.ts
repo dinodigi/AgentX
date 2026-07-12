@@ -12,12 +12,20 @@ export async function getWorkspaceTheme(): Promise<"dark" | "light"> {
   return c.get(THEME_COOKIE)?.value === "light" ? "light" : "dark";
 }
 
-/** Whether the project sidebar starts collapsed (operator preference, per SSR). */
+/** Whether the right content panel starts collapsed (operator preference, per SSR). */
 export const SIDEBAR_COOKIE = "ax_sidebar";
 
 export async function getSidebarCollapsed(): Promise<boolean> {
   const c = await cookies();
   return c.get(SIDEBAR_COOKIE)?.value === "1";
+}
+
+/** Whether the left rail starts collapsed to icons (operator preference, per SSR). */
+export const RAIL_COOKIE = "ax_rail";
+
+export async function getRailCollapsed(): Promise<boolean> {
+  const c = await cookies();
+  return c.get(RAIL_COOKIE)?.value === "1";
 }
 
 /** The dashboard's active-workspace context (B1c); the switcher writes it. */

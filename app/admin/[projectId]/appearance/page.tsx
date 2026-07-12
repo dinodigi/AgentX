@@ -21,7 +21,7 @@ export default async function AppearancePage({
       <p className="eyebrow mb-1">Project</p>
       <h1 className="display mb-1 text-xl font-semibold">Appearance</h1>
       <p className="mb-6 max-w-md text-sm text-ink-mute">
-        Name, color, and logo — what your client sees everywhere in this admin.
+        Name, color, and icon — what your client sees everywhere in this admin.
         The color becomes the accent across the whole workspace.
       </p>
       <BrandingForm
@@ -29,7 +29,7 @@ export default async function AppearancePage({
         initial={{
           displayName: project.branding.displayName ?? project.name,
           primaryColor: project.branding.primaryColor ?? "#4f46e5",
-          logoUrl: project.branding.logoUrl ?? "",
+          icon: project.branding.icon ?? "",
         }}
       />
     </>

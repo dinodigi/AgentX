@@ -30,6 +30,7 @@ export interface ProjectOverviewProps {
   projectId: string;
   name: string;
   initial: string;
+  icon?: string | null;
   logoUrl?: string | null;
   brand: string;
   brandInk: string;
@@ -49,7 +50,7 @@ export function ProjectOverview(p: ProjectOverviewProps) {
     <div className="flex flex-col gap-8">
       {/* Identity */}
       <div className="flex items-center gap-3.5">
-        <BrandTile brand={p.brand} brandInk={p.brandInk} initial={p.initial} logoUrl={p.logoUrl} size={44} />
+        <BrandTile brand={p.brand} brandInk={p.brandInk} initial={p.initial} icon={p.icon} logoUrl={p.logoUrl} size={44} />
         <div className="min-w-0">
           <div className="flex items-center gap-2.5">
             <h1 className="display truncate text-xl font-semibold">{p.name}</h1>

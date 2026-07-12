@@ -11,6 +11,7 @@ export interface FleetProject {
   id: string;
   name: string;
   initial: string;
+  icon?: string | null;
   logoUrl?: string | null;
   brand: string;
   brandInk: string;
@@ -122,7 +123,7 @@ function ProjectRow({ p }: { p: FleetProject }) {
           className="absolute inset-y-0 left-0 w-[3px] opacity-0 transition-opacity group-hover:opacity-100"
           style={{ background: p.brand }}
         />
-        <BrandTile brand={p.brand} brandInk={p.brandInk} initial={p.initial} logoUrl={p.logoUrl} />
+        <BrandTile brand={p.brand} brandInk={p.brandInk} initial={p.initial} icon={p.icon} logoUrl={p.logoUrl} />
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">

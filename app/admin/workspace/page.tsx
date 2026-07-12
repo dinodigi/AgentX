@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { getViewer } from "@/lib/access";
-import { getWorkspaceTheme } from "@/lib/theme";
-import { getActiveWorkspace, listViewerWorkspaces, listWorkspaceMembers } from "@/lib/workspaces";
+import { getActiveWorkspace, listWorkspaceMembers } from "@/lib/workspaces";
 import { WorkspaceSidebar } from "@/components/admin/WorkspaceSidebar";
 import { WorkspaceTeam } from "@/components/admin/WorkspaceTeam";
 
@@ -14,24 +13,13 @@ export default async function WorkspacePage() {
   if (!viewer) redirect("/sign-in");
 
   const active = await getActiveWorkspace(viewer);
-  const [members, workspaces, theme] = await Promise.all([
-    listWorkspaceMembers(active.id),
-    listViewerWorkspaces(viewer.userId),
-    getWorkspaceTheme(),
-  ]);
+  const members = await listWorkspaceMembers(active.id);
   const canManage = viewer.isPlatformOperator || active.role === "owner" || active.role === "admin";
   const isOwner = viewer.isPlatformOperator || active.role === "owner";
 
   return (
-    <div className="flex min-h-screen">
-      <WorkspaceSidebar
-        projects={[]}
-        theme={theme}
-        canCreateProjects={viewer.isPlatformOperator}
-        isPlatformOperator={viewer.isPlatformOperator}
-        workspaces={workspaces}
-        activeWorkspaceId={active.id}
-      />
+    <>
+      <WorkspaceSidebar canCreateProjects={viewer.isPlatformOperator} isPlatformOperator={viewer.isPlatformOperator} />
       <div className="page-enter min-w-0 flex-1">
         <WorkspaceTeam
           workspaceId={active.id}
@@ -41,6 +29,6 @@ export default async function WorkspacePage() {
           isOwner={isOwner}
         />
       </div>
-    </div>
+    </>
   );
 }

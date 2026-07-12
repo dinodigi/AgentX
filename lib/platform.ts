@@ -41,6 +41,7 @@ export interface PlatformProject {
   initial: string;
   brand: string;
   brandInk: string;
+  icon: string | null;
   logoUrl: string | null;
   collections: number;
   entries: number;
@@ -129,6 +130,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
         initial: name.charAt(0).toUpperCase(),
         brand,
         brandInk: brandInk(brand),
+        icon: p.branding?.icon ?? null,
         logoUrl: p.branding?.logoUrl ?? null,
         collections: colsById.get(p.id) ?? 0,
         entries: tenant ? tenant.entries : (entriesById.get(p.id) ?? 0),
