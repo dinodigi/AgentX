@@ -1,0 +1,1906 @@
+{
+  "tools": [
+    {
+      "name": "get_project_info",
+      "description": "Call this FIRST in a fresh session. Returns the project's name/branding and every URL you need: the delivery API base (how the live site reads/writes content), the admin URL (hand to the client), and the MCP endpoint. Pair with list_collections to fully orient yourself.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_connectors",
+      "description": "Status of the project's BYO-infra connectors (clerk = end-user auth, resend = email actions, stripe = payments). Returns type, status, and non-secret config (issuer, publishable key, from address). Secrets (sk_/whsec_ keys) NEVER appear here — connecting/rotating them is done by the operator in project settings, not over MCP.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_field_types",
+      "description": "List the 8 field primitives you may compose collections from (text, richtext, number, boolean, date, enum, asset, relation) and each one's config. You must only use these types. Boundaries: this system defines DATA STRUCTURE + CRUD (plus atomic batches via transact, recoverable deletes via trash/restore, delayed/scheduled actions, and declarative field-transition workflows — actor-gated state machines with webhook/email actions, no arbitrary code and no multi-entry orchestration). Custom validation runs on YOUR endpoint via collection before-write hooks (define hooks.beforeCreate) — AgentX signs and calls it, never hosts code. It does NOT do authorization/row-level rules beyond presets (those live in the app layer). i18n = per-field variant maps: set_locales, then localized:true on text/richtext fields (delivery serves the default locale flat). Public-read visibility is per-field (set publicRead on each field). Public-write is per-collection.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_locales",
+      "description": "Set the project's locale registry: {default, supported:[tags]} — BCP-47-style tags like \"en\", \"de\", \"pt-br\", stored normalized lowercase (max 16). Project-wide config; `default` must be in `supported` and is the fallback target. This is the prerequisite for localized fields. Removing a supported locale that holds stored translations, or changing the default while translations exist, returns a counted plan with code E_CONFIRM_REQUIRED — re-run with confirm:true; a confirmed removal permanently PURGES the dropped locales' variants from stored entries (trash included).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "default": {
+            "type": "string",
+            "description": "fallback locale tag; must be in supported"
+          },
+          "supported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "description": "every locale content may hold, including the default"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "acknowledge a destructive plan (locale removal / default change)"
+          }
+        },
+        "required": [
+          "default",
+          "supported"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "define_collection",
+      "description": "Create or update a collection (a data model). `fields` is an array of field defs, each: {name, label, type, required?, publicRead?} plus constraints (unique? on text/number/date — DB-enforced, dates stored normalized to UTC ISO; min/max? = value bounds on number, LENGTH bounds on text/richtext, ISO-string instant bounds on date; integer? on number; pattern? = JS-regex source on text, requires max <= 10000, patternHint? = the failure message; requiredIf?: {field, equals} against a sibling enum) and type-specific config (enum:options[], relation:{targetCollection,labelField}). Instantly manageable in the admin; no per-project UI code. Public fields are served by the delivery API (see get_project_info). Set publicWrite:true + webhookUrl for a form. Redefining an existing collection with dropped/retyped fields returns a diff plan and requires confirm:true (affected entries are counted, not silently orphaned). Tightening a constraint on existing data applies immediately and returns constraintWarnings[] (violation counts) — old rows stay readable, new writes must comply. To RENAME a field, pass renames: [{from, to}] with the new name in fields — entry data is backfilled, no confirm needed; without renames a rename is a destructive drop+add. localized:true (text/richtext, needs set_locales) stores {locale: value} variant maps — not for unique/searchable/computed/labelField/email-template fields; see list_field_types. LOCALIZING a populated field wraps existing values under the default locale (immediate, non-destructive, reported in changes.localized); DE-localizing keeps only the default variant and requires confirm:true (entries without one lose the field). Boundaries: this system defines DATA STRUCTURE + CRUD (plus atomic batches via transact, recoverable deletes via trash/restore, delayed/scheduled actions, and declarative field-transition workflows — actor-gated state machines with webhook/email actions, no arbitrary code and no multi-entry orchestration). Custom validation runs on YOUR endpoint via collection before-write hooks (define hooks.beforeCreate) — AgentX signs and calls it, never hosts code. It does NOT do authorization/row-level rules beyond presets (those live in the app layer). i18n = per-field variant maps: set_locales, then localized:true on text/richtext fields (delivery serves the default locale flat). Public-read visibility is per-field (set publicRead on each field). Public-write is per-collection.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "snake_case slug, unique in the project"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "publicWrite": {
+            "type": "boolean",
+            "description": "allow public POST submissions (forms)"
+          },
+          "webhookUrl": {
+            "type": "string",
+            "description": "fired on public-write submissions"
+          },
+          "publicFilter": {
+            "type": "array",
+            "description": "row visibility for delivery reads: only rows matching ALL items are publicly served, e.g. [{field:'approved',op:'eq',value:true}]. Items may be OR groups {anyOf:[clauses]}. May use private fields. Admin and MCP reads are unaffected.",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "eq",
+                        "contains",
+                        "gt",
+                        "lt",
+                        "in"
+                      ]
+                    },
+                    "value": {
+                      "description": "scalar, or string[] for op 'in'"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "op",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "anyOf": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                          },
+                          "op": {
+                            "type": "string",
+                            "enum": [
+                              "eq",
+                              "contains",
+                              "gt",
+                              "lt",
+                              "in"
+                            ]
+                          },
+                          "value": {
+                            "description": "scalar, or string[] for op 'in'"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "op",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "anyOf"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "access": {
+            "type": "object",
+            "description": "identity rule presets for the delivery API (parameterized, not an expression language). read: public|authenticated|owner|{claim,equals}. write: none|authenticated|owner|{claim,equals}. Each may also be an ARRAY meaning any-of (e.g. write:[\"owner\", {claim:\"role\",equals:\"editor\"}]). A {claim,equals:\"x\"|[\"x\",\"y\"]} rule matches when the verified JWT custom claim equals a value (fail-closed: absent/non-string never matches). owner/authenticated need ownerField (a text field, auto-stamped from the JWT sub — never client-set); claim rules don't. write:\"owner\" enables PATCH/DELETE of OWN rows; a matching claim-write is staff write (mutate ANY row). org:{claim,field} scopes EVERY read/write to the user's org: field (a text field) is stamped from the JWT claim on create and stripped from PATCH bodies; rows are invisible to other orgs and to tokens lacking the claim (fail-closed 403). org can't combine with read:'public' or anonymous writes. Requires the project's Clerk connector.",
+            "properties": {
+              "read": {
+                "description": "public|authenticated|owner|{claim,equals} or an array of those"
+              },
+              "write": {
+                "description": "none|authenticated|owner|{claim,equals} or an array of those"
+              },
+              "ownerField": {
+                "type": "string"
+              },
+              "org": {
+                "type": "object",
+                "description": "org row scoping: {claim: JWT claim name, field: text field to scope by}",
+                "properties": {
+                  "claim": {
+                    "type": "string"
+                  },
+                  "field": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "claim",
+                  "field"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "events": {
+            "type": "object",
+            "description": "declarative actions on entry lifecycle: {created|updated|deleted: [{type:'webhook',url} | {type:'email',to,subject}]}. Email needs the Resend connector; to/subject support {{field}} interpolation from entry data. Any action takes when: [clauses] (same shape as query where, evaluated against the post-change entry — e.g. fire only when status='confirmed') and disabled: true (paused, kept in the schema). updated events carry {previous, changedFields}. Add after: '45m'|'12h'|'3d' (1m..365d) to DEFER the action: it is queued at emit time (timer starts at the FIRST matching event; later updates do not reset it or queue a second send while one is pending), and at send time the action is re-read from this config and `when` is re-evaluated against the CURRENT entry — so disabling, removing, or editing an action also cancels its pending delayed sends, and a deleted entry skips silently. Delayed sends omit previous/changedFields. Pending ones are visible via list_jobs. All outcomes land in the delivery log (get_deliveries); failed ones can be replayed with refire_delivery.",
+            "properties": {
+              "created": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "updated": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "deleted": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            },
+            "additionalProperties": false
+          },
+          "workflow": {
+            "type": "object",
+            "description": "declarative state machine over ONE enum field: {field, initial, transitions:[{from: state|state[], to: state, actors?: (mcp|admin|delivery)[], actions?: [event action]}]}. initial is enforced on EVERY create path (including bulk_create_entries and public/delivery writes — an explicit non-initial value is rejected). The field then moves ONLY via a declared transition; an illegal move is rejected with the allowed targets, and a target no transition reaches from the current state conflicts. Transitions are ACTOR-GATED — by default only mcp and admin may transition; add 'delivery' to a transition's actors to let end users drive it (e.g. an owner cancelling their own request). NOTE: 'admin' includes client-role members in v1. Overlapping (from,to) pairs are rejected at define time so every move resolves one transition. A matched transition fires its actions as an entry.transitioned event (webhook/email, immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "an existing enum field"
+              },
+              "initial": {
+                "type": "string",
+                "description": "one of the field's options"
+              },
+              "transitions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "description": "state or state[]"
+                    },
+                    "to": {
+                      "type": "string"
+                    },
+                    "actors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "mcp",
+                          "admin",
+                          "delivery"
+                        ]
+                      }
+                    },
+                    "actions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "to"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "field",
+              "initial",
+              "transitions"
+            ],
+            "additionalProperties": false
+          },
+          "checkout": {
+            "type": "object",
+            "description": "declarative Stripe checkout: {priceField, successUrl, cancelUrl}. priceField names an existing TEXT field holding a Stripe Price id (price_…) — what is sellable and at what price is server-side content, never sent by the client (clients POST only entry ids + quantities to /v1/checkout). Requires the Stripe connector and access.read:'public' (or absent) — owner/authenticated collections cannot be sold; do member-only pricing in your app layer via events. BOUNDARIES: payment-mode Checkout Sessions only; no subscriptions, invoicing, or refunds (those live in your Stripe dashboard / app layer). Order status 'expired' covers both session expiry and async-payment failure in v1. FULFILLMENT: declare events.updated with when:{field:<status>, equals:'paid'} on the ORDERS collection to fire your webhook/email — it fires only when payment actually clears.",
+            "properties": {
+              "priceField": {
+                "type": "string"
+              },
+              "successUrl": {
+                "type": "string",
+                "description": "https redirect after payment"
+              },
+              "cancelUrl": {
+                "type": "string",
+                "description": "https redirect if the buyer cancels"
+              },
+              "orders": {
+                "type": "object",
+                "description": "optional (K4): turn paid sessions into order-entry writes. `collection` is another collection in THIS project; each `fields` value names a field on it. On payment the webhook flips status pending→paid (and expired on failure/expiry). status MUST be an enum with options pending, paid, expired; sessionId text; total number; customerEmail text; items text/richtext. A pending order row is written at checkout time (before the Stripe redirect) so nothing is lost if the buyer abandons.",
+                "properties": {
+                  "collection": {
+                    "type": "string"
+                  },
+                  "fields": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "description": "enum field (pending|paid|expired)"
+                      },
+                      "sessionId": {
+                        "type": "string",
+                        "description": "text field"
+                      },
+                      "total": {
+                        "type": "string",
+                        "description": "optional number field (human amount)"
+                      },
+                      "customerEmail": {
+                        "type": "string",
+                        "description": "optional text field"
+                      },
+                      "items": {
+                        "type": "string",
+                        "description": "optional text/richtext field — cart JSON snapshot"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sessionId"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "collection",
+                  "fields"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "priceField",
+              "successUrl",
+              "cancelUrl"
+            ],
+            "additionalProperties": false
+          },
+          "hooks": {
+            "type": "object",
+            "description": "signed before-write hooks to YOUR compute — custom validation/transformation without AgentX hosting code. beforeCreate and/or beforeUpdate, each mode 'validate' (gate only) or 'transform' (rewrite). Each POST to your `url` is HMAC-signed with the project's webhook signing secret (set it in project settings first) and carries {event, collection, candidate:{data}} (+ current:{data} on update, where candidate is the MERGED post-patch row). Answer {ok:true} to allow, {ok:false, error} to reject (→ E_HOOK_REJECTED), or (transform only) {ok:true, data:{…}} with the FULL new entry — re-validated like client input, and ownership (ownerField/org) is always re-stamped/preserved so a hook can NEVER move it. transform is HTTPS-ONLY. onError:'reject' (default) fails closed when your endpoint is unreachable; 'allow' fails open. Runs on create_entry, update_entry, AND transact creates — NOT bulk_create_entries (refused) or update_entry_if (single-statement CAS). `when` gates by the candidate snapshot.",
+            "properties": {
+              "beforeCreate": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "your endpoint AgentX POSTs the candidate to (https REQUIRED for transform)"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "validate",
+                      "transform"
+                    ],
+                    "description": "gate only, or rewrite the entry"
+                  },
+                  "onError": {
+                    "type": "string",
+                    "enum": [
+                      "reject",
+                      "allow"
+                    ],
+                    "description": "fail-closed (default) or open on an outage"
+                  },
+                  "timeoutMs": {
+                    "type": "number",
+                    "description": "500–5000, default 3000"
+                  },
+                  "when": {
+                    "type": "array",
+                    "description": "only consult when these clauses match the candidate snapshot"
+                  },
+                  "disabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "url",
+                  "mode"
+                ],
+                "additionalProperties": false
+              },
+              "beforeUpdate": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "your endpoint AgentX POSTs the candidate to (https REQUIRED for transform)"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "validate",
+                      "transform"
+                    ],
+                    "description": "gate only, or rewrite the entry"
+                  },
+                  "onError": {
+                    "type": "string",
+                    "enum": [
+                      "reject",
+                      "allow"
+                    ],
+                    "description": "fail-closed (default) or open on an outage"
+                  },
+                  "timeoutMs": {
+                    "type": "number",
+                    "description": "500–5000, default 3000"
+                  },
+                  "when": {
+                    "type": "array",
+                    "description": "only consult when these clauses match the candidate snapshot"
+                  },
+                  "disabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "url",
+                  "mode"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "renames": {
+            "type": "array",
+            "description": "declared field renames; data moves from → to (same type, to must be in fields)",
+            "items": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "to": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "from",
+                "to"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "required to apply destructive schema changes"
+          }
+        },
+        "required": [
+          "name",
+          "fields"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_collections",
+      "description": "List every collection in this project (name, displayName, publicWrite, field count). Call this first in a fresh session to discover what exists; use describe_collection for field detail.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "describe_collection",
+      "description": "Return one collection's full field definitions and flags. Constraints (min/max/pattern/enum/integer/unique) are enforced on WRITE only — rows that predate a tightened constraint keep their stored values.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_collection",
+      "description": "Delete a collection AND all its entries. Without confirm:true this only returns the impact plan (entry count, inbound relations). Blocked while other collections have relation fields targeting it — remove those fields first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "must be true to actually delete"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "create_entry",
+      "description": "Create one entry in a collection. `data` is validated strictly against the collection's schema — unknown fields, wrong types, bad enum values, and dangling relation/asset ids are rejected. Pass idempotencyKey to make retries safe: a repeated call with the same key returns the original entry instead of duplicating. CRUD only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object"
+          },
+          "idempotencyKey": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection",
+          "data"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_entry",
+      "description": "Partially update one entry by id. Provided fields are validated and merged. Set a field to null to UNSET it (remove the key) — required fields reject null. A localized field's variant map MERGES per locale ({de:...} preserves the stored en); null unsets the WHOLE field — there is no per-variant unset.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "collection",
+          "id",
+          "data"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "update_entry_if",
+      "description": "Atomic compare-and-set on one entry — conditions and change apply in ONE statement, so concurrent writers can't race between check and write. if: same clause shape as query_entries where, checked against the CURRENT row. data: ordinary validated patch (null = unset, like update_entry). increment: {field, by} computes new = old + by IN SQL (never read-modify-write); the field's min/max constraints guard the result automatically (integer fields also require a whole `by`, and a stored value that predates the integer knob conflicts rather than incrementing). A no-op returns a diagnosed failure: E_NOT_FOUND (no such entry), or E_CONFLICT whose message names the cause — an if-clause that didn't hold, the increment field being unset, or the increment breaching min/max. Re-read and retry. Book-a-seat: {if:[{field:\"seats\",op:\"gt\",value:0}], increment:{field:\"seats\",by:-1}}. Does NOT run before-write hooks OR recompute computed fields — its value is a single atomic statement with no pre-read, which a synchronous external consult (or a source-diff) would defeat. Localized fields are rejected here (no in-statement variant merge) — use update_entry.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "if": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "eq",
+                        "contains",
+                        "gt",
+                        "lt",
+                        "in"
+                      ]
+                    },
+                    "value": {
+                      "description": "scalar, or string[] for op 'in'"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "op",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "anyOf": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                          },
+                          "op": {
+                            "type": "string",
+                            "enum": [
+                              "eq",
+                              "contains",
+                              "gt",
+                              "lt",
+                              "in"
+                            ]
+                          },
+                          "value": {
+                            "description": "scalar, or string[] for op 'in'"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "op",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "anyOf"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "data": {
+            "type": "object"
+          },
+          "increment": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "number field"
+              },
+              "by": {
+                "type": "number",
+                "description": "delta; negative to decrement"
+              }
+            },
+            "required": [
+              "field",
+              "by"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "collection",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_entry",
+      "description": "Delete one entry by id. Moves it to TRASH — recoverable via restore_entry (~30 days); permanent removal ships as purge_entry. Delivery reads and queries exclude trashed rows immediately.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_trash",
+      "description": "List trashed (soft-deleted) entries across the project, newest-deleted first. Each row: {id, collection, data, deletedAt, deletedBy}. Page with before=<deletedAt cursor>. Trashed rows auto-purge after ~30 days; restore_entry recovers them until then.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "description": "1-100, default 50"
+          },
+          "before": {
+            "type": "string",
+            "description": "ISO deletedAt cursor from a previous page"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "restore_entry",
+      "description": "Restore a trashed entry to its collection by id (within the ~30-day retention window). Returns the same id. Re-emits an entry.created event carrying {restored:true, deletedAt} — the restored entry keeps its ORIGINAL createdAt, so consumers polling by createdAt may need a full resync to see it. Fails if the idempotency key was reused by a new create while trashed.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "purge_entry",
+      "description": "Permanently remove ONE trashed entry — restore is no longer possible after this. Without confirm:true returns a plan {inboundRefCount (entries that reference it and would dangle), assetsFreed (assets that become deletable)} and code E_CONFIRM_REQUIRED. Trash auto-purges after ~30 days regardless.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "confirm": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "collection",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "empty_trash",
+      "description": "Permanently remove ALL trashed entries, optionally scoped to one collection. Without confirm:true returns a plan {count} and code E_CONFIRM_REQUIRED. Irreversible.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string",
+            "description": "optional: limit to one collection"
+          },
+          "confirm": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_entry_versions",
+      "description": "PRE-image snapshots of an entry, newest first. Captured on update_entry, update_entry_if, and admin edits; capped at the last 20 per entry. Each: {versionId, createdAt, actor, changedFields, data}. Restore one with restore_entry_version.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "offset": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "collection",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "restore_entry_version",
+      "description": "Roll an entry back to a past version by versionId. The snapshot is re-validated against the CURRENT schema — an incompatible old snapshot (since-dropped/added fields) is rejected. The pre-restore state is captured as a new version, so this is itself undoable. The entry must be live (restore_entry it from trash first).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "versionId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "collection",
+          "id",
+          "versionId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "transact",
+      "description": "Apply up to 25 entry ops as ONE all-or-nothing batch (a single DB transaction). ops: [{op:'create',collection,data} | {op:'update',collection,id,data} | {op:'delete',collection,id}]. Every op is validated and ref-checked before anything runs; if any op fails (validation, a unique conflict, or an update/delete hitting no row) NOTHING is applied and the error names the failing op index. Stricter than delete_entry: a delete op on a missing id ABORTS the batch (not a silent no-op). Events and the audit log fire only after commit, in op order. ENTRY ops only — no schema/definition ops. MCP-only (not on the delivery API). Cross-op refs: a create op may set ref:'order'; a LATER op references its new id as \"$ref:order\" — either as a relation-field value or as its own id. Refs may only point to EARLIER create ops, and a relation using $ref must target that ref's collection. The $ref sentinel is only interpreted in relation fields and id positions (literal elsewhere). An update_if op does an atomic compare-and-set inside the batch (same if/data/increment as update_entry_if) — e.g. decrement seats AND create the booking together, all-or-nothing. dryRun:true validates every op (collections, $refs, schema) and returns the plan WITHOUT writing; it cannot pre-check an update_if race (conditions run only at execute time). Pass idempotencyKey to make retries safe: a replayed batch returns the original result ids with replayed:true and applies nothing twice (a rolled-back batch does NOT consume the key, so retry after fixing the data). Without a key, a timeout AFTER commit is indistinguishable from failure — re-query state before retrying. Returns {applied:true, results:[{op,collection,id}]}. Example: [{op:\"create\",collection:\"orders\",data:{...},ref:\"order\"},{op:\"create\",collection:\"line_items\",data:{order:\"$ref:order\",qty:2}}].",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "dryRun": {
+            "type": "boolean",
+            "description": "validate + return the plan, write nothing"
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "description": "makes a retried batch safe (replayed:true)"
+          },
+          "ops": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 25,
+            "items": {
+              "type": "object",
+              "properties": {
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    "create",
+                    "update",
+                    "delete",
+                    "update_if"
+                  ]
+                },
+                "collection": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string",
+                  "description": "required for update/delete/update_if; may be \"$ref:<name>\""
+                },
+                "data": {
+                  "type": "object",
+                  "description": "required for create/update; optional for update_if"
+                },
+                "ref": {
+                  "type": "string",
+                  "description": "create only: name this op for later \"$ref:<name>\""
+                },
+                "if": {
+                  "type": "array",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                          },
+                          "op": {
+                            "type": "string",
+                            "enum": [
+                              "eq",
+                              "contains",
+                              "gt",
+                              "lt",
+                              "in"
+                            ]
+                          },
+                          "value": {
+                            "description": "scalar, or string[] for op 'in'"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "op",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "anyOf": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "field": {
+                                  "type": "string",
+                                  "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                                },
+                                "op": {
+                                  "type": "string",
+                                  "enum": [
+                                    "eq",
+                                    "contains",
+                                    "gt",
+                                    "lt",
+                                    "in"
+                                  ]
+                                },
+                                "value": {
+                                  "description": "scalar, or string[] for op 'in'"
+                                }
+                              },
+                              "required": [
+                                "field",
+                                "op",
+                                "value"
+                              ],
+                              "additionalProperties": false
+                            },
+                            "minItems": 1
+                          }
+                        },
+                        "required": [
+                          "anyOf"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "description": "update_if only: CAS conditions"
+                },
+                "increment": {
+                  "type": "object",
+                  "description": "update_if only: atomic {field, by} increment",
+                  "properties": {
+                    "field": {
+                      "type": "string"
+                    },
+                    "by": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "by"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "op",
+                "collection"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "ops"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "query_entries",
+      "description": "List entries in a collection (relations resolved to {id,label}). Supports limit/offset (default 100, max 500), where filters [{field, op: eq|contains|gt|lt|in, value}] and orderBy {field, dir: asc|desc}. Ops are type-checked: contains=text/richtext, gt/lt=number/date, in=text/enum/relation with value: string[]. Where items AND together; an item may be an OR group {anyOf: [clauses]} (one level, no nesting). select: [fields] trims each entry's data to those fields (id always included). expand: [relationField] replaces those relation values with {id, label, data} — the full target record (depth 1), killing the N+1 round-trip. Returns {entries, limit, offset, hasMore, nextOffset, nextCursor} — page with offset: nextOffset, or (preferred for deep/chronological paging) pass cursor: nextCursor, which uses the stable default ordering and stays exact past thousands of rows. cursor excludes offset/orderBy. No full-text search service.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "offset": {
+            "type": "number"
+          },
+          "cursor": {
+            "type": "string",
+            "description": "nextCursor from a previous page"
+          },
+          "where": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "eq",
+                        "contains",
+                        "gt",
+                        "lt",
+                        "in"
+                      ]
+                    },
+                    "value": {
+                      "description": "scalar, or string[] for op 'in'"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "op",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "anyOf": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                          },
+                          "op": {
+                            "type": "string",
+                            "enum": [
+                              "eq",
+                              "contains",
+                              "gt",
+                              "lt",
+                              "in"
+                            ]
+                          },
+                          "value": {
+                            "description": "scalar, or string[] for op 'in'"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "op",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "anyOf"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "select": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expand": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "relation fields to expand to {id, label, data} (depth 1)"
+          },
+          "includeReverse": {
+            "type": "array",
+            "maxItems": 3,
+            "description": "embed children that point back at each entry: [{collection, field, limit?}] where field is a relation on `collection` targeting this one. Attached per entry as related:{'collection.field':{entries,hasMore}} (capped, default 20/max 100 per parent; page deeper via a direct query_entries where field eq parentId).",
+            "items": {
+              "type": "object",
+              "properties": {
+                "collection": {
+                  "type": "string"
+                },
+                "field": {
+                  "type": "string"
+                },
+                "limit": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "collection",
+                "field"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "orderBy": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "dir": {
+                "type": "string",
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            },
+            "required": [
+              "field",
+              "dir"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "collection"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_entry",
+      "description": "Fetch one entry by id (relations → {id,label}, assets → {id,url}). expand: [relationField] expands those to {id, label, data} — the full target record (depth 1).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "expand": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "relation fields to expand"
+          }
+        },
+        "required": [
+          "collection",
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_entries",
+      "description": "Keyword full-text search over every field marked searchable:true (INCLUDING non-public ones — MCP is trusted). websearch syntax (quoted phrases, OR, -exclude). Results are rank-ordered (best first); offset paging only. Optional where filters (same shape as query_entries) narrow the set. Not semantic/vector search. Errors if the collection has no searchable fields.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "q": {
+            "type": "string",
+            "description": "search query (websearch syntax, 1-500 chars)"
+          },
+          "where": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "eq",
+                        "contains",
+                        "gt",
+                        "lt",
+                        "in"
+                      ]
+                    },
+                    "value": {
+                      "description": "scalar, or string[] for op 'in'"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "op",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "anyOf": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                          },
+                          "op": {
+                            "type": "string",
+                            "enum": [
+                              "eq",
+                              "contains",
+                              "gt",
+                              "lt",
+                              "in"
+                            ]
+                          },
+                          "value": {
+                            "description": "scalar, or string[] for op 'in'"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "op",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "anyOf"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "select": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limit": {
+            "type": "number",
+            "description": "default 20, max 100"
+          },
+          "offset": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "collection",
+          "q"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "count_entries",
+      "description": "Count entries in a collection, optionally with the same where filters as query_entries.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "where": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "eq",
+                        "contains",
+                        "gt",
+                        "lt",
+                        "in"
+                      ]
+                    },
+                    "value": {
+                      "description": "scalar, or string[] for op 'in'"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "op",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "anyOf": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                          },
+                          "op": {
+                            "type": "string",
+                            "enum": [
+                              "eq",
+                              "contains",
+                              "gt",
+                              "lt",
+                              "in"
+                            ]
+                          },
+                          "value": {
+                            "description": "scalar, or string[] for op 'in'"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "op",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "anyOf"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "collection"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "aggregate_entries",
+      "description": "Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggregates: [{fn: count|sum|avg|min|max, field?}] (count takes no field; the rest need a number field). Optional groupBy on an enum or relation field (relation groups include the target's label). Same where vocabulary as query_entries (eq/contains/gt/lt/in + anyOf). Groups are capped at 500, largest first, with truncatedGroups: true when cut. Example: revenue by trip = {aggregates:[{fn:'sum',field:'price'}], groupBy:'trip'}.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "aggregates": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "properties": {
+                "fn": {
+                  "type": "string",
+                  "enum": [
+                    "count",
+                    "sum",
+                    "avg",
+                    "min",
+                    "max"
+                  ]
+                },
+                "field": {
+                  "type": "string",
+                  "description": "number field; omit for count"
+                }
+              },
+              "required": [
+                "fn"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "groupBy": {
+            "type": "string",
+            "description": "enum or relation field"
+          },
+          "where": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                    },
+                    "op": {
+                      "type": "string",
+                      "enum": [
+                        "eq",
+                        "contains",
+                        "gt",
+                        "lt",
+                        "in"
+                      ]
+                    },
+                    "value": {
+                      "description": "scalar, or string[] for op 'in'"
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "op",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "anyOf": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "field": {
+                            "type": "string",
+                            "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                          },
+                          "op": {
+                            "type": "string",
+                            "enum": [
+                              "eq",
+                              "contains",
+                              "gt",
+                              "lt",
+                              "in"
+                            ]
+                          },
+                          "value": {
+                            "description": "scalar, or string[] for op 'in'"
+                          }
+                        },
+                        "required": [
+                          "field",
+                          "op",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    }
+                  },
+                  "required": [
+                    "anyOf"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "collection",
+          "aggregates"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "bulk_create_entries",
+      "description": "Create up to 100 entries in one call (use for seeding). Each item is validated like create_entry; returns per-item results so you can fix only the failures. A beforeCreate hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the consults fit the host budget (ceil(n/5)×timeout), and an over-cap batch is refused with a 'split the batch' hint.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "maxItems": 100
+          }
+        },
+        "required": [
+          "collection",
+          "entries"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_assets",
+      "description": "List uploaded assets (id, filename, contentType, size, url). Supports limit/offset (default 100, max 500); returns {assets, limit, offset, hasMore, nextOffset}. Raster images support on-demand resizing at GET /v1/assets/{id}/image?w=&h=&format= (see get_project_info deliveryApi.images).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number"
+          },
+          "offset": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_asset",
+      "description": "Delete an uploaded asset (file + record). Blocked while entries still reference it.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "export_entries",
+      "description": "Export a collection's entry DATA (raw values — relations/assets stay ids so mappings survive re-import). json or csv, capped at 5000 rows with a truncated flag. Pairs with export_project (schema) for full portability/backup.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "csv"
+            ]
+          }
+        },
+        "required": [
+          "collection"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "export_project",
+      "description": "Export the entire project definition (branding + all collections) as one JSON manifest. Version it in git, diff it, or replicate the project elsewhere via import_project. Entries and secrets are not included.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "import_project",
+      "description": "Apply a manifest (from export_project) to THIS project. Idempotent — unchanged collections are no-ops. Destructive schema changes return plans and need confirm:true.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "manifest": {
+            "type": "object",
+            "description": "a version-1 project manifest"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "apply destructive schema changes"
+          }
+        },
+        "required": [
+          "manifest"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_deliveries",
+      "description": "Read the project's event delivery log (webhooks + emails, newest first) to debug your own event wiring — no human needed. Email rows have url \"email:<to>\". Optional filters: collection (slug), status (success|failed), event (e.g. entry.created). Supports limit/offset (default 20, max 200); returns {deliveries, limit, offset, hasMore, nextOffset}.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "success",
+              "failed"
+            ]
+          },
+          "event": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          },
+          "offset": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "test_hook",
+      "description": "Dry-run a collection's before-write hook against sample data WITHOUT writing anything — the self-repair loop to run before wiring a hook to production writes. Validates `data` against the schema (partial for beforeUpdate, which also needs `entryId` to load the row it targets), then calls your configured endpoint exactly as a real write would (SAME signature, so this DOES hit your endpoint; logged as event 'hook.test'). Returns {verdict: proceed|replaced|rejected|unavailable, hookResponse, finalData?, validationOfFinalData?} — for a transform, finalData is what would be written and validationOfFinalData reports whether it passes the schema. AgentX writes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "stage": {
+            "type": "string",
+            "enum": [
+              "beforeCreate",
+              "beforeUpdate"
+            ]
+          },
+          "data": {
+            "type": "object",
+            "description": "the candidate (create) or patch (update) to test"
+          },
+          "entryId": {
+            "type": "string",
+            "description": "required for beforeUpdate — the row the update targets"
+          }
+        },
+        "required": [
+          "collection",
+          "stage",
+          "data"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_client_code",
+      "description": "Generate a typed, dependency-free TypeScript client for this project's delivery API from the live schema — use it in the site instead of hand-rolling fetch calls. Per-collection types + list/get/create/update/remove (each generated only where the schema allows it), delivery-token and X-User-Token handling built in. Save the returned code as a file (e.g. lib/agentx.ts) and RE-CALL THIS TOOL after any define_collection change — the client is a snapshot of the schema.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "refire_delivery",
+      "description": "Replay a delivery from the log (see get_deliveries for ids). Webhooks re-post the stored payload with a fresh retry cycle; emails re-send the stored render. The outcome lands in the log as a NEW row — the original stays as history. Returns the replay's status.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "deliveryId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "deliveryId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_audit_log",
+      "description": "Read the entry audit trail (newest first): who changed what, from which surface. Each row: {entryId, collection, action: create|update|delete, actor: {type: mcp|admin|delivery, userId?}, changedFields, createdAt}. Optional filters: collection (slug), entryId, action. Supports limit/offset (default 20, max 200); returns {audit, limit, offset, hasMore, nextOffset}.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "entryId": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "create",
+              "update",
+              "delete",
+              "restore",
+              "purge"
+            ]
+          },
+          "limit": {
+            "type": "number"
+          },
+          "offset": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_jobs",
+      "description": "List background jobs for this project, newest first. Jobs are created ONLY by declarative features (delayed event actions, schedules) and drained by the platform's cron — there is no arbitrary-code path. Each row: {id, kind, status: pending|running|succeeded|failed|canceled, runAt, attempts, maxAttempts, lastError, dedupeKey, payload, createdAt}. Optional filters: kind, status. Supports limit/offset (default 20, max 100); returns {jobs, limit, offset, hasMore, nextOffset}.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "canceled"
+            ]
+          },
+          "limit": {
+            "type": "number",
+            "description": "1-100, default 20"
+          },
+          "offset": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_changes",
+      "description": "Read the append-only change feed (created/updated/deleted, oldest-first) for near-realtime sync. Each row: {cursor, collection, id, kind, at, changedFields, data (full snapshot), prevData (plain/CAS updates)}. Pass since=<cursor from a previous page> to get only newer changes; omit it to read from the beginning. Returns {changes, cursor, hasMore}. THIS TOOL IS FULL-TRUST — it shows ALL fields; the delivery endpoint GET /v1/changes applies the write-time-AND-current publicRead/publicFilter intersection. Retention ~30 days; refs are raw uuids (re-fetch for labels). A field RENAME invalidates older snapshots — reconcile with a full list after one.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string",
+            "description": "filter to one collection (optional)"
+          },
+          "since": {
+            "type": "string",
+            "description": "opaque cursor from a previous response"
+          },
+          "limit": {
+            "type": "number",
+            "description": "1-500, default 100"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "cancel_job",
+      "description": "Cancel ONE pending background job by id (from list_jobs) — the per-job override. Only pending jobs cancel; a running/succeeded/failed/canceled job returns E_CONFLICT. For delayed event actions, the DECLARATIVE kill switch is disabling or removing the action itself in define_collection events — that skips ALL its queued sends at run time.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "define_schedule",
+      "description": "Create or update (upsert by name) a recurring schedule that fires a webhook or email — presets only, no cron strings. recurrence: {frequency: hourly|daily|weekly|monthly, at: 'HH:MM' (24h UTC; not for hourly — hourly fires at the top of each hour), weekday (weekly), dayOfMonth 1-28 (monthly; capped so every month has the day)}. UTC-only for now. action: {type:'webhook',url} | {type:'email',to,subject} — the same vocabulary as events but WITHOUT when/after (the recurrence is the timing; email supports {{name}}/{{scheduledFor}}). Fires are at-least-once (receivers must dedupe) and may run up to a minute late; a missed window fires once, never backfills. enabled:false pauses the schedule AND skips its already-queued fires. Outcomes land in get_deliveries as schedule.fired; pending fires show in list_jobs.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "slug, unique per project — upsert key"
+          },
+          "recurrence": {
+            "type": "object",
+            "properties": {
+              "frequency": {
+                "type": "string",
+                "enum": [
+                  "hourly",
+                  "daily",
+                  "weekly",
+                  "monthly"
+                ]
+              },
+              "at": {
+                "type": "string",
+                "description": "\"HH:MM\" 24h UTC (daily/weekly/monthly; default \"00:00\")"
+              },
+              "weekday": {
+                "type": "string",
+                "enum": [
+                  "sunday",
+                  "monday",
+                  "tuesday",
+                  "wednesday",
+                  "thursday",
+                  "friday",
+                  "saturday"
+                ]
+              },
+              "dayOfMonth": {
+                "type": "number",
+                "description": "1-28 (monthly)"
+              },
+              "timezone": {
+                "type": "string",
+                "description": "must be \"UTC\" when present (v1)"
+              }
+            },
+            "required": [
+              "frequency"
+            ],
+            "additionalProperties": false
+          },
+          "action": {
+            "type": "object",
+            "description": "{type:'webhook',url} | {type:'email',to,subject}"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "false = paused (kept, not ticked); default true"
+          }
+        },
+        "required": [
+          "name",
+          "recurrence",
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_schedules",
+      "description": "List this project's recurring schedules: {name, recurrence, action, enabled, nextRunAt, lastRunAt}.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_schedule",
+      "description": "Delete a schedule by name. Returns the full deleted spec so it can be re-created with define_schedule (the reversibility story). To PAUSE instead, define_schedule with enabled:false — that also skips already-queued fires.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "upload_asset",
+      "description": "Upload a file and get back an asset id to store in an `asset` field. Provide bytes as base64. Stored in object storage; a URL is returned for preview.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string"
+          },
+          "dataBase64": {
+            "type": "string",
+            "description": "file bytes, base64-encoded"
+          }
+        },
+        "required": [
+          "filename",
+          "contentType",
+          "dataBase64"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}
