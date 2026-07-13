@@ -82,6 +82,18 @@ delivery API — MCP and admin are full-trust. This is the highest-value cluster
 | DX-3 | Public compliance page (encryption-at-rest / residency / SOC2 / GDPR posture); optional authenticated image-variant URLs | 🅿️ Parked | M | audit #20 |
 | DX-4 | Timezone-aware schedules with DST (today UTC-only) | 🅿️ Parked | L | audit #21 |
 
+## Agent contract & language ★
+*The tool descriptions + `get_project_info` **are** the product for the AI
+audience — agents plan against them and trust them over the code. A large share
+of this cycle's "gaps" were contract failures, not capability gaps: the reviewer
+audited from the contract and got things wrong; the dogfood agent missed a
+**documented** upload endpoint and invented a keys-in-the-web-app hack. This is
+the umbrella initiative to fix that surface end to end.*
+
+| ID | Item | Status | Pri | Source |
+|---|---|---|---|---|
+| CONTRACT-1 | **Full pass over agent-facing language** — every tool description, `get_project_info`, `list_field_types`, error copy, and the generated client. Accurate (never contradict code), complete (surface every capability), discoverable (the agent shouldn't miss an endpoint), self-correcting (errors name the fix), self-contained (no repo-only refs). Umbrella over WP-3, WP-6, QRY-3, DX-1, DX-2. (See detail.) | 📥 Backlog | H | design, dogfood, audit |
+
 ## Billing
 *Two Stripe surfaces — don't conflate them. **Platform billing** (Pluggie
 charging tenants $19/$29 per project) already does subscriptions. **Tenant
@@ -105,6 +117,54 @@ payment-mode only — that's BILL-1.*
 ---
 
 # Detail — the meaty ones
+
+## CONTRACT-1 · Agent-facing language pass ★ (design + dogfood + audit)
+
+**Why this is a flagship, not a docs chore.** For the AI-integrator audience the
+tool descriptions + `get_project_info` are the *entire* product surface — an
+agent plans and builds against them, and **believes them over the code**. Across
+this cycle almost every "gap" was really the contract hiding, contradicting, or
+under-selling something the code already does:
+- the reviewer audited from tool descriptions and reached several wrong
+  conclusions (offset-only, no cursors, no backup, "CRUD-only client") — all
+  *documentation* misses, not capability misses;
+- the dogfood agent missed the **documented** `POST /v1/{collection}/uploads`
+  endpoint and reached for a keys-in-the-web-app anti-pattern;
+- a live contradiction (WP-3) would make an agent code to the wrong branch.
+
+So this surface directly drives credibility with the exact audience the platform
+is built for.
+
+**Scope (the surfaces to audit):**
+- `TOOL_DEFS` — all 42 tool descriptions + input schemas (`lib/mcp/tools.ts`).
+- `get_project_info` — the orientation blob (URLs, boundaries, `deliveryApi.*`, `compute.*`).
+- `list_field_types` + `COMMON_FIELD_CONFIG`.
+- Error messages + codes — are they self-correcting (name the fix)?
+- The generated TS client (`get_client_code`).
+- Referenced docs (`hooks.md` …) — reachability (→ DX-2).
+
+**The bar (principles):**
+1. **Accurate** — never contradict behavior (WP-3 is a live violation).
+2. **Complete** — every capability is discoverable (cursors #14, retention #15, limits/429/retry-after QRY-3, event-webhook signing WP-6).
+3. **Discoverable** — the agent shouldn't need to already know an endpoint exists to find it. The "how do I upload / paginate / handle 429 / verify a webhook / sell a subscription" questions must be answered where an agent looks.
+4. **Self-correcting** — every error names the fix (the codebase does this well in places; make it universal).
+5. **Boundary-honest** — keep stating what the system does NOT do, so the agent never hunts for a missing tool.
+6. **Self-contained** — no references to repo files an API consumer can't fetch.
+
+**Concrete defect checklist (known instances — fold these in):**
+- WP-3 — hooks×bulk contradiction (a lie in the contract).
+- WP-6 — event-webhook signing absent from tool descriptions.
+- QRY-3 — rate budget / 429 / retry-after / size caps unpublished.
+- #14 keyset cursors (exist on MCP) not surfaced; #15 30-day retention buried.
+- WP-4 — same-state workflow write semantics unstated.
+- **Uploads discoverability** (this thread): add a line to `get_project_info`'s boundaries — *"web/site uploads use `POST /v1/{collection}/uploads` with the delivery token → an asset field; never embed R2 or MCP credentials in a client."*
+- Whatever else a systematic **behavior-vs-description diff** turns up.
+
+**Method + anti-regression:**
+- Systematic pass: for each tool and each `deliveryApi` capability, diff *what the code does* against *what the contract says*; fix contradictions, add missing capabilities, sharpen discoverability + error copy.
+- `scripts/dump-contract.ts` already emits the full contract — use it as the review artifact each release, and diff it when `tools.ts` changes so drift is caught.
+
+**Sizing:** many small edits + one structural rethink of `get_project_info` (organize it around the questions agents actually ask). High value, moderate effort, low risk.
 
 ## WP-7 · Bulk write + delete on the delivery API (dogfood)
 
