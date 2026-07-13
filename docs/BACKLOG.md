@@ -83,10 +83,14 @@ delivery API — MCP and admin are full-trust. This is the highest-value cluster
 | DX-4 | Timezone-aware schedules with DST (today UTC-only) | 🅿️ Parked | L | audit #21 |
 
 ## Billing
+*Two Stripe surfaces — don't conflate them. **Platform billing** (Pluggie
+charging tenants $19/$29 per project) already does subscriptions. **Tenant
+checkout** (a tenant's storefront selling to their own customers) is
+payment-mode only — that's BILL-1.*
 
 | ID | Item | Status | Pri | Source |
 |---|---|---|---|---|
-| BILL-1 | Subscription-mode + member/gated **tenant** checkout (today the tenant checkout is payment-mode only and requires public-read collections) | 🅿️ Parked | L | audit #13 |
+| BILL-1 | **Tenant subscription commerce** — the tenant checkout (`/v1/checkout`) is hardcoded `mode:"payment"`, so tenants can't sell recurring/SaaS/membership products to their customers. A cluster (mode + lifecycle + portal + gated), not a flag. (See detail.) | 📥 Backlog | M | audit #13, dogfood |
 
 ## Product ideas (features, not fixes)
 
@@ -141,6 +145,22 @@ delivery API — MCP and admin are full-trust. This is the highest-value cluster
 **Layering:** V1 is the foundation → **blueprints** can carry tool defs (templates gain verbs) → a **V0 marketplace** becomes "publish a bundle of V1 tools." V2 (we host/run tenant code) stays out — different product.
 
 **The crux to design carefully:** letting the *agent* choose where data flows is a data-exfiltration vector distinct from code execution (a prompt-injected agent could register a tool pointed at an attacker endpoint). Mitigation is **endpoint governance**, not sandboxing — default to **tenant/operator-pre-approved domains**, human-in-the-loop for anything outside them. Build it in from day one, not as a bolt-on.
+
+## BILL-1 · Tenant subscription commerce (audit #13 + dogfood)
+
+**First, the distinction** (verified in code):
+- **Platform billing** (Pluggie's own revenue) already does subscriptions — `createSubscriptionCheckout` uses `mode:"subscription"` (`lib/platform-billing.ts`). Not this item.
+- **Tenant checkout** (`POST /v1/checkout` → `createCheckoutSession`, `lib/stripe.ts:148`) is hardcoded **`mode:"payment"`**. One-time purchases only. This item.
+
+**The gap:** a tenant building SaaS/membership/recurring products on AgentX can only sell one-off purchases to their customers.
+
+**It's a cluster, not a mode flip:**
+1. **Subscription-mode sessions** — `createCheckoutSession` gains `mode:"subscription"` when a collection is marked recurring; the existing `priceField` (`price_…`) just has to point at a *recurring* Price. Needs a Stripe Customer (email at minimum) for the recurring relationship.
+2. **Subscription lifecycle** — today K4 maps one-time `checkout.session.*` → an order entry (pending→paid). Subscriptions need the recurring lifecycle (`customer.subscription.created/updated/deleted`, `invoice.paid/payment_failed`) → a subscription-shaped mapping (status active/past_due/canceled, current period, renewal) instead of a one-shot order flip. **This is the bulk of the work.**
+3. **Customer portal** — subscribers must self-manage/cancel → a Stripe billing-portal session endpoint. *Pluggie's own billing lacks this too — build once, use for both.*
+4. **Member-gated commerce (related, audit #13 tail)** — checkout requires public-read collections today, so gated/member-only products are impossible. Subscriptions are usually gated (subscribe → access), so this pairs naturally: allow checkout on non-public collections with an authenticated buyer.
+
+**Sizing:** meaningfully bigger than one-time checkout — the recurring lifecycle + portal, not just the session mode. This is "the SaaS market" the review flagged.
 
 ---
 
