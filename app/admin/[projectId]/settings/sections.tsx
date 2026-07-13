@@ -297,17 +297,18 @@ export function TokensSection({
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <input
           placeholder="Token label"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          className={inputClass}
+          className={`${inputClass} min-w-[8rem] flex-1`}
         />
         <select
           value={scope}
           onChange={(e) => setScope(e.target.value as "mcp" | "delivery")}
-          className={`${inputClass} w-32 shrink-0`}
+          className={inputClass}
+          style={{ width: "7.5rem", flexShrink: 0 }}
           aria-label="Token scope"
         >
           <option value="mcp">mcp (full)</option>
@@ -988,10 +989,15 @@ export function MembersSection({
           const res = await addMember(projectId, fd);
           setError(res.error ?? null);
         }}
-        className="flex gap-2"
+        className="flex flex-wrap items-center gap-2"
       >
-        <input name="email" placeholder="client@company.com" className={inputClass} />
-        <select name="role" defaultValue="client" className={`${inputClass} w-28 shrink-0`}>
+        <input
+          name="email"
+          type="email"
+          placeholder="client@company.com"
+          className={`${inputClass} min-w-[8rem] flex-1`}
+        />
+        <select name="role" defaultValue="client" className={inputClass} style={{ width: "7.5rem", flexShrink: 0 }}>
           <option value="client">client</option>
           <option value="operator">operator</option>
         </select>
