@@ -225,5 +225,6 @@ is built for.
 ---
 
 ## Recently shipped from this pipeline
+- **Platform billing customer portal** (`0bf5fb0`) — a subscriber can self-manage/cancel via the Stripe Billing Portal from project Settings → Billing. (Proves the portal pattern BILL-1 #3 reuses for tenant-commerce subscriptions.)
 - **SEC-2** — connector secret-shape guard (`e59d13e`).
 - (Contract dump tooling `scripts/dump-contract.ts` → `docs/ai-contract.md` exists as the DX-2 starter.)
