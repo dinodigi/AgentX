@@ -113,6 +113,7 @@ payment-mode only — that's BILL-1.*
 | OPS-1 | **Platform mailer** — shared dependency for NOTIF email + C5 ops alerting | 📥 Backlog | M | design |
 | PLUG-1 | **AI-registered tools** (self-extending agent, V1) + endpoint governance. Post-launch. (See detail.) | 🅿️ Parked | L | design |
 | BRAND-1 | Appearance **brand-kit → agent design tokens** (palette/type/tone the agent builds the site from) + live preview | 🅿️ Parked | L | design |
+| CONN-1 | **Provider registry / swappable integrations** — Email = Resend \| Elastic \| SES, Storage = R2 \| S3, etc. Needs a category↔provider split (today connector `type` IS the provider), a provider adapter per category, per-provider config/secret schemas, and one-active-provider-per-category (unique index moves to `(projectId, category)`). The connectors UI is already category-grouped, so this is purely the architecture piece. Circle back when wiring a 2nd provider. | 🅿️ Parked | L | design |
 
 ---
 
