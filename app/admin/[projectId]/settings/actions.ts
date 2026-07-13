@@ -431,6 +431,39 @@ export async function createBillingCheckoutAction(
   }
 }
 
+/**
+ * B3: open the Stripe Billing Portal so a subscriber can self-manage — update
+ * card, view invoices, cancel. Redirects back to the project's Settings. The
+ * webhook (not the portal) is still the only writer of billingStatus, so a
+ * cancel/downgrade made in the portal converges here on the next event.
+ */
+export async function openBillingPortalAction(projectId: string): Promise<{ error?: string; url?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const [project] = await db
+    .select({ customerId: projects.stripeCustomerId, billingExempt: projects.billingExempt })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .limit(1);
+  if (!project) return { error: "Project not found" };
+  if (project.billingExempt) return { error: "This project is billing-exempt — nothing to manage" };
+  if (!project.customerId) return { error: "No subscription yet — subscribe first, then manage it here" };
+
+  const { headers } = await import("next/headers");
+  const { originFromHeaders } = await import("@/lib/origin");
+  const h = await headers();
+  const origin = originFromHeaders((n) => h.get(n));
+  if (!origin) return { error: "could not determine the app URL — set APP_URL in the environment" };
+
+  const { createBillingPortalSession } = await import("@/lib/platform-billing");
+  try {
+    const { url } = await createBillingPortalSession(project.customerId, `${origin}/admin/${projectId}/settings`);
+    return { url };
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** A4c: one-click managed bucket in our account (handle-first, resumable). */
 export async function provisionManagedBucketAction(
   projectId: string,

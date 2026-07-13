@@ -8,7 +8,7 @@ import { canDeleteProject } from "@/lib/workspaces";
 import { listCollections } from "@/lib/collections";
 import { listSchedules } from "@/lib/schedules";
 import { listProjectPlatformEvents } from "@/lib/platform-events";
-import { TokensSection, WebhookForm, MembersSection, SecretReveal } from "./sections";
+import { TokensSection, WebhookForm, MembersSection, SecretReveal, ManageBillingButton } from "./sections";
 import { DeleteProjectSection } from "./DeleteProjectSection";
 import { refireDeliveryAction, cancelJobAction, toggleScheduleAction } from "./actions";
 
@@ -51,7 +51,15 @@ export default async function SettingsPage({
       .orderBy(desc(webhookDeliveries.createdAt))
       .limit(15),
     db
-      .select({ secret: projects.webhookSigningSecret, name: projects.name, branding: projects.branding })
+      .select({
+        secret: projects.webhookSigningSecret,
+        name: projects.name,
+        branding: projects.branding,
+        plan: projects.plan,
+        billingStatus: projects.billingStatus,
+        billingExempt: projects.billingExempt,
+        stripeCustomerId: projects.stripeCustomerId,
+      })
       .from(projects)
       .where(eq(projects.id, projectId))
       .limit(1)
@@ -70,6 +78,12 @@ export default async function SettingsPage({
 
   const formCollections = collections.filter((c) => c.publicWrite);
 
+  // Billing section shows for paid, non-exempt projects (sandbox/legacy/exempt
+  // have no subscription to manage). "Manage" opens the Stripe portal once a
+  // subscription exists (stripeCustomerId set by the checkout webhook).
+  const paidPlan = projectRow?.plan === "byo" || projectRow?.plan === "managed";
+  const showBilling = paidPlan && !projectRow?.billingExempt;
+
   const projectLabel = projectRow?.branding?.displayName ?? projectRow?.name ?? "project";
   const deleteCounts = canDelete
     ? {
@@ -83,6 +97,37 @@ export default async function SettingsPage({
     <>
       <p className="eyebrow mb-1">Project</p>
       <h1 className="display mb-6 text-xl font-semibold">Settings</h1>
+
+      {showBilling && (
+        <section className="mb-9">
+          <h2 className="section-label mb-1">Billing</h2>
+          <p className="mb-3 max-w-md text-sm text-ink-mute">
+            {projectRow?.plan === "managed" ? "Managed" : "Bring-your-own-keys"} plan —{" "}
+            {projectRow?.plan === "managed" ? "$29" : "$19"}/mo.
+            {projectRow?.stripeCustomerId
+              ? " Update your card, view invoices, or cancel in the Stripe portal."
+              : " No active subscription yet — subscribe from the project's setup screen."}
+          </p>
+          <div className="card flex max-w-md flex-wrap items-center gap-3 p-4">
+            <span
+              className="chip"
+              style={{
+                color:
+                  projectRow?.billingStatus === "active"
+                    ? "var(--color-ok)"
+                    : projectRow?.billingStatus === "canceled"
+                      ? "var(--color-err)"
+                      : projectRow?.billingStatus === "past_due"
+                        ? "var(--color-warn)"
+                        : undefined,
+              }}
+            >
+              {projectRow?.billingStatus ?? "not subscribed"}
+            </span>
+            {projectRow?.stripeCustomerId && <ManageBillingButton projectId={projectId} />}
+          </div>
+        </section>
+      )}
 
       <section className="mb-9">
         <h2 className="section-label mb-1">MCP tokens</h2>

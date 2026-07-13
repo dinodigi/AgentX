@@ -98,6 +98,22 @@ export async function createSubscriptionCheckout(opts: {
   return { url: session.url };
 }
 
+/**
+ * A Stripe Billing Portal session — the hosted page where a subscriber updates
+ * their card, sees invoices, and cancels/switches. We create it for the
+ * project's stored customer and hand back the URL to redirect to. Requires the
+ * Customer Portal to be activated once in the Stripe dashboard (Settings →
+ * Billing → Customer portal); until then Stripe returns a clear config error.
+ */
+export async function createBillingPortalSession(customerId: string, returnUrl: string): Promise<{ url: string }> {
+  const session = await stripeRequest(platformKey(), "POST", "/v1/billing_portal/sessions", {
+    customer: customerId,
+    return_url: returnUrl,
+  });
+  if (typeof session.url !== "string") throw new StripeError("billing portal session response missing url", 0);
+  return { url: session.url };
+}
+
 /** Cancel a project's subscription (project delete / downgrade). 404 = gone = success. */
 export async function cancelSubscription(subscriptionId: string): Promise<void> {
   try {

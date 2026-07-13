@@ -23,10 +23,37 @@ import {
   connectR2Action,
   provisionManagedBucketAction,
   deprovisionManagedBucketAction,
+  openBillingPortalAction,
 } from "./actions";
 
 const inputClass = "field-input";
 const buttonClass = "btn btn-primary disabled:opacity-60";
+
+/** Opens the Stripe Billing Portal for the current subscriber (B3). */
+export function ManageBillingButton({ projectId }: { projectId: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div className="flex flex-col gap-1">
+      <button
+        type="button"
+        className="btn btn-ink disabled:opacity-60"
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          const res = await openBillingPortalAction(projectId);
+          setBusy(false);
+          if (res.error) setError(res.error);
+          else if (res.url) window.location.href = res.url;
+        }}
+      >
+        {busy ? "Opening…" : "Manage subscription"}
+      </button>
+      {error && <span className="text-[11px] text-err">{error}</span>}
+    </div>
+  );
+}
 
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
