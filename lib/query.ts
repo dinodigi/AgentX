@@ -195,8 +195,13 @@ function compileScalarClause(
       if (f.type === "boolean") return sql`${lhs} = ${Boolean(clause.value)}`;
       if (f.type === "number") return sql`${lhs} = ${Number(clause.value)}`;
       return sql`${lhs} = ${String(clause.value)}`;
-    case "contains":
-      return sql`${lhs} ILIKE ${"%" + String(clause.value) + "%"}`;
+    case "contains": {
+      // F4: treat the needle as a literal — escape LIKE metacharacters so `%`/`_`
+      // in user input match themselves, not as wildcards. matchesClauses() uses a
+      // literal JS includes(), so this also aligns SQL with in-memory contains.
+      const needle = String(clause.value).replace(/[\\%_]/g, "\\$&");
+      return sql`${lhs} ILIKE ${"%" + needle + "%"} ESCAPE '\\'`;
+    }
     case "gt":
       return f.type === "number"
         ? sql`${lhs} > ${Number(clause.value)}`

@@ -1,7 +1,7 @@
 # Security Remediation Plan — HAv1 Scorecard
 
 **Source:** `C:\dev\Tests\Security\HAv1\agentx-scorecard.html` (authorized self-assessment, 2026-07-15, target `pluggie.app`).
-**Status:** Batch 1 SHIPPED & verified (2026-07-15). Batch 2 SHIPPED — F3, F1/F6, and MCP rate-limiting done & verified; delivery-read rate-limiting deliberately deferred (see D1/D2 below). Batch 3 still planned.
+**Status:** Batches 1–3 code fixes SHIPPED & verified (2026-07-15). Remaining: (a) delivery-read rate-limiting — a deferred operator decision (see D1/D2); (b) the untested-surface probes — open investigation work. Nothing built or pushed yet.
 **Grade at assessment:** C / 75. Data-isolation core held; held out of a B by F2 + F3, plus a separate availability launch-blocker.
 
 Every finding below has been confirmed against the actual code (file + line). The recurring good news: the fixes are small, and in most cases **the correct pattern already exists elsewhere in this repo** — we're extending it, not inventing it.
@@ -189,9 +189,9 @@ Shipped: F3 relation-label gate, F1/F6 SSRF hardened fetcher, MCP rate-limiting.
 
 ## Batch 3 — Low-severity + close the unknowns
 
-- **F4** — Escape `%` and `_` before building the LIKE pattern for `contains` (`lib/query.ts`). MCP-only today; latent if `contains` ever hits untrusted input.
-- **F5** — `list_connectors` returns Neon host / R2 account+bucket / CF account id. Return only what the caller needs; treat endpoints as sensitive. Admin-only, recon value.
-- **Untested surfaces to probe** (from the coverage table):
+- **F4** — ✅ SHIPPED. `contains` now escapes `%`/`_`/`\` and uses `ESCAPE '\'` (`lib/query.ts`), so wildcards match literally (aligns SQL with the in-memory `includes()` path). Verified: `scripts/smoke/57-like-escape.test.mjs`.
+- **F5** — ✅ SHIPPED. `list_connectors` (`lib/mcp/tools.ts`) now whitelists non-sensitive config per type (clerk: publishableKey/issuer/additionalIssuers/audience; resend: fromEmail; stripe: publishableKey) — infra connectors (`neon` host, `r2` account/bucket) return no config. `get_project_info` already cherry-picked safe fields.
+- **Untested surfaces to probe** (from the coverage table) — NOT yet done; open investigation work:
   - Email interpolation vector — *now partially addressed by F2 + email hardening*; still worth an explicit test.
   - Cross-tenant A-reads-B — needs a **2nd owned project** to complete (currently PARTIAL; scope-tampering already holds).
   - JWT positive path — **needs a non-empty `audience`** configured, then test expiry/issuer/audience.

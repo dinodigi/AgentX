@@ -1296,9 +1296,22 @@ export async function callTool(
   try {
     switch (name) {
       case "list_connectors": {
+        // F5: expose only caller-relevant, non-sensitive config per type — never
+        // infra endpoints (neon host, r2 account id / bucket are recon value, and
+        // the caller never needs them). Unknown/infra types return no config.
+        const allowByType: Record<string, string[]> = {
+          clerk: ["publishableKey", "issuer", "additionalIssuers", "audience"],
+          resend: ["fromEmail"],
+          stripe: ["publishableKey"],
+        };
         const rows = await listConnectorRows(projectId);
         return ok(
-          rows.map((c) => ({ type: c.type, status: c.status, config: c.config })),
+          rows.map((c) => {
+            const allow = allowByType[c.type] ?? [];
+            const config: Record<string, unknown> = {};
+            for (const k of allow) if (c.config[k] != null) config[k] = c.config[k];
+            return { type: c.type, status: c.status, config };
+          }),
         );
       }
 
