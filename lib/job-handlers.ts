@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { tenantDb } from "./data-plane";
 import { collections, entries, projectSchedules, type EventAction, type ScheduleAction } from "@/db/schema";
-import { actionHash, dispatchEmail, runEventAction, type EntryEvent } from "./events";
+import { actionHash, dispatchEmail, runEventAction, escapeHtml, htmlToText, type EntryEvent } from "./events";
 import { deliverWebhook } from "./webhook";
 import { matchesClauses } from "./query";
 import type { JobHandlers } from "./jobs";
@@ -109,14 +109,16 @@ export const HANDLERS: JobHandlers = {
       });
     } else {
       // {{name}} / {{scheduledFor}} interpolation for schedule emails.
-      const fill = (t: string) =>
-        t.replace(/\{\{(\w+)\}\}/g, (_, k: string) =>
-          k === "name" ? s.name : k === "scheduledFor" ? p.scheduledFor : "",
-        );
+      const val = (k: string) => (k === "name" ? s.name : k === "scheduledFor" ? p.scheduledFor : "");
+      const fill = (t: string) => t.replace(/\{\{(\w+)\}\}/g, (_, k: string) => val(k));
+      const fillHtml = (t: string) => t.replace(/\{\{(\w+)\}\}/g, (_, k: string) => escapeHtml(val(k)));
       const rendered = {
         to: fill(s.action.to),
         subject: fill(s.action.subject),
-        text: `schedule "${s.name}" fired\nscheduledFor: ${p.scheduledFor}\nfiredAt: ${firedAt}`,
+        text: s.action.html
+          ? htmlToText(fill(s.action.html))
+          : `schedule "${s.name}" fired\nscheduledFor: ${p.scheduledFor}\nfiredAt: ${firedAt}`,
+        ...(s.action.html ? { html: fillHtml(s.action.html) } : {}),
       };
       await dispatchEmail(job.projectId, null, "schedule.fired", rendered, { ...payload, email: rendered });
     }

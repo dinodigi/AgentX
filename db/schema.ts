@@ -35,7 +35,7 @@ interface EventActionBase {
 /** An action fired by an entry event. Email requires the resend connector. */
 export type EventAction =
   | ({ type: "webhook"; url: string } & EventActionBase)
-  | ({ type: "email"; to: string; subject: string } & EventActionBase);
+  | ({ type: "email"; to: string; subject: string; html?: string } & EventActionBase);
 
 /** Which surfaces may drive a transition. delivery (end users) is excluded by
  * default — the flagship approval flow is secure unless a transition opts in. */
@@ -656,7 +656,7 @@ export interface ScheduleRecurrence {
  * but without `when`/`after` (there is no entry to evaluate against). */
 export type ScheduleAction =
   | { type: "webhook"; url: string }
-  | { type: "email"; to: string; subject: string };
+  | { type: "email"; to: string; subject: string; html?: string };
 
 /**
  * Recurring schedules (G3), ticked by the drain endpoint: due rows CAS-advance

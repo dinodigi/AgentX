@@ -112,10 +112,10 @@ const WRITE_RULES = ["none", "authenticated", "owner"] as const;
  */
 function assertNoLocalizedTemplateRefs(
   fields: FieldDef[],
-  action: { to?: string; subject?: string; body?: string },
+  action: { to?: string; subject?: string; body?: string; html?: string },
   context: string,
 ): void {
-  for (const [part, source] of Object.entries({ to: action.to, subject: action.subject, body: action.body })) {
+  for (const [part, source] of Object.entries({ to: action.to, subject: action.subject, body: action.body, html: action.html })) {
     if (!source) continue;
     for (const m of source.matchAll(/\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}/gi)) {
       const rf = fields.find((x) => x.name === m[1]);

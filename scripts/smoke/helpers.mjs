@@ -323,4 +323,18 @@ export async function queryDeliveries(projectId) {
   return sql`SELECT status, event, url FROM webhook_deliveries WHERE project_id = ${projectId}`;
 }
 
+/** Attach a connected resend connector with a decryptable API key (direct SQL). */
+export async function connectResend(projectId, { key = "re_smoke_key", fromEmail = "hello@smoke.test" } = {}) {
+  await sql`INSERT INTO project_connectors (project_id, type, config, secret_enc, status)
+    VALUES (${projectId}, 'resend', ${JSON.stringify({ fromEmail })}::jsonb, ${encryptSecret(key)}, 'connected')
+    ON CONFLICT (project_id, type) DO UPDATE SET
+      config = EXCLUDED.config, secret_enc = EXCLUDED.secret_enc, status = 'connected'`;
+}
+
+/** Delivery-log rows including the JSON payload (queryDeliveries omits it). */
+export async function deliveryLog(projectId) {
+  return sql`SELECT status, event, url, payload FROM webhook_deliveries
+    WHERE project_id = ${projectId} ORDER BY created_at DESC`;
+}
+
 export { randomUUID };

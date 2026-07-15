@@ -253,8 +253,10 @@ export const TOOL_DEFS: ToolDef[] = [
           type: "object",
           description:
             "declarative actions on entry lifecycle: {created|updated|deleted: [{type:'webhook',url} " +
-            "| {type:'email',to,subject}]}. Email needs the Resend connector; to/subject support " +
-            "{{field}} interpolation from entry data. Any action takes when: [clauses] (same shape " +
+            "| {type:'email',to,subject,html?}]}. Email needs the Resend connector; to/subject/html support " +
+            "{{field}} interpolation from entry data. html is an OPTIONAL styled HTML body for a " +
+            "professional-looking email (interpolated values are HTML-escaped; a plain-text fallback is " +
+            "derived automatically) — omit it for a plain notification. Any action takes when: [clauses] (same shape " +
             "as query where, evaluated against the post-change entry — e.g. fire only when " +
             "status='confirmed') and disabled: true (paused, kept in the schema). updated events " +
             "carry {previous, changedFields}. Add after: '45m'|'12h'|'3d' (1m..365d) to DEFER the " +
@@ -1056,7 +1058,7 @@ export const TOOL_DEFS: ToolDef[] = [
       "presets only, no cron strings. recurrence: {frequency: hourly|daily|weekly|monthly, " +
       "at: 'HH:MM' (24h UTC; not for hourly — hourly fires at the top of each hour), weekday " +
       "(weekly), dayOfMonth 1-28 (monthly; capped so every month has the day)}. UTC-only for now. " +
-      "action: {type:'webhook',url} | {type:'email',to,subject} — the same vocabulary as events " +
+      "action: {type:'webhook',url} | {type:'email',to,subject,html?} — the same vocabulary as events " +
       "but WITHOUT when/after (the recurrence is the timing; email supports {{name}}/" +
       "{{scheduledFor}}). Fires are at-least-once (receivers must dedupe) and may run up to a " +
       "minute late; a missed window fires once, never backfills. enabled:false pauses the " +
@@ -1081,7 +1083,7 @@ export const TOOL_DEFS: ToolDef[] = [
           required: ["frequency"],
           additionalProperties: false,
         },
-        action: { type: "object", description: "{type:'webhook',url} | {type:'email',to,subject}" },
+        action: { type: "object", description: "{type:'webhook',url} | {type:'email',to,subject,html?}" },
         enabled: { type: "boolean", description: "false = paused (kept, not ticked); default true" },
       },
       required: ["name", "recurrence", "action"],
@@ -1145,7 +1147,7 @@ const eventActionBase = {
 };
 const eventActionSchema = z.union([
   z.object({ type: z.literal("webhook"), url: z.string(), ...eventActionBase }),
-  z.object({ type: z.literal("email"), to: z.string(), subject: z.string(), ...eventActionBase }),
+  z.object({ type: z.literal("email"), to: z.string(), subject: z.string(), html: z.string().max(200_000).optional(), ...eventActionBase }),
 ]);
 
 const writeHookSchema = z.object({

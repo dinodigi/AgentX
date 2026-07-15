@@ -184,6 +184,31 @@ function interpolate(template: string, entry: { id: string; data?: Record<string
   );
 }
 
+/** HTML-escape a value interpolated into an email HTML body. The template is
+ * operator-authored (trusted); the {{field}} VALUES come from entry data and MUST
+ * be escaped, or a submitted value could inject markup/links into the branded
+ * email (same untrusted-data discipline as the delivery surface). */
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** Strip tags from a rendered HTML template into a readable plain-text fallback. */
+export function htmlToText(html: string): string {
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** interpolate(), but HTML-escaping each substituted value for an HTML body. */
+function interpolateHtml(template: string, entry: { id: string; data?: Record<string, unknown> }): string {
+  return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) =>
+    escapeHtml(key === "id" ? entry.id : String(entry.data?.[key] ?? "")),
+  );
+}
+
 async function sendEmailAction(
   collection: Collection,
   event: string,
@@ -191,10 +216,15 @@ async function sendEmailAction(
   entry: { id: string; data?: Record<string, unknown> },
   basePayload: Record<string, unknown>,
 ): Promise<void> {
-  const rendered = {
+  const rendered: RenderedEmail = {
     to: interpolate(action.to, entry),
     subject: interpolate(action.subject, entry),
-    text: `${event} in "${collection.displayName}"\n\n${JSON.stringify(entry.data ?? { id: entry.id }, null, 2)}`,
+    // With an html template: send the styled body + a tags-stripped text fallback
+    // (values raw here, escaped in the html path). Without: the legacy notification.
+    text: action.html
+      ? htmlToText(interpolate(action.html, entry))
+      : `${event} in "${collection.displayName}"\n\n${JSON.stringify(entry.data ?? { id: entry.id }, null, 2)}`,
+    ...(action.html ? { html: interpolateHtml(action.html, entry) } : {}),
   };
   // The rendered email is stored with the log row so a failed send can be
   // re-fired verbatim later, without re-deriving templates.
@@ -208,6 +238,8 @@ export interface RenderedEmail {
   to: string;
   subject: string;
   text: string;
+  /** Optional styled HTML body (values already escaped); sent alongside text. */
+  html?: string;
 }
 
 /** Send one rendered email via the project's Resend connector; log the outcome.
@@ -238,6 +270,7 @@ export async function dispatchEmail(
         to: [rendered.to],
         subject: rendered.subject,
         text: rendered.text,
+        ...(rendered.html ? { html: rendered.html } : {}),
       }),
       signal: AbortSignal.timeout(10_000),
     });
