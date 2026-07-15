@@ -11,6 +11,7 @@ import { createEntry, publicFields } from "@/lib/entries";
 import { matchesClauses } from "@/lib/query";
 import type { WhereItem } from "@/lib/query";
 import { rateLimit } from "@/lib/ratelimit";
+import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
 import { corsJson, deliveryError } from "@/lib/delivery-http";
 import { preflight } from "@/lib/cors";
 
@@ -60,9 +61,11 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const raw = await readBounded(req, MAX_DELIVERY_BODY_BYTES);
+  if (raw === null) return deliveryError(413, "request body too large");
   let body: z.infer<typeof bodySchema>;
   try {
-    body = bodySchema.parse(await req.json());
+    body = bodySchema.parse(JSON.parse(raw));
   } catch (e) {
     return deliveryError(422, e instanceof z.ZodError ? "invalid checkout body — needs {collection, items:[{id, quantity}]}" : "invalid JSON body");
   }

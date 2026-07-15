@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { bearerFrom, resolveToken } from "@/lib/tokens";
+import { readBounded, MAX_MCP_BODY_BYTES } from "@/lib/http";
 import { TOOL_DEFS, callTool } from "@/lib/mcp/tools";
 import { ERROR_CODES } from "@/lib/error-codes";
 import { originFromHeaders } from "@/lib/origin";
@@ -81,9 +82,11 @@ export async function POST(req: NextRequest) {
   }
   const projectId = info.projectId;
 
+  const raw = await readBounded(req, MAX_MCP_BODY_BYTES);
+  if (raw === null) return rpcError(null, -32600, "request body too large");
   let msg: JsonRpcRequest;
   try {
-    msg = await req.json();
+    msg = JSON.parse(raw);
   } catch {
     return rpcError(null, -32700, "parse error");
   }

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Collection, ClaimRule, ReadPreset } from "@/db/schema";
 import { verifyEndUser, type EndUser } from "./user-auth";
-import type { WhereClause } from "./query";
+import type { WhereClause, WhereItem } from "./query";
 
 /** The single zod for the access JSONB — shared by define_collection + manifest. */
 const claimRuleSchema = z
@@ -300,11 +300,37 @@ export function stampedIdentityFields(collection: Collection): string[] {
   return out;
 }
 
+/** Field names referenced by a collection's publicFilter (flattening anyOf). */
+function publicFilterFields(collection: Collection): Set<string> {
+  const out = new Set<string>();
+  const visit = (c: WhereClause) => {
+    if (c && typeof c === "object" && typeof c.field === "string") out.add(c.field);
+  };
+  for (const item of (collection.publicFilter as WhereItem[] | null) ?? []) {
+    if (item && typeof item === "object" && "anyOf" in item && Array.isArray(item.anyOf)) {
+      item.anyOf.forEach(visit);
+    } else {
+      visit(item as WhereClause);
+    }
+  }
+  return out;
+}
+
 /**
- * F4: field-level write gates on the DELIVERY surface. Returns the names of any
- * writableBy fields present in the payload the user isn't allowed to write —
- * "none" is never delivery-writable; a claim rule needs a matching verified
- * user. Server-stamped identity fields are exempt (they're stripped/set).
+ * Field-level write gates on the DELIVERY surface. Returns the names of any
+ * fields in the payload the caller isn't allowed to write. Server-stamped
+ * identity fields are exempt (they're stripped/set separately).
+ *
+ * Layers:
+ *  - F2 invariant: a field that gates public visibility (referenced by the
+ *    collection's publicFilter) is NEVER anonymously writable. This closes the
+ *    demonstrated mass-assignment exploit — a public form set {approved:true} on
+ *    the very flag publicFilter keys on, self-approving its own row. Workflow
+ *    state (applyWorkflowOnCreate) and owner/org (stampIdentity) are already
+ *    locked on the anonymous path; this adds the visibility-gate twin. To lock
+ *    any other field against public writes, set `writableBy:"none"`.
+ *  - F4: `writableBy` "none" is barred entirely; a claim rule needs a matching
+ *    verified user.
  */
 export function checkFieldWrites(
   collection: Collection,
@@ -312,14 +338,23 @@ export function checkFieldWrites(
   payload: Record<string, unknown>,
 ): string[] {
   const exempt = new Set(stampedIdentityFields(collection));
+  const gateFields = user === null ? publicFilterFields(collection) : null;
   const offending: string[] = [];
   for (const f of collection.fields) {
-    if (!f.writableBy || exempt.has(f.name) || !(f.name in payload)) continue;
-    const allowed =
-      f.writableBy === "none"
-        ? false
-        : user !== null && claimMatches(user, f.writableBy);
-    if (!allowed) offending.push(f.name);
+    if (exempt.has(f.name) || !(f.name in payload)) continue;
+    // F2 invariant: visibility-gating fields are never anonymously writable.
+    if (user === null && gateFields!.has(f.name)) {
+      offending.push(f.name);
+      continue;
+    }
+    // F4: explicit per-field write gate (applies to any caller).
+    if (f.writableBy) {
+      const allowed =
+        f.writableBy === "none"
+          ? false
+          : user !== null && claimMatches(user, f.writableBy);
+      if (!allowed) offending.push(f.name);
+    }
   }
   return offending;
 }

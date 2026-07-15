@@ -197,7 +197,9 @@ export const COMMON_FIELD_CONFIG = [
   "required?: boolean (enforced on create; on update the field rejects null — it can never be unset)",
   'requiredIf?: {field, equals} — required only when a sibling ENUM field equals an option (create-time)',
   "publicRead?: boolean (delivery visibility)",
-  'writableBy?: "none" | {claim, equals} — delivery-only write gate (admin/MCP unaffected)',
+  'writableBy?: "none" | {claim, equals} — delivery-only write gate (admin/MCP unaffected). ' +
+    "Use writableBy:'none' to lock an admin-only field on a publicWrite collection. " +
+    "Fields referenced by the collection's publicFilter are auto-locked against anonymous writes.",
   "in update calls, set a field to null to unset it (optional fields only)",
   "computed?: {fn} — value DERIVED server-side, never client-supplied (a supplied value is " +
     "rejected). fn: {slugify, from:<sibling text field>} | {template, template:'{{a}}-{{b}}'} | " +

@@ -166,6 +166,17 @@ export async function runEventAction(
   }
 }
 
+/**
+ * A single, well-formed recipient. Blocks header/CRLF injection, multi-recipient
+ * fan-out (commas/semicolons) and empty renders. Defense-in-depth for the F2
+ * email-relay vector: `to` is interpolated from entry data, so once F2 is fixed
+ * the submitter can't control it — but a malformed template still shouldn't
+ * reach Resend from the project's verified domain.
+ */
+function isValidEmailRecipient(addr: string): boolean {
+  return /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/.test(addr);
+}
+
 /** {{field}} placeholders resolve from entry data; {{id}} from the entry id. */
 function interpolate(template: string, entry: { id: string; data?: Record<string, unknown> }): string {
   return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) =>
@@ -211,6 +222,9 @@ export async function dispatchEmail(
   let status: "success" | "failed" = "failed";
   let lastError: string | null = null;
   try {
+    if (!isValidEmailRecipient(rendered.to)) {
+      throw new Error(`refusing to send: invalid recipient "${rendered.to.slice(0, 80)}"`);
+    }
     const [key, connector] = await Promise.all([
       connectorSecret(projectId, "resend"),
       getConnector(projectId, "resend"),

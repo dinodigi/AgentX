@@ -100,7 +100,7 @@ const WHERE_ITEM_JSON = {
     WHERE_CLAUSE_JSON,
     {
       type: "object",
-      properties: { anyOf: { type: "array", items: WHERE_CLAUSE_JSON, minItems: 1 } },
+      properties: { anyOf: { type: "array", items: WHERE_CLAUSE_JSON, minItems: 1, maxItems: 200 } },
       required: ["anyOf"],
       additionalProperties: false,
     },
@@ -1132,7 +1132,7 @@ const whereClauseSchema = z.object({
 });
 const whereItemSchema = z.union([
   whereClauseSchema,
-  z.object({ anyOf: z.array(whereClauseSchema).min(1) }),
+  z.object({ anyOf: z.array(whereClauseSchema).min(1).max(200) }),
 ]);
 
 const eventActionBase = {

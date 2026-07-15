@@ -110,6 +110,16 @@ function labelClause(c: WhereClause): string {
 }
 
 /**
+ * Upper bounds on the size of a compiled where. Uncapped, a single request can
+ * build hundreds of thousands of clauses — a multi-MB SQL string that OOMs the
+ * instance and 502s every project until Render restarts (scorecard D4). This is
+ * the authoritative backstop: it guards every caller — delivery, MCP, and a
+ * stored `publicFilter` re-run on each read — regardless of any input schema.
+ */
+export const MAX_WHERE_ITEMS = 100;
+export const MAX_ANYOF_ITEMS = 200;
+
+/**
  * Validate + compile where items to labeled SQL fragments. `buildWhere` and the
  * CAS failure diagnosis share this ONE compilation path so a diagnostic SELECT
  * evaluates byte-identical predicates to the UPDATE it is explaining.
@@ -119,10 +129,16 @@ export function buildWhereParts(
   where: WhereItem[],
   related?: RelatedContextMap,
 ): WherePart[] {
+  if (where.length > MAX_WHERE_ITEMS) {
+    throw new ValidationError(`where: too many clauses (${where.length} > ${MAX_WHERE_ITEMS})`);
+  }
   return where.map((item) => {
     if ("anyOf" in item) {
       if (!Array.isArray(item.anyOf) || item.anyOf.length === 0) {
         throw new ValidationError("where: anyOf needs a non-empty array of clauses");
+      }
+      if (item.anyOf.length > MAX_ANYOF_ITEMS) {
+        throw new ValidationError(`where: anyOf too large (${item.anyOf.length} > ${MAX_ANYOF_ITEMS})`);
       }
       const conds = item.anyOf.map((c) => {
         if (typeof c !== "object" || c === null || "anyOf" in c) {
