@@ -191,15 +191,16 @@ Shipped: F3 relation-label gate, F1/F6 SSRF hardened fetcher, MCP rate-limiting.
 
 - **F4** — ✅ SHIPPED. `contains` now escapes `%`/`_`/`\` and uses `ESCAPE '\'` (`lib/query.ts`), so wildcards match literally (aligns SQL with the in-memory `includes()` path). Verified: `scripts/smoke/57-like-escape.test.mjs`.
 - **F5** — ✅ SHIPPED. `list_connectors` (`lib/mcp/tools.ts`) now whitelists non-sensitive config per type (clerk: publishableKey/issuer/additionalIssuers/audience; resend: fromEmail; stripe: publishableKey) — infra connectors (`neon` host, `r2` account/bucket) return no config. `get_project_info` already cherry-picked safe fields.
-- **Untested surfaces to probe** (from the coverage table) — NOT yet done; open investigation work:
-  - Email interpolation vector — *now partially addressed by F2 + email hardening*; still worth an explicit test.
-  - Cross-tenant A-reads-B — needs a **2nd owned project** to complete (currently PARTIAL; scope-tampering already holds).
-  - JWT positive path — **needs a non-empty `audience`** configured, then test expiry/issuer/audience.
-  - Workflow state machine (actor-gating, illegal transitions; note "admin includes client-role in v1").
-  - `transact` atomicity / `$ref` rollback edges.
-  - Asset upload: content-type spoofing, SVG/XSS, filename traversal (uploads buffer whole file before the 10 MB check — `lib/r2.ts:131` — worth revisiting under D3 too).
-  - Computed fields / hook transform (template/slugify injection; ownership re-stamp claim).
-  - Changes-feed gating on `/v1/changes`.
+- **Untested surfaces — partially closed:**
+  - ✅ **Asset upload SVG/XSS + pre-buffer OOM** — SHIPPED. `lib/r2.ts` now blocks `image/svg+xml` (and SVG bytes smuggled under another image content-type via a magic-byte check); `uploads/route.ts` rejects an oversized upload on `content-length` **before** `req.formData()` buffers the body (D3-family). Verified: `scripts/smoke/58-upload-hardening.test.mjs`.
+  - ✅ **Changes-feed gating** (`/v1/changes`) — REVIEWED, sound. `projectChangeForDelivery` (`lib/changes.ts`) gates each row on BOTH write-time and current visibility (publicFilter + identity + publicRead field intersection), projects only publicRead-both-then-and-now fields, and drops private-only-change timing leaks. No fix needed.
+  - ⏳ **Still open (need infra or a dedicated pass):**
+    - Email interpolation — mitigated by F2 + recipient validation; an explicit malformed-recipient test would confirm.
+    - Cross-tenant A-reads-B — needs a **2nd owned project** to exercise (scope-tampering already holds).
+    - JWT positive path — needs a non-empty `audience` configured, then test expiry/issuer/audience.
+    - Workflow state machine (actor-gating, illegal transitions; note "admin includes client-role in v1").
+    - `transact` atomicity / `$ref` rollback edges.
+    - Computed fields / hook transform (template/slugify injection; ownership re-stamp claim).
 
 ---
 

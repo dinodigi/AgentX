@@ -127,6 +127,13 @@ export interface UploadInput {
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const ALLOWED_TYPE_PREFIXES = ["image/", "application/pdf", "text/plain", "text/csv", "application/json"];
 
+/** Does the payload look like SVG/XML markup? Guards the content-type-spoof path
+ * (SVG bytes labelled image/png). Only the first bytes matter. */
+function looksLikeSvg(bytes: Buffer): boolean {
+  const head = bytes.subarray(0, 512).toString("utf8").trimStart().toLowerCase();
+  return head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"));
+}
+
 export async function uploadAsset(input: UploadInput): Promise<Asset> {
   if (input.bytes.length > MAX_UPLOAD_BYTES) {
     throw new ValidationError(
@@ -136,6 +143,14 @@ export async function uploadAsset(input: UploadInput): Promise<Asset> {
   if (!ALLOWED_TYPE_PREFIXES.some((p) => input.contentType.startsWith(p))) {
     throw new ValidationError(
       `content type "${input.contentType}" not allowed — allowed: ${ALLOWED_TYPE_PREFIXES.join(", ")}`,
+    );
+  }
+  // SVG is an "image/" type but executes script when opened in a browser —
+  // a stored-XSS vector from the asset origin. Block the honest type AND SVG
+  // bytes smuggled under another image content-type.
+  if (input.contentType === "image/svg+xml" || (input.contentType.startsWith("image/") && looksLikeSvg(input.bytes))) {
+    throw new ValidationError(
+      "SVG uploads are not allowed (they can carry scripts) — use PNG, JPEG, or WebP",
     );
   }
   await assertAssetCap(input.projectId, input.bytes.length); // B2 sandbox cap

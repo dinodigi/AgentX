@@ -3,7 +3,7 @@ import { bearerFrom, resolveProjectId } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
 import { gateCreate } from "@/lib/access-rules";
 import { rateLimit } from "@/lib/ratelimit";
-import { uploadAsset } from "@/lib/r2";
+import { uploadAsset, MAX_UPLOAD_BYTES } from "@/lib/r2";
 import { ValidationError } from "@/lib/validation";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError } from "@/lib/delivery-http";
@@ -42,6 +42,15 @@ export async function POST(
     return deliveryError(429, "too many uploads — try again shortly", {
       headers: { "retry-after": String(limit.retryAfterSec) },
     });
+  }
+
+  // Reject an oversized upload on its declared size BEFORE req.formData() buffers
+  // the whole multipart body into memory (a D3-family OOM: uploadAsset's size
+  // check only runs after the bytes are already in the heap). Slack covers the
+  // multipart boundary/header overhead; the byte-exact cap still applies below.
+  const declaredLen = Number(req.headers.get("content-length") ?? "");
+  if (Number.isFinite(declaredLen) && declaredLen > MAX_UPLOAD_BYTES + 64 * 1024) {
+    return deliveryError(413, "upload too large");
   }
 
   let form: FormData;
