@@ -1,7 +1,7 @@
 # Security Remediation Plan — HAv1 Scorecard
 
 **Source:** `C:\dev\Tests\Security\HAv1\agentx-scorecard.html` (authorized self-assessment, 2026-07-15, target `pluggie.app`).
-**Status:** Batch 1 SHIPPED & verified (2026-07-15) — see "Batch 1" below. Batches 2–3 still planned.
+**Status:** Batch 1 SHIPPED & verified (2026-07-15). Batch 2 SHIPPED — F3, F1/F6, and MCP rate-limiting done & verified; delivery-read rate-limiting deliberately deferred (see D1/D2 below). Batch 3 still planned.
 **Grade at assessment:** C / 75. Data-isolation core held; held out of a B by F2 + F3, plus a separate availability launch-blocker.
 
 Every finding below has been confirmed against the actual code (file + line). The recurring good news: the fixes are small, and in most cases **the correct pattern already exists elsewhere in this repo** — we're extending it, not inventing it.
@@ -124,9 +124,17 @@ Implemented in `checkFieldWrites` (`lib/access-rules.ts`): a new `publicFilterFi
 
 ---
 
-## Batch 2 — Hardening (rate limiting, SSRF, F3)
+## Batch 2 — Hardening (rate limiting, SSRF, F3) — ✅ SHIPPED (with one deliberate deferral)
 
-### D1 / D2 — Rate-limit coverage
+Shipped: F3 relation-label gate, F1/F6 SSRF hardened fetcher, MCP rate-limiting. Deferred with rationale: delivery-**read** rate-limiting (numbers can't be picked blind without breaking live sites — see D1/D2). Files touched: `lib/entries.ts` (F3), `lib/net-guard.ts` + `lib/webhook.ts` + `lib/hooks.ts` (F1/F6), `app/api/mcp/route.ts` (MCP limiter). Verified: `scripts/smoke/56-relation-label-leak.test.mjs` + hook/webhook/event regressions green; F1/F6 verified by construction + typecheck (the guard is production-only, so the redirect path can't run in the dev smoke harness).
+
+### D1 / D2 — Rate-limit coverage — MCP shipped; delivery-read deferred
+
+**Shipped:** a per-project capacity brake on the previously-unlimited MCP endpoint (`app/api/mcp/route.ts`) — generous 300/window ceiling (agents batch bulk work into single calls), fail-open, applied before the body read. This is defense-in-depth in front of the D4 clause cap.
+
+**Deferred — delivery-read rate-limiting.** The existing limiter's 20/window default is correct for form POSTs but would break legitimate reads: a customer's *server* makes all delivery reads from one IP, so high-volume-single-IP is normal traffic, not abuse. A safe read limit needs per-project tiering / expected-volume input, and the actual outage vector (D4) is already capped. **Decision needed from the operator:** expected peak read rate per project → then set a high per-project ceiling (and fix the IP source to the Render/Cloudflare trusted header). Until then, reads rely on the D3/D4 caps + edge.
+
+<details><summary>Original plan (for reference)</summary>
 
 **Current state (`lib/ratelimit.ts`).** Durable fixed-window, `MAX_PER_WINDOW = 20`/60s, keyed `${projectId}:${ip}`, **fail-open** (`:44-47`), IP from spoofable `x-forwarded-for`. Applied to delivery POST (`route.ts:317`), GET **only when `?q` present** (`:243-249`), PATCH/DELETE, uploads. **Not** applied to the plain GET list or the **entire** MCP endpoint (`app/api/mcp/route.ts` — no limiter). So D4's clause-bomb has neither a clause cap (fixed in Batch 1) nor a rate limit in front of it.
 
@@ -140,7 +148,11 @@ Implemented in `checkFieldWrites` (`lib/access-rules.ts`): a new `publicFilterFi
 
 ---
 
-### F1 + F6 — SSRF: redirect revalidation + IPv6 classifier
+### F1 + F6 — SSRF: redirect revalidation + IPv6 classifier — ✅ SHIPPED
+
+**What shipped.** New `guardedFetch()` in `lib/net-guard.ts`: `redirect:"manual"` + a manual loop (≤5 hops) that re-runs `webhookTargetRefusal` on every `Location` before following it, throwing `SsrfRedirectError` on a guarded hop. Both fetchers (`lib/webhook.ts`, `lib/hooks.ts`) — and the async paths via `deliverWebhook` — now call it. F6: new `normalizeIp()` folds both `::ffff:169.254.169.254` (dotted) and `::ffff:a9fe:a9fe` (compressed hex) to v4 before the private-range check. DNS-rebinding TOCTOU remains the documented accepted residual. `CRON_SECRET` hardening for `/api/jobs/drain` is an ops item, not code.
+
+<details><summary>Original root-cause + plan (for reference)</summary>
 
 **Root cause.**
 - The guard `webhookTargetRefusal` (`lib/net-guard.ts:67-86`) validates only the **first hop**. Both fetchers — `lib/webhook.ts:57-62` (async events) and `lib/hooks.ts:119-128` (sync hooks) — call `fetch()` with default redirect-following (undici follows up to 20) and **never re-consult the guard** on the `Location`. A public URL 302→`http://127.0.0.1:10000/` is followed. Also reached via `lib/job-handlers.ts:103`, `lib/events.ts:157/299`.
@@ -155,15 +167,23 @@ Implemented in `checkFieldWrites` (`lib/access-rules.ts`): a new `publicFilterFi
 
 **Tests.** Public URL 302→loopback → refused on both hook and webhook paths; each redirect hop re-validated; `::ffff:169.254.169.254` classified private.
 
+</details>
+
 ---
 
-### F3 — Relation label leaks `publicFilter`-hidden rows
+### F3 — Relation label leaks `publicFilter`-hidden rows — ✅ SHIPPED
+
+**What shipped.** `resolveRelations` (`lib/entries.ts`) now resolves each target collection's `publicFilter` alongside its `access.org` (one `metaByTarget` map) and, for delivery (`!trusted`) viewers, masks any target row failing `matchesClauses(...publicFilter...)` to `{id, label:id}` — the same fail-closed shape already used for cross-org. Trusted/MCP reads unchanged; expand path already did this. Verified: `scripts/smoke/56-relation-label-leak.test.mjs` (hidden label masked, published label resolves) + 22-authz Fix B (org masking intact).
+
+<details><summary>Original root-cause + plan (for reference)</summary>
 
 **Root cause.** `resolveRelations` (`lib/entries.ts:2032-2092`) fetches label targets by id+project unconditionally (`:2052-2057`) and applies **only** the org gate (`:2077-2088`) — never the target collection's `publicFilter`. So a public review referencing an unpublished trip returns `trip:{id,label:"UNRELEASED Antarctica"}`. The **expand** path does it right for contrast: `expandRelations` (`:2159-2239`) filters through `matchesClauses(targetColl.fields, publicFilter, data)` at `:2206-2214`.
 
 **Plan.** Mirror expand in `resolveRelations`: after fetching `targetRows` (`:2056`), for delivery (`mode !== "trusted"`) viewers, load the target collection (already done for org at `:2070`) and mask any target failing `matchesClauses(targetColl.fields, targetColl.publicFilter ?? [], data)` — render as redacted/`{id, label:id}` or null. Reuse `matchesClauses` (`lib/query.ts:288-298`).
 
 **Tests.** Public read of an entry whose relation points to a `publicFilter`-hidden row → label redacted; trusted/MCP read → full label; expand path unchanged.
+
+</details>
 
 ---
 

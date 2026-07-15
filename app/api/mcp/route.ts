@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { bearerFrom, resolveToken } from "@/lib/tokens";
+import { rateLimit } from "@/lib/ratelimit";
 import { readBounded, MAX_MCP_BODY_BYTES } from "@/lib/http";
 import { TOOL_DEFS, callTool } from "@/lib/mcp/tools";
 import { ERROR_CODES } from "@/lib/error-codes";
@@ -81,6 +82,17 @@ export async function POST(req: NextRequest) {
     );
   }
   const projectId = info.projectId;
+
+  // D1: capacity brake on the MCP surface (previously unlimited — the clause-bomb
+  // vector's front door). Per-project, generous ceiling: agents batch bulk work
+  // into single calls (bulk_create ≤100, transact ≤25), so normal use stays well
+  // under this; it caps a runaway loop or a compromised token. Fail-open, like
+  // the delivery limiter — this protects capacity, not authorization. Applied
+  // before the body read so a flood can't force the max-size buffering.
+  const mcpLimit = await rateLimit(`mcp:${projectId}`, { projectId, max: 300 });
+  if (!mcpLimit.allowed) {
+    return rpcError(null, -32000, "rate limit exceeded — slow down and retry");
+  }
 
   const raw = await readBounded(req, MAX_MCP_BODY_BYTES);
   if (raw === null) return rpcError(null, -32600, "request body too large");

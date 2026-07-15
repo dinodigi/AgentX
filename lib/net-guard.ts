@@ -20,8 +20,28 @@ import { isIP } from "node:net";
 const REFUSAL =
   "webhook target is not reachable from the platform (private, loopback, or link-local address) — use a public endpoint";
 
+/**
+ * Normalize an IPv4-mapped IPv6 address to its dotted-quad v4 form so the v4
+ * private-range check catches it (F6). Handles BOTH textual variants:
+ * `::ffff:169.254.169.254` (dotted) and `::ffff:a9fe:a9fe` (compressed hex, the
+ * form dns.lookup/undici commonly emit). Other addresses pass through unchanged.
+ */
+function normalizeIp(ip: string): string {
+  const lower = ip.toLowerCase();
+  if (!lower.startsWith("::ffff:")) return ip;
+  const rest = lower.slice(7);
+  if (isIP(rest) === 4) return rest;
+  const m = rest.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (m) {
+    const hi = parseInt(m[1], 16);
+    const lo = parseInt(m[2], 16);
+    return `${(hi >> 8) & 255}.${hi & 255}.${(lo >> 8) & 255}.${lo & 255}`;
+  }
+  return ip;
+}
+
 function ipIsPrivate(ip: string): boolean {
-  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+  const v4 = normalizeIp(ip);
   if (isIP(v4) === 4) {
     const [a, b] = v4.split(".").map(Number);
     return (
@@ -83,4 +103,37 @@ export async function webhookTargetRefusal(rawUrl: string): Promise<string | nul
     return "webhook host does not resolve";
   }
   return null;
+}
+
+const MAX_REDIRECTS = 5;
+
+/** Thrown when a redirect hop resolves to a guarded (private) target (F1). */
+export class SsrfRedirectError extends Error {}
+
+/**
+ * fetch() that re-runs the SSRF guard on EVERY redirect hop (F1). The callers
+ * validate the initial URL for a user-facing refusal; this closes the redirect
+ * bypass — a public URL that 302s to http://127.0.0.1 is refused before the hop
+ * is followed. Uses redirect:"manual" and re-validates each Location. Throws
+ * SsrfRedirectError on a guarded hop and Error on a redirect loop; the callers'
+ * existing catch turns either into a logged failure / unavailable outcome.
+ *
+ * Note: the DNS-rebinding residual (validate vs. fetch resolve separately) is
+ * still accepted for launch — see the module header. This closes the redirect
+ * hole, which is separate and was confirmed exploitable.
+ */
+export async function guardedFetch(rawUrl: string, init: RequestInit): Promise<Response> {
+  let url = rawUrl;
+  for (let hop = 0; ; hop++) {
+    const res = await fetch(url, { ...init, redirect: "manual" });
+    if (res.status < 300 || res.status >= 400) return res;
+    const loc = res.headers.get("location");
+    if (!loc) return res; // 3xx without Location — hand back untouched
+    if (hop >= MAX_REDIRECTS) throw new Error("too many redirects");
+    const next = new URL(loc, url).toString();
+    const refusal = await webhookTargetRefusal(next);
+    if (refusal) throw new SsrfRedirectError(`redirect blocked: ${refusal}`);
+    await res.body?.cancel().catch(() => {});
+    url = next;
+  }
 }

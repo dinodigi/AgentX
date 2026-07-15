@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { tenantDb } from "./data-plane";
-import { webhookTargetRefusal } from "./net-guard";
+import { webhookTargetRefusal, guardedFetch } from "./net-guard";
 import { projects, webhookDeliveries, type Collection, type WriteHook } from "@/db/schema";
 
 /**
@@ -116,7 +116,7 @@ export async function callWriteHook(
     try {
       const t = Math.floor(Date.now() / 1000);
       const v1 = createHmac("sha256", secret).update(`${t}.${body}`).digest("hex");
-      const res = await fetch(hook.url, {
+      const res = await guardedFetch(hook.url, {
         method: "POST",
         headers: {
           "content-type": "application/json",

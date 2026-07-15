@@ -2056,35 +2056,55 @@ export async function resolveRelations(
     .where(and(inArray(entries.id, [...allIds]), eq(entries.projectId, projectId)));
   const byId = new Map(targetRows.map((t) => [t.id, t.data]));
 
-  // Org-scoped targets: the label channel must honour the target's row scope, or
-  // it leaks a cross-org labelField (a parent row need not be org-scoped to point
-  // at an org-scoped target). Resolve the target's access.org once per field and
-  // only reveal the label to a viewer in the same org — fail-closed for an
-  // anonymous viewer or absent/non-string org claim.
+  // A delivery viewer ("!trusted") may see a target's label ONLY if that target
+  // row is visible to them. Two row gates apply, both fail-closed:
+  //  - access.org: a cross-org label leaks a scoped labelField (a parent row need
+  //    not itself be org-scoped to point at an org-scoped target).
+  //  - publicFilter (F3): the {id,label} channel previously bypassed the row gate
+  //    that list/get/expand enforce, leaking a hidden row's label (e.g. an
+  //    unpublished title). Apply the target's publicFilter here too.
+  // "trusted" (MCP/admin) surfaces see everything. Resolve each target's scope once.
   const trusted = viewer === "trusted";
   const viewerUser = trusted ? null : (viewer ?? null);
-  const orgByTarget = new Map<string, { field: string; claim: string } | null>();
+  const metaByTarget = new Map<
+    string,
+    { org: { field: string; claim: string } | null; publicFilter: WhereItem[]; fields: FieldDef[] } | null
+  >();
   if (!trusted) {
     for (const rf of relationFields) {
-      if (!orgByTarget.has(rf.targetCollection)) {
+      if (!metaByTarget.has(rf.targetCollection)) {
         const tc = await getCollection(projectId, rf.targetCollection);
-        const org = tc?.access?.org;
-        orgByTarget.set(rf.targetCollection, org ? { field: org.field, claim: org.claim } : null);
+        metaByTarget.set(
+          rf.targetCollection,
+          tc
+            ? {
+                org: tc.access?.org ? { field: tc.access.org.field, claim: tc.access.org.claim } : null,
+                publicFilter: (tc.publicFilter as WhereItem[] | null) ?? [],
+                fields: tc.fields,
+              }
+            : null,
+        );
       }
     }
   }
 
   for (const rf of relationFields) {
-    const org = trusted ? null : orgByTarget.get(rf.targetCollection);
+    const meta = trusted ? null : (metaByTarget.get(rf.targetCollection) ?? null);
+    const org = meta?.org ?? null;
     const viewerOrg = org && viewerUser ? orgClaimValue(viewerUser, org.claim) : null;
     for (const r of rows) {
       const v = r.data[rf.name];
       if (typeof v === "string" && byId.has(v)) {
         const data = byId.get(v)!;
-        const crossOrg = org && (viewerOrg === null || data[org.field] !== viewerOrg);
-        r.data[rf.name] = crossOrg
-          ? { id: v, label: v } // fail-closed: never disclose an out-of-org label
-          : { id: v, label: String(data[rf.labelField] ?? v) };
+        const crossOrg = org ? viewerOrg === null || data[org.field] !== viewerOrg : false;
+        const hiddenByFilter =
+          meta && meta.publicFilter.length > 0
+            ? !matchesClauses(meta.fields, meta.publicFilter, data)
+            : false;
+        r.data[rf.name] =
+          crossOrg || hiddenByFilter
+            ? { id: v, label: v } // fail-closed: never disclose an out-of-scope label
+            : { id: v, label: String(data[rf.labelField] ?? v) };
       }
     }
   }
