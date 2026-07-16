@@ -24,6 +24,19 @@ export function coerceFormData(
       continue;
     }
 
+    // Structured fields (group/array) are edited as JSON in the admin (Layer 3a).
+    // Parse it here; a malformed value falls through to validation for a clear error.
+    if (f.type === "group" || f.type === "array") {
+      const j = raw == null ? "" : String(raw).trim();
+      if (j === "") continue;
+      try {
+        out[f.name] = JSON.parse(j);
+      } catch {
+        out[f.name] = j;
+      }
+      continue;
+    }
+
     const s = raw == null ? "" : String(raw).trim();
     if (s === "") continue; // omit empties; required-ness enforced by validation
 

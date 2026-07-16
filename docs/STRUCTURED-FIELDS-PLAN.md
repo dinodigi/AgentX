@@ -1,6 +1,6 @@
 # Structured Fields — `group` + `array` (repeatable groups) for pages
 
-**Status:** design / mapping only — no code yet.
+**Status:** Layers 1–3a SHIPPED & verified (2026-07-15, local master, not pushed). Layer 1 = group/array types + recursive validation + caps (76f44a1). Layer 2 = recursive delivery projection (F3) + write-gate (F2) + nested asset resolution (7de4788). Layer 3a = admin JSON editor for structured fields. **Remaining: Layer 3b = the visual repeater editor** (front-end polish; the AI/MCP + admin-JSON paths already work). Structured content is fully functional and delivery-safe today.
 **Goal:** let a collection model **page-shaped content** — a page is one entry with a repeatable list of typed sections — without becoming a page-builder.
 **Decision recorded:** taxonomies/glossaries are NOT getting first-class types (they compose cleanly from `collection + relation`; only revisit relation/tree support if deep hierarchy becomes a real need). This doc is only the page-model gap.
 
