@@ -53,7 +53,7 @@ import type { ErrorCode } from "./error-codes";
 import type { AuditActor } from "@/db/schema";
 
 const UNKNOWN_ACTOR: AuditActor = { type: "unknown" };
-import { fieldLocalized, type FieldDef } from "./field-types";
+import { fieldLocalized, type FieldDef, type ArrayItem } from "./field-types";
 import { z } from "zod";
 
 /**
@@ -2121,15 +2121,15 @@ export async function resolveAssets(
   collection: Collection,
   rows: Entry[],
 ): Promise<Entry[]> {
-  const assetFields = collection.fields.filter((f) => f.type === "asset");
-  if (assetFields.length === 0 || rows.length === 0) return rows;
+  // asset fields, plus group/array fields that MAY hold nested assets.
+  const relevant = collection.fields.filter(
+    (f) => f.type === "asset" || f.type === "group" || f.type === "array",
+  );
+  if (relevant.length === 0 || rows.length === 0) return rows;
 
   const ids = new Set<string>();
-  for (const f of assetFields) {
-    for (const r of rows) {
-      const v = r.data[f.name];
-      if (typeof v === "string") ids.add(v);
-    }
+  for (const f of relevant) {
+    for (const r of rows) collectAssetIds(f, r.data[f.name], ids);
   }
   if (ids.size === 0) return rows;
 
@@ -2139,16 +2139,49 @@ export async function resolveAssets(
     .where(and(inArray(assets.id, [...ids]), eq(assets.projectId, projectId)));
   const byId = new Map(found.map((a) => [a.id, a]));
 
-  for (const f of assetFields) {
-    for (const r of rows) {
-      const v = r.data[f.name];
-      const a = typeof v === "string" ? byId.get(v) : undefined;
-      // contentType (J2) is additive — lets a consumer know when the
-      // /assets/{id}/image transform URL applies (raster images only).
-      if (a) r.data[f.name] = { id: a.id, url: a.url, contentType: a.contentType };
-    }
+  for (const f of relevant) {
+    for (const r of rows) r.data[f.name] = replaceAssets(f, r.data[f.name], byId);
   }
   return rows;
+}
+
+type AssetRow = { id: string; url: string; contentType: string };
+
+/** Collect asset ids from a value, recursing into group/array (nested images). */
+function collectAssetIds(spec: FieldDef | ArrayItem, value: unknown, ids: Set<string>): void {
+  if (spec.type === "asset") {
+    if (typeof value === "string") ids.add(value);
+  } else if (spec.type === "group") {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const src = value as Record<string, unknown>;
+      for (const sub of spec.fields) collectAssetIds(sub, src[sub.name], ids);
+    }
+  } else if (spec.type === "array") {
+    if (Array.isArray(value)) for (const el of value) collectAssetIds(spec.item, el, ids);
+  }
+}
+
+/** Replace asset ids with {id,url,contentType}, recursing into group/array. */
+function replaceAssets(spec: FieldDef | ArrayItem, value: unknown, byId: Map<string, AssetRow>): unknown {
+  if (spec.type === "asset") {
+    const a = typeof value === "string" ? byId.get(value) : undefined;
+    // contentType (J2) is additive — signals when the /assets/{id}/image
+    // transform URL applies (raster images only).
+    return a ? { id: a.id, url: a.url, contentType: a.contentType } : value;
+  }
+  if (spec.type === "group") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const src = value as Record<string, unknown>;
+    for (const sub of spec.fields) {
+      if (sub.name in src) src[sub.name] = replaceAssets(sub, src[sub.name], byId);
+    }
+    return src;
+  }
+  if (spec.type === "array") {
+    if (!Array.isArray(value)) return value;
+    return value.map((el) => replaceAssets(spec.item, el, byId));
+  }
+  return value;
 }
 
 /** Relations + assets in one pass (disjoint fields — safe to run together). */
@@ -2535,9 +2568,39 @@ export function projectData(
 export function toPublicView(collection: Collection, entry: Entry): Record<string, unknown> {
   const out: Record<string, unknown> = { id: entry.id };
   for (const f of collection.fields) {
-    if (f.publicRead && f.name in entry.data) out[f.name] = entry.data[f.name];
+    if (f.publicRead && f.name in entry.data) {
+      out[f.name] =
+        f.type === "group" || f.type === "array"
+          ? projectStructured(f, entry.data[f.name])
+          : entry.data[f.name];
+    }
   }
   return out;
+}
+
+/**
+ * Project a stored value through the delivery read gate, recursing into
+ * group/array (the F3 guarantee for nested content — a public loop must apply
+ * the gate at EVERY level or a private sub-field leaks). Cascade: inside a public
+ * container a sub-field is public by DEFAULT and opts out with publicRead:false —
+ * so page content isn't verbose to expose, while a private flag is still stripped.
+ */
+function projectStructured(spec: FieldDef | ArrayItem, value: unknown): unknown {
+  if (spec.type === "group") {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    const src = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const sub of spec.fields) {
+      if (sub.publicRead === false) continue; // cascade opt-out
+      if (sub.name in src) out[sub.name] = projectStructured(sub, src[sub.name]);
+    }
+    return out;
+  }
+  if (spec.type === "array") {
+    if (!Array.isArray(value)) return value;
+    return value.map((el) => projectStructured(spec.item, el));
+  }
+  return value; // scalar leaf — copied as-is
 }
 
 /** The public-read fields of a collection (empty => not exposed at all). */

@@ -88,18 +88,17 @@ describe("image transforms (J1/J2)", () => {
     assert.equal(missing.status, 404);
   });
 
-  it("SVG bytes uploaded as image/jpeg are refused (content sniff, not declared type)", async () => {
+  it("SVG bytes uploaded as image/jpeg are refused at upload (content sniff, not declared type)", async () => {
     const svg = Buffer.from('<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
     const up = await mcp(p.mcpToken, "upload_asset", {
       filename: "evil.jpg",
-      contentType: "image/jpeg", // lies — passes the declared-type gate
+      contentType: "image/jpeg", // lies — but the byte sniff catches the SVG
       dataBase64: svg.toString("base64"),
     });
-    assert.ok(up.ok, up.errorText);
-    const r = await xf(`/assets/${up.value.id}/image?w=100`);
-    assert.equal(r.status, 422, "SVG bytes must never reach sharp's librsvg path");
-    assert.match((await r.json()).error, /raster/);
-    await mcp(p.mcpToken, "delete_asset", { id: up.value.id }).catch(() => {});
+    // Stronger than the old transform-time refusal: SVG bytes never get STORED,
+    // even under a lying image content-type (HAv1 stored-XSS hardening).
+    assert.equal(up.ok, false, "SVG bytes must be refused at upload");
+    assert.match(up.errorText, /SVG/i);
   });
 
   it("per-asset derivative budget: past 40 distinct variants → 429 (distinct IPs dodge rate limits)", async () => {

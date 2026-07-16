@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Collection, ClaimRule, ReadPreset } from "@/db/schema";
 import { verifyEndUser, type EndUser } from "./user-auth";
 import type { WhereClause, WhereItem } from "./query";
+import type { FieldDef, ArrayItem } from "./field-types";
 
 /** The single zod for the access JSONB — shared by define_collection + manifest. */
 const claimRuleSchema = z
@@ -353,8 +354,50 @@ export function checkFieldWrites(
         f.writableBy === "none"
           ? false
           : user !== null && claimMatches(user, f.writableBy);
-      if (!allowed) offending.push(f.name);
+      if (!allowed) {
+        offending.push(f.name);
+        continue;
+      }
+    }
+    // Nested write-gate (F2 for structured fields): a `writableBy` sub-field
+    // buried in a group/array must be honored too, or a nested moderation flag
+    // is mass-assignable. publicFilter is top-level only, so only writableBy
+    // recurses here.
+    if (f.type === "group" || f.type === "array") {
+      collectNestedWriteViolations(f, payload[f.name], user, f.name, offending);
     }
   }
   return offending;
+}
+
+function nestedWriteAllowed(
+  writableBy: NonNullable<FieldDef["writableBy"]>,
+  user: EndUser | null,
+): boolean {
+  return writableBy === "none" ? false : user !== null && claimMatches(user, writableBy);
+}
+
+function collectNestedWriteViolations(
+  spec: FieldDef | ArrayItem,
+  value: unknown,
+  user: EndUser | null,
+  path: string,
+  offending: string[],
+): void {
+  if (spec.type === "group") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const src = value as Record<string, unknown>;
+    for (const sub of spec.fields) {
+      if (!(sub.name in src)) continue;
+      const p = `${path}.${sub.name}`;
+      if (sub.writableBy && !nestedWriteAllowed(sub.writableBy, user)) {
+        offending.push(p);
+        continue;
+      }
+      collectNestedWriteViolations(sub, src[sub.name], user, p, offending);
+    }
+  } else if (spec.type === "array") {
+    if (!Array.isArray(value)) return;
+    value.forEach((el, i) => collectNestedWriteViolations(spec.item, el, user, `${path}[${i}]`, offending));
+  }
 }
