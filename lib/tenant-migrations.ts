@@ -87,6 +87,9 @@ const V1_STATEMENTS: string[] = [
     "updated_at" timestamp with time zone DEFAULT now() NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS "entries_collection_idx" ON "entries" USING btree ("collection_id")`,
+  // Scale A1: the default list + keyset cursor page by (created_at, id) within a
+  // collection — this composite makes that a SEEK instead of a sort/scan.
+  `CREATE INDEX IF NOT EXISTS "entries_collection_created_idx" ON "entries" USING btree ("collection_id","created_at","id")`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "entries_idempotency_idx" ON "entries" USING btree ("collection_id","idempotency_key") WHERE "idempotency_key" IS NOT NULL`,
 
   `CREATE TABLE IF NOT EXISTS "entries_trash" (

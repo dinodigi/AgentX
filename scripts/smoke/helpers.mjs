@@ -337,4 +337,10 @@ export async function deliveryLog(projectId) {
     WHERE project_id = ${projectId} ORDER BY created_at DESC`;
 }
 
+/** Index names on the tenant `entries` table (scale-index tests). */
+export async function entryIndexNames() {
+  const rows = await sql`SELECT indexname FROM pg_indexes WHERE tablename = 'entries'`;
+  return rows.map((r) => r.indexname);
+}
+
 export { randomUUID };

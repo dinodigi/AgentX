@@ -242,6 +242,7 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
     type: z.enum(FIELD_TYPES),
     required: z.boolean().optional(),
     publicRead: z.boolean().optional(),
+    indexed: z.boolean().optional(),
     // constraints (subsystem 05), validated per type by superRefine below
     unique: z.boolean().optional(),
     min: z.union([z.number(), z.string()]).optional(),
@@ -394,6 +395,15 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "searchable is only valid on text/richtext fields",
+      });
+    }
+    if (f.indexed && (f.type === "richtext" || f.type === "group" || f.type === "array")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          f.type === "richtext"
+            ? "indexed is not valid on richtext — use searchable for full-text"
+            : "indexed is not valid on group/array — nested content isn't filterable/sortable",
       });
     }
     if (f.pattern !== undefined) {

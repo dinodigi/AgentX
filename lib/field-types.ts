@@ -44,6 +44,14 @@ interface FieldBase {
    */
   publicRead?: boolean;
   /**
+   * Scale A2: create a matching DB index so filtering/sorting by this field is a
+   * SEEK, not a scan, on collections that grow large. Set it for the fields you
+   * query by (status, category, price…) — not everything; each index taxes
+   * writes. `unique` and `searchable` already imply their own index. Not valid on
+   * richtext (use `searchable`) or group/array (nested content isn't queryable).
+   */
+  indexed?: boolean;
+  /**
    * Value must be unique within the collection (text/number/date). Enforced by
    * a partial DB index, so concurrent writers can't race past it. Date values
    * are stored normalized to UTC ISO-8601 so index equality = instant equality.
@@ -255,6 +263,10 @@ export const COMMON_FIELD_CONFIG = [
   "required?: boolean (enforced on create; on update the field rejects null — it can never be unset)",
   'requiredIf?: {field, equals} — required only when a sibling ENUM field equals an option (create-time)',
   "publicRead?: boolean (delivery visibility)",
+  "indexed?: boolean — build a DB index so FILTER/SORT by this field stays fast as the " +
+    "collection grows. Set it on the fields you query by (status, category, price, date); NOT " +
+    "on everything (each index taxes writes). unique/searchable already imply an index. Invalid " +
+    "on richtext (use searchable) and group/array (nested content isn't queryable).",
   'writableBy?: "none" | {claim, equals} — delivery-only write gate (admin/MCP unaffected). ' +
     "Use writableBy:'none' to lock an admin-only field on a publicWrite collection. " +
     "Fields referenced by the collection's publicFilter are auto-locked against anonymous writes.",

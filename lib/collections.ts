@@ -671,9 +671,65 @@ async function syncUniqueIndexes(
   }
 }
 
+function filterIndexName(collectionId: string, field: string): string {
+  return `entries_fx_${collectionId.replaceAll("-", "").slice(0, 8)}_${field}`.slice(0, 63);
+}
+
+/** The index expression MUST match accessor() in lib/query.ts or the planner
+ * ignores it: number/date/boolean index the cast used by filters+sorts; the
+ * rest (text/enum/asset/relation) index the raw JSONB text. */
+function filterIndexExpr(f: FieldDef): string {
+  const raw = `(data->>'${f.name}')`;
+  switch (f.type) {
+    case "number":
+      return `((${raw})::numeric)`;
+    case "date":
+      return `((${raw})::timestamptz)`;
+    case "boolean":
+      return `((${raw})::boolean)`;
+    default:
+      return raw;
+  }
+}
+
+/**
+ * Scale A2: per-collection partial expression indexes for `indexed` fields, so
+ * FILTER/SORT by them is a seek instead of a JSONB scan. Same DROP-old/CREATE-new
+ * diff as unique/search, keyed on (name, type) so a retype rebuilds with the
+ * right cast. Non-concurrent to match the existing index-sync; online adds on
+ * very large existing collections (CREATE INDEX CONCURRENTLY) are a follow-up.
+ */
+async function syncFilterIndexes(
+  projectId: string,
+  collectionId: string,
+  oldFields: FieldDef[],
+  newFields: FieldDef[],
+): Promise<void> {
+  const idx = (fs: FieldDef[]) => new Map(fs.filter((f) => f.indexed).map((f) => [f.name, f]));
+  const oldIdx = idx(oldFields);
+  const newIdx = idx(newFields);
+  const tdb = await tenantDb(projectId);
+  for (const [name, f] of oldIdx) {
+    const nf = newIdx.get(name);
+    if (!nf || nf.type !== f.type) {
+      await tdb.execute(sql.raw(`DROP INDEX IF EXISTS "${filterIndexName(collectionId, name)}"`));
+    }
+  }
+  for (const [name, f] of newIdx) {
+    const of = oldIdx.get(name);
+    if (of && of.type === f.type) continue; // unchanged
+    await tdb.execute(
+      sql.raw(
+        `CREATE INDEX IF NOT EXISTS "${filterIndexName(collectionId, name)}" ` +
+          `ON entries (${filterIndexExpr(f)}) WHERE collection_id = '${collectionId}'`,
+      ),
+    );
+  }
+}
+
 /**
  * A2: replay every collection's per-collection partial indexes (unique +
- * public-search) on the project's data plane. Provisioning runs this right
+ * public-search + filter) on the project's data plane. Provisioning runs this right
  * after the migration runner installs the fixed table set — these indexes are
  * derived from collection config, so they are not part of the versioned DDL.
  * Idempotent (CREATE/DROP IF [NOT] EXISTS all the way down).
@@ -688,6 +744,7 @@ export async function replayCollectionIndexes(projectId: string): Promise<void> 
   for (const c of cols) {
     await syncUniqueIndexes(projectId, c.id, [], c.fields as FieldDef[]);
     await syncSearchIndex(projectId, c.id, [], c.fields as FieldDef[]);
+    await syncFilterIndexes(projectId, c.id, [], c.fields as FieldDef[]);
   }
 }
 
@@ -1090,6 +1147,7 @@ export async function defineCollection(
   if (current) {
     await syncUniqueIndexes(projectId, current.id, current.fields, fields);
     await syncSearchIndex(projectId, current.id, current.fields, fields);
+    await syncFilterIndexes(projectId, current.id, current.fields, fields);
   }
 
   // Tightened validator-level constraints apply to NEW writes immediately;
@@ -1138,6 +1196,7 @@ export async function defineCollection(
   if (!current) {
     await syncUniqueIndexes(projectId, row.id, [], fields);
     await syncSearchIndex(projectId, row.id, [], fields);
+    await syncFilterIndexes(projectId, row.id, [], fields);
   }
 
   // Backfill each rename: move the old key's value to the new key across every
@@ -1298,6 +1357,7 @@ export async function deleteCollection(projectId: string, name: string): Promise
     // Partial indexes on entries outlive the delete — drop them explicitly.
     await syncUniqueIndexes(projectId, target.id, target.fields, []);
     await syncSearchIndex(projectId, target.id, target.fields, []);
+    await syncFilterIndexes(projectId, target.id, target.fields, []);
   }
   revalidateTag(collectionsTag(projectId));
 }
