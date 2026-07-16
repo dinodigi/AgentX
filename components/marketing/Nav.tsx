@@ -41,7 +41,7 @@ export function Nav() {
           <span className="inline-block h-3.5 w-3.5 rounded-[2px]" style={{ background: C.accent }} />
           <span className="text-[17px] font-semibold tracking-[-0.01em]">Pluggie</span>
         </Link>
-        <div className="flex flex-wrap items-center gap-1 text-sm">
+        <div className="hidden flex-wrap items-center gap-1 text-sm md:flex">
           <div
             className="relative"
             onMouseEnter={() => setOpen(true)}
@@ -121,7 +121,7 @@ export function Nav() {
         </div>
       </div>
       <div className="flex items-center gap-3">
-        <Link href="/developers" className="px-3.5 py-2 font-mono text-xs" style={{ color: C.mute }}>
+        <Link href="/developers" className="hidden px-3.5 py-2 font-mono text-xs md:inline-block" style={{ color: C.mute }}>
           docs
         </Link>
         <Link
