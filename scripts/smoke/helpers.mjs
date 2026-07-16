@@ -343,4 +343,11 @@ export async function entryIndexNames() {
   return rows.map((r) => r.indexname);
 }
 
+/** A collection's id — lets a test compute its exact per-collection index name
+ * (the entries table is shared, so suffix matching is unreliable). */
+export async function collectionId(projectId, name) {
+  const [row] = await sql`SELECT id FROM collections WHERE project_id = ${projectId} AND name = ${name}`;
+  return row?.id ?? null;
+}
+
 export { randomUUID };

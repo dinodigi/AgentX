@@ -1,6 +1,9 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { ensureServer, createEphemeralProject, mcp, delivery, entryIndexNames } from "./helpers.mjs";
+import { ensureServer, createEphemeralProject, mcp, delivery, entryIndexNames, collectionId } from "./helpers.mjs";
+
+// Exact per-collection index name (the entries table is shared across projects).
+const fx = (cid, field) => `entries_fx_${cid.replaceAll("-", "").slice(0, 8)}_${field}`;
 
 // Scale A2: an `indexed` field creates a matching DB expression index at
 // define_collection time (via the same index-sync that does unique/search), so
@@ -27,9 +30,10 @@ describe("scale: indexed fields (A2)", () => {
   after(() => p.destroy());
 
   it("indexed fields get matching DB expression indexes", async () => {
+    const cid = await collectionId(p.id, "products");
     const names = await entryIndexNames();
-    assert.ok(names.some((n) => n.startsWith("entries_fx_") && n.endsWith("_status")), `status index missing: ${names}`);
-    assert.ok(names.some((n) => n.startsWith("entries_fx_") && n.endsWith("_price")), "price index missing");
+    assert.ok(names.includes(fx(cid, "status")), `status index missing: ${fx(cid, "status")}`);
+    assert.ok(names.includes(fx(cid, "price")), "price index missing");
   });
 
   it("filter by an indexed enum (delivery eq) returns the right rows", async () => {
@@ -47,6 +51,24 @@ describe("scale: indexed fields (A2)", () => {
     assert.equal(r.value.entries.length, 2); // B=30, C=50
   });
 
+  it("keyset cursor (A1) pages every row exactly once", async () => {
+    const seen = new Set();
+    let cursor;
+    for (let i = 0; i < 6; i++) {
+      const r = await mcp(p.mcpToken, "query_entries", {
+        collection: "products",
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      });
+      assert.ok(r.ok, r.errorText);
+      for (const e of r.value.entries) seen.add(e.id);
+      if (!r.value.hasMore) break;
+      cursor = r.value.nextCursor;
+      assert.ok(cursor, "nextCursor must be present when hasMore");
+    }
+    assert.equal(seen.size, 3, "A, B, C — each exactly once, no dup/skip");
+  });
+
   it("dropping the index flag removes the DB index", async () => {
     await mcp(p.mcpToken, "define_collection", {
       name: "products",
@@ -56,9 +78,10 @@ describe("scale: indexed fields (A2)", () => {
         { name: "price", label: "Price", type: "number", indexed: true, publicRead: true },
       ],
     });
+    const cid = await collectionId(p.id, "products");
     const names = await entryIndexNames();
-    assert.ok(!names.some((n) => n.startsWith("entries_fx_") && n.endsWith("_status")), "status index should be dropped");
-    assert.ok(names.some((n) => n.startsWith("entries_fx_") && n.endsWith("_price")), "price index should remain");
+    assert.ok(!names.includes(fx(cid, "status")), "status index should be dropped");
+    assert.ok(names.includes(fx(cid, "price")), "price index should remain");
   });
 
   it("rejects indexed on richtext and group at define time", async () => {

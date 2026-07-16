@@ -1877,8 +1877,10 @@ export interface QueryOpts {
   offset?: number;
   where?: WhereItem[];
   orderBy?: OrderByClause;
-  /** Keyset position from decodeCursor — only valid with the default ordering. */
-  after?: { createdAt: Date; id: string };
+  /** Keyset position from decodeCursor — only valid with the default ordering.
+   * createdAt is a microsecond ISO STRING (full precision) so the keyset over
+   * raw created_at is exact. */
+  after?: { createdAt: string; id: string };
   /** Authorizes dotted `relationField.targetField` clauses (collectRelatedTargets). */
   related?: RelatedContextMap;
 }
@@ -1931,24 +1933,20 @@ export async function collectRelatedTargets(
   return map;
 }
 
-/** Opaque cursor over the default (createdAt, id) ordering. */
-export function encodeCursor(row: Entry): string {
-  return Buffer.from(
-    JSON.stringify({ t: row.createdAt.toISOString(), id: row.id }),
-  ).toString("base64url");
+/** Opaque keyset cursor over the default (createdAt, id) ordering. `t` is a
+ * MICROSECOND ISO string (JS Dates lose Postgres's micros) so a row sharing a
+ * millisecond is never skipped or duplicated. Built inside queryEntriesPage. */
+function makeCursor(t: string, id: string): string {
+  return Buffer.from(JSON.stringify({ t, id })).toString("base64url");
 }
 
-export function decodeCursor(cursor: string): { createdAt: Date; id: string } {
+export function decodeCursor(cursor: string): { createdAt: string; id: string } {
   try {
-    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString()) as {
-      t?: unknown;
-      id?: unknown;
-    };
-    const createdAt = new Date(String(parsed.t));
-    if (Number.isNaN(createdAt.getTime()) || typeof parsed.id !== "string" || !parsed.id) {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString()) as { t?: unknown; id?: unknown };
+    if (typeof parsed.t !== "string" || Number.isNaN(Date.parse(parsed.t)) || typeof parsed.id !== "string" || !parsed.id) {
       throw new Error("bad cursor");
     }
-    return { createdAt, id: parsed.id };
+    return { createdAt: parsed.t, id: parsed.id };
   } catch {
     throw new ValidationError(
       "invalid cursor — pass the nextCursor returned by a previous query_entries page",
@@ -1963,12 +1961,15 @@ export interface EntryPage {
   limit: number;
   offset: number;
   hasMore: boolean;
+  /** Keyset cursor for the next page (default ordering only); null if none. */
+  nextCursor: string | null;
 }
 
 /**
  * Page-aware query: fetches limit+1 rows so hasMore is exact, never a guess.
- * Without an explicit orderBy, rows are ordered by (createdAt, id) — pagination
- * needs a total order or pages can overlap/skip.
+ * Without an explicit orderBy, rows order by RAW (createdAt, id) — which the A1
+ * composite index (collection_id, created_at, id) serves as a SEEK, and the
+ * keyset cursor carries microsecond precision so pages never overlap/skip.
  */
 export async function queryEntriesPage(
   collection: Collection,
@@ -1980,10 +1981,6 @@ export async function queryEntriesPage(
     eq(entries.collectionId, collection.id),
     ...buildWhere(collection.fields, opts.where ?? [], opts.related),
   ];
-  // Cursor keys truncate to milliseconds because JS Dates lose Postgres's
-  // microseconds — both sides of the keyset comparison must share a precision,
-  // and the default ordering must sort by the exact same key.
-  const createdMs = sql`date_trunc('milliseconds', ${entries.createdAt})`;
   if (opts.after) {
     if (opts.orderBy) {
       throw new ValidationError(
@@ -1991,16 +1988,24 @@ export async function queryEntriesPage(
       );
     }
     conditions.push(
-      sql`(${createdMs}, ${entries.id}) > (${opts.after.createdAt.toISOString()}::timestamptz, ${opts.after.id}::uuid)`,
+      sql`(${entries.createdAt}, ${entries.id}) > (${opts.after.createdAt}::timestamptz, ${opts.after.id}::uuid)`,
     );
   }
   const order = buildOrderBy(collection.fields, opts.orderBy);
 
   const tdb = await tenantDb(collection.projectId);
-  let q = tdb.select().from(entries).where(and(...conditions)).$dynamic();
-  q = order ? q.orderBy(order, entries.id) : q.orderBy(createdMs, entries.id);
-  const rows = await q.limit(limit + 1).offset(offset);
-  return { rows: rows.slice(0, limit), limit, offset, hasMore: rows.length > limit };
+  // Microsecond ISO for the cursor — the row's JS Date has already lost micros,
+  // so the cursor is built from this text, not the row.
+  const curT = sql<string>`to_char(${entries.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+  let q = tdb.select({ e: entries, curT }).from(entries).where(and(...conditions)).$dynamic();
+  q = order ? q.orderBy(order, entries.id) : q.orderBy(entries.createdAt, entries.id);
+  const raw = await q.limit(limit + 1).offset(offset);
+  const hasMore = raw.length > limit;
+  const page = raw.slice(0, limit);
+  const rows = page.map((r) => r.e);
+  const last = page[page.length - 1];
+  const nextCursor = hasMore && !opts.orderBy && last ? makeCursor(last.curT, last.e.id) : null;
+  return { rows, limit, offset, hasMore, nextCursor };
 }
 
 export async function queryEntries(

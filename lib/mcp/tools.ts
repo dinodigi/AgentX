@@ -22,7 +22,6 @@ import {
   collectRelatedTargets,
   validateSelect,
   projectData,
-  encodeCursor,
   decodeCursor,
   aggregateEntries,
   updateEntryIf,
@@ -1763,7 +1762,6 @@ export async function callTool(
         const reverse = a.includeReverse
           ? await includeReverse(projectId, c, resolved.map((r) => r.id), a.includeReverse, "full", "trusted")
           : undefined;
-        const last = page.rows[page.rows.length - 1];
         return ok({
           entries: resolved.map((r) => ({
             id: r.id,
@@ -1776,10 +1774,8 @@ export async function callTool(
           ...(a.cursor === undefined
             ? { offset: page.offset, nextOffset: page.hasMore ? page.offset + page.limit : null }
             : {}),
-          // …and keyset paging over the default ordering (always exact).
-          ...(a.orderBy === undefined
-            ? { nextCursor: page.hasMore && last ? encodeCursor(last) : null }
-            : {}),
+          // …and keyset paging over the default ordering (always exact, index-backed).
+          ...(a.orderBy === undefined ? { nextCursor: page.nextCursor } : {}),
         });
       }
 
