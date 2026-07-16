@@ -1,6 +1,6 @@
 # Scale & Content-Model Plan
 
-**Status:** planning — grounded in the current code (file refs throughout).
+**Status:** Phase A1 + A2 SHIPPED & verified (commit 6221c26, local, not pushed). A3 (keyset on indexed sort), Phase B (one-level repeaters), Phase C (refinements) still to do. A1's composite index needs hand-applying to the existing shared/prod DB (CONCURRENTLY, in a window) — db:push is broken vs Neon PG18. Test: `scripts/smoke/62-scale-indexes.test.mjs`.
 **Goal:** scalable, fast, customizable — **without a rewrite**. The data model is already right (blob-per-entry + relations, *not* EAV). What's missing is an **index layer**, **two pagination fixes**, and the **modeling discipline** that keeps the query surface small. Plus the **AI-facing layer** so the agent models all of this correctly by default.
 **No data migration:** indexes are additive; the JSONB shape is unchanged.
 
