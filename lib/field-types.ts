@@ -24,7 +24,7 @@ export const FIELD_TYPES = [
  */
 export const MAX_ARRAY_ITEMS = 200; // hard per-array ceiling, regardless of a field's own maxItems
 export const MAX_CONTAINER_DEPTH = 5; // total group/array nesting depth (safety net)
-export const MAX_ARRAY_GROUP_DEPTH = 2; // array-of-group nesting: repeater-in-repeater OK, no deeper
+export const MAX_ARRAY_GROUP_DEPTH = 1; // ONE level of repeating: no repeater-in-repeater — model a deeper list as a related collection (scalar sub-arrays like tags are still fine)
 export const MAX_ENTRY_NODES = 2000; // total nested values across one entry's structured fields
 
 export type FieldType = (typeof FIELD_TYPES)[number];
@@ -253,7 +253,9 @@ export const FIELD_TYPE_SPECS: Record<
     config: [
       "item: {type,...scalar} | {type:'group',fields:[...]} (required — the element shape)",
       "maxItems?: number (element cap; hard ceiling 200 regardless)",
-      "repeaters may nest to depth 2 (array→group→array); deeper = model a related collection instead",
+      "ONE level of repeating: a repeater item may NOT contain another repeater-of-groups; model a " +
+        "deeper/repeating list as its own collection + a relation (then it's queryable/searchable/" +
+        "reusable too). Scalar sub-arrays like tags inside an item are fine.",
     ],
   },
 };

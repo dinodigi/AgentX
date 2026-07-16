@@ -89,8 +89,8 @@ describe("structured fields: group + array definition + validation", () => {
     assert.equal(bad.ok, false, "11 items over a maxItems:10 array must be rejected");
   });
 
-  it("allows a repeater-in-repeater (depth 2)", async () => {
-    const ok = await mcp(p.mcpToken, "define_collection", {
+  it("rejects a repeater-in-repeater (one level of repeating only)", async () => {
+    const bad = await mcp(p.mcpToken, "define_collection", {
       name: "pricing",
       fields: [
         {
@@ -102,11 +102,32 @@ describe("structured fields: group + array definition + validation", () => {
             fields: [
               { name: "name", label: "Name", type: "text" },
               {
-                name: "tiers",
+                name: "tiers", // a repeater inside a repeater — model as a relation instead
                 label: "Tiers",
                 type: "array",
                 item: { type: "group", fields: [{ name: "label", label: "Label", type: "text" }] },
               },
+            ],
+          },
+        },
+      ],
+    });
+    assert.equal(bad.ok, false, "a second level of repeating must be rejected");
+  });
+
+  it("still allows a scalar sub-array (tags) inside a repeater item", async () => {
+    const ok = await mcp(p.mcpToken, "define_collection", {
+      name: "articles",
+      fields: [
+        {
+          name: "sections",
+          label: "Sections",
+          type: "array",
+          item: {
+            type: "group",
+            fields: [
+              { name: "heading", label: "Heading", type: "text" },
+              { name: "tags", label: "Tags", type: "array", item: { type: "text" } },
             ],
           },
         },
