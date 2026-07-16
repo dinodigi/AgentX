@@ -6,6 +6,7 @@ import { fieldLocalized, type FieldDef } from "@/lib/field-types";
 import { AssetInput } from "./AssetInput";
 import { RelationCombobox } from "./RelationCombobox";
 import { RichtextInput } from "./RichtextInput";
+import { StructuredFieldEditor } from "./StructuredFieldEditor";
 
 /**
  * The auto-generated entry form. One input per primitive, derived entirely from
@@ -264,21 +265,13 @@ function FieldInput({
       );
     case "group":
     case "array":
-      // Layer 3a: structured content is edited as JSON here; the server validates
-      // it (recursive schema + caps). A visual repeater editor is Layer 3b.
+      // Layer 3b: a visual recursive editor (add/remove, nested groups). It
+      // serializes to a hidden JSON input that coerceFormData parses; the server
+      // validates the result (recursive schema + caps).
       return (
         <div className="mb-4">
           <Label field={field} />
-          <textarea
-            name={field.name}
-            defaultValue={jsonStr(value)}
-            className={`${inputClass} font-mono text-xs`}
-            rows={8}
-            spellCheck={false}
-          />
-          <p className="mt-1 text-[11px] text-ink-mute">
-            Structured content — edit as JSON for now (a visual repeater editor is coming).
-          </p>
+          <StructuredFieldEditor projectId={projectId} name={field.name} field={field} initial={value} />
         </div>
       );
   }
@@ -287,14 +280,6 @@ function FieldInput({
 function str(v: unknown): string {
   if (v == null) return "";
   return String(v);
-}
-function jsonStr(v: unknown): string {
-  if (v == null) return "";
-  try {
-    return JSON.stringify(v, null, 2);
-  } catch {
-    return "";
-  }
 }
 function relationId(v: unknown): string {
   if (v && typeof v === "object" && "id" in v) return String((v as { id: unknown }).id);
