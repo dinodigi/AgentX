@@ -43,6 +43,10 @@ const OPS_BY_TYPE: Record<FieldDef["type"], WhereOp[]> = {
   enum: ["eq", "in"],
   asset: ["eq"],
   relation: ["eq", "in"],
+  // Structured fields aren't filterable/sortable — no ops means any where/orderBy
+  // on a group/array is rejected with a clear message (v1 scope guard).
+  group: [],
+  array: [],
 };
 
 function fieldOrThrow(fields: FieldDef[], name: string, context: string): FieldDef {

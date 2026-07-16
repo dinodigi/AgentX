@@ -13,7 +13,19 @@ export const FIELD_TYPES = [
   "enum",
   "asset",
   "relation",
+  "group",
+  "array",
 ] as const;
+
+/**
+ * Structural caps for nested group/array fields. Nesting reopens the same
+ * unbounded-input DoS surface we closed for query clauses (scorecard D4), so
+ * every axis is bounded: element count, nesting depth, and total node count.
+ */
+export const MAX_ARRAY_ITEMS = 200; // hard per-array ceiling, regardless of a field's own maxItems
+export const MAX_CONTAINER_DEPTH = 5; // total group/array nesting depth (safety net)
+export const MAX_ARRAY_GROUP_DEPTH = 2; // array-of-group nesting: repeater-in-repeater OK, no deeper
+export const MAX_ENTRY_NODES = 2000; // total nested values across one entry's structured fields
 
 export type FieldType = (typeof FIELD_TYPES)[number];
 
@@ -124,6 +136,35 @@ export interface RelationField extends FieldBase {
   labelField: string;
 }
 
+/** A nested set of named sub-fields. Used as a field and as an array element. */
+export interface GroupField extends FieldBase {
+  type: "group";
+  fields: FieldDef[];
+}
+
+/**
+ * One array element. Scalar leaves are positional (no name); a `group` repeats a
+ * nested shape. No `array` here — arrays never directly nest arrays (depth is via
+ * array → group → array, capped at MAX_ARRAY_GROUP_DEPTH).
+ */
+export type ArrayItem =
+  | { type: "text"; min?: number; max?: number; pattern?: string; patternHint?: string }
+  | { type: "richtext"; min?: number; max?: number }
+  | { type: "number"; min?: number; max?: number; integer?: boolean }
+  | { type: "boolean" }
+  | { type: "date"; min?: string; max?: string }
+  | { type: "enum"; options: string[] }
+  | { type: "asset" }
+  | { type: "group"; fields: FieldDef[] };
+
+/** A repeatable field: a list of scalar leaves or repeated groups. */
+export interface ArrayField extends FieldBase {
+  type: "array";
+  item: ArrayItem;
+  /** Element cap (author-set); MAX_ARRAY_ITEMS applies as a hard ceiling regardless. */
+  maxItems?: number;
+}
+
 export type FieldDef =
   | TextField
   | RichTextField
@@ -132,7 +173,9 @@ export type FieldDef =
   | DateField
   | EnumField
   | AssetField
-  | RelationField;
+  | RelationField
+  | GroupField
+  | ArrayField;
 
 /** Read a type-specific knob from any field def without narrowing at the call site. */
 export const fieldSearchable = (f: FieldDef): boolean =>
@@ -189,6 +232,21 @@ export const FIELD_TYPE_SPECS: Record<
   relation: {
     summary: "Link to an entry in another collection.",
     config: ["targetCollection: string (required)", "labelField: string (required)"],
+  },
+  group: {
+    summary: "A nested set of sub-fields — structured content (e.g. an `seo` group).",
+    config: [
+      "fields: FieldDef[] (required — the nested sub-fields, each with its own name/label/publicRead)",
+      "sub-fields can't be relation/computed/localized/unique/searchable/requiredIf yet",
+    ],
+  },
+  array: {
+    summary: "A repeatable list (a repeater) — of scalar values OR of groups (repeatable sections).",
+    config: [
+      "item: {type,...scalar} | {type:'group',fields:[...]} (required — the element shape)",
+      "maxItems?: number (element cap; hard ceiling 200 regardless)",
+      "repeaters may nest to depth 2 (array→group→array); deeper = model a related collection instead",
+    ],
   },
 };
 

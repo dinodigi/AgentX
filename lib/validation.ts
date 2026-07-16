@@ -1,5 +1,16 @@
 import { z } from "zod";
-import { FIELD_TYPES, fieldMin, fieldMax, fieldPattern, fieldLocalized, type FieldDef } from "./field-types";
+import {
+  FIELD_TYPES,
+  fieldMin,
+  fieldMax,
+  fieldPattern,
+  fieldLocalized,
+  MAX_ARRAY_ITEMS,
+  MAX_CONTAINER_DEPTH,
+  MAX_ARRAY_GROUP_DEPTH,
+  MAX_ENTRY_NODES,
+  type FieldDef,
+} from "./field-types";
 import type { ProjectLocales } from "@/db/schema";
 import type { ErrorCode } from "./error-codes";
 
@@ -205,8 +216,23 @@ export function issuesFromZod(err: z.ZodError, fields: FieldDef[]): ConstraintIs
   return out;
 }
 
+/** One array element's shape: a scalar leaf (nameless) or a repeated group. */
+const arrayItemSchema: z.ZodTypeAny = z.lazy(() =>
+  z.union([
+    z.object({ type: z.literal("text"), min: z.number().optional(), max: z.number().optional(), pattern: z.string().optional(), patternHint: z.string().optional() }).strict(),
+    z.object({ type: z.literal("richtext"), min: z.number().optional(), max: z.number().optional() }).strict(),
+    z.object({ type: z.literal("number"), min: z.number().optional(), max: z.number().optional(), integer: z.boolean().optional() }).strict(),
+    z.object({ type: z.literal("boolean") }).strict(),
+    z.object({ type: z.literal("date"), min: z.string().optional(), max: z.string().optional() }).strict(),
+    z.object({ type: z.literal("enum"), options: z.array(z.string().min(1)).min(1) }).strict(),
+    z.object({ type: z.literal("asset") }).strict(),
+    z.object({ type: z.literal("group"), fields: z.array(fieldDefSchema).min(1) }).strict(),
+  ]),
+);
+
 /** Meta-schema: the shape of a single field definition. */
-const fieldDefSchema = z
+const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
+  z
   .object({
     name: z
       .string()
@@ -246,6 +272,11 @@ const fieldDefSchema = z
         z.object({ fn: z.literal("uuid") }).strict(),
       ])
       .optional(),
+    // Structured fields (group/array). Validated recursively here + by
+    // walkStructure() below (depth / nesting / forbidden-nested rules).
+    fields: z.array(fieldDefSchema).optional(),
+    item: arrayItemSchema.optional(),
+    maxItems: z.number().int().positive().optional(),
   })
   .strict()
   .superRefine((f, ctx) => {
@@ -407,7 +438,109 @@ const fieldDefSchema = z
     if (f.patternHint !== undefined && f.pattern === undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "patternHint is only valid alongside pattern" });
     }
-  });
+    // Structured fields: presence rules. (min/max/options/unique/pattern/etc. on a
+    // group/array are already rejected by the type-list checks above.)
+    if (f.type === "group") {
+      if (!Array.isArray(f.fields) || f.fields.length === 0) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "a group field needs a non-empty fields[]" });
+      }
+    } else if (f.type === "array") {
+      if (f.item === undefined) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "an array field needs an item spec" });
+      }
+      if (typeof f.maxItems === "number" && f.maxItems > MAX_ARRAY_ITEMS) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `array maxItems must be <= ${MAX_ARRAY_ITEMS}` });
+      }
+    }
+    if (f.type !== "group" && f.fields !== undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "fields[] is only valid on a group field" });
+    }
+    if (f.type !== "array" && (f.item !== undefined || f.maxItems !== undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "item/maxItems are only valid on an array field" });
+    }
+  }),
+);
+
+const MAX_STRUCTURED_FIELD_DEFS = 300;
+
+type NestedNode = {
+  type: string;
+  name?: string;
+  fields?: NestedNode[];
+  item?: { type: string; fields?: NestedNode[] };
+  computed?: unknown;
+  localized?: unknown;
+  unique?: unknown;
+  searchable?: unknown;
+  requiredIf?: unknown;
+};
+
+/** v1 restrictions on a field nested INSIDE a group/array (deferred, not gaps). */
+function assertNestedAllowed(f: NestedNode, ctx: z.RefinementCtx, path: string): void {
+  const banned: [string, unknown][] = [
+    ["relation fields", f.type === "relation" ? true : undefined],
+    ["computed", f.computed],
+    ["localized", f.localized],
+    ["unique", f.unique],
+    ["searchable", f.searchable],
+    ["requiredIf", f.requiredIf],
+  ];
+  for (const [name, v] of banned) {
+    if (v !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${path}: ${name} not supported inside a group/array yet`,
+      });
+    }
+  }
+}
+
+/**
+ * Walk a group/array subtree enforcing the position-dependent rules a per-field
+ * check can't see: total container depth, repeater-in-repeater depth (array-of-
+ * group), and a def-node ceiling. These are the D4-style structural bounds.
+ */
+function walkStructure(
+  node: NestedNode,
+  ctx: z.RefinementCtx,
+  path: string,
+  depth: number,
+  arrGroupDepth: number,
+  counter: { n: number },
+): void {
+  if (++counter.n > MAX_STRUCTURED_FIELD_DEFS) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `schema has too many nested field defs (> ${MAX_STRUCTURED_FIELD_DEFS})` });
+    return;
+  }
+  if (depth > MAX_CONTAINER_DEPTH) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${path}: nesting too deep (> ${MAX_CONTAINER_DEPTH} levels)` });
+    return;
+  }
+  if (node.type === "group") {
+    for (const sub of node.fields ?? []) {
+      assertNestedAllowed(sub, ctx, `${path}.${sub.name}`);
+      walkStructure(sub, ctx, `${path}.${sub.name}`, depth + 1, arrGroupDepth, counter);
+    }
+  } else if (node.type === "array") {
+    const item = node.item;
+    if (!item) return;
+    const isGroup = item.type === "group";
+    const nextArrGroup = arrGroupDepth + (isGroup ? 1 : 0);
+    if (nextArrGroup > MAX_ARRAY_GROUP_DEPTH) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `${path}: repeater-in-repeater too deep (> ${MAX_ARRAY_GROUP_DEPTH}) — model the inner list as a related collection instead`,
+      });
+      return;
+    }
+    if (isGroup) {
+      for (const sub of item.fields ?? []) {
+        assertNestedAllowed(sub, ctx, `${path}[].${sub.name}`);
+        walkStructure(sub, ctx, `${path}[].${sub.name}`, depth + 1, nextArrGroup, counter);
+      }
+    }
+  }
+}
 
 /** Meta-schema: a full fields[] array with no duplicate names. */
 export const fieldsSchema = z
@@ -466,6 +599,13 @@ export const fieldsSchema = z
             message: `${f.name}.computed references localized field "${r}" — derive from a non-localized field`,
           });
         }
+      }
+    }
+    // Structured fields: position-dependent depth/nesting/node rules.
+    const counter = { n: 0 };
+    for (const f of fields) {
+      if (f.type === "group" || f.type === "array") {
+        walkStructure(f as unknown as NestedNode, ctx, f.name, 1, 0, counter);
       }
     }
   });
@@ -564,7 +704,31 @@ function valueSchemaFor(field: FieldDef): z.ZodTypeAny {
     case "relation":
       // Value is a target entry id (uuid). Existence checked at the DB layer.
       return z.string().uuid();
+    case "group":
+      return groupValueSchema(field.fields);
+    case "array": {
+      const item = field.item;
+      const itemSchema =
+        item.type === "group"
+          ? groupValueSchema(item.fields)
+          : valueSchemaFor(item as unknown as FieldDef);
+      const cap = Math.min(field.maxItems ?? MAX_ARRAY_ITEMS, MAX_ARRAY_ITEMS);
+      return z.array(itemSchema).max(cap, `at most ${cap} items`);
+    }
   }
+}
+
+/** A group value = a strict object of its sub-fields' value schemas (recursive).
+ * Required sub-fields are required; the rest optional. No computed/localized
+ * nested (barred at define time), so this stays simpler than buildEntrySchema. */
+function groupValueSchema(fields: FieldDef[]): z.ZodTypeAny {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const sub of fields) {
+    let sv = valueSchemaFor(sub);
+    if (!sub.required) sv = sv.optional();
+    shape[sub.name] = sv;
+  }
+  return z.object(shape).strict();
 }
 
 export interface CompiledSchema {
@@ -741,6 +905,27 @@ export function buildEntrySchema(
             params: { constraint: "required_if" },
           });
         }
+      }
+    });
+  }
+
+  // Structural bound: a nested value must not explode node count on write — the
+  // D3/D4 lesson applied to nested content (an uncapped array/group is an OOM).
+  if (fields.some((f) => f.type === "group" || f.type === "array")) {
+    schema = schema.superRefine((data: Record<string, unknown>, ctx) => {
+      let n = 0;
+      const count = (v: unknown): void => {
+        if (n > MAX_ENTRY_NODES) return;
+        n++;
+        if (Array.isArray(v)) v.forEach(count);
+        else if (v && typeof v === "object") Object.values(v).forEach(count);
+      };
+      count(data);
+      if (n > MAX_ENTRY_NODES) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `entry has too many nested values (> ${MAX_ENTRY_NODES})`,
+        });
       }
     });
   }

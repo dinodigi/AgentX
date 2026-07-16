@@ -46,6 +46,11 @@ function readType(f: FieldDef): string {
       return "{ id: string; url: string; contentType: string }";
     case "relation":
       return "{ id: string; label: string }";
+    case "group":
+      // v1: structured content isn't deep-typed in the generated client yet.
+      return "Record<string, unknown>";
+    case "array":
+      return "unknown[]";
   }
 }
 
