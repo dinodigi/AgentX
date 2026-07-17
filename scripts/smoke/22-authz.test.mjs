@@ -7,6 +7,7 @@ import {
   startMockIssuer,
   mcp,
   delivery,
+  expectRateLimit429,
 } from "./helpers.mjs";
 
 describe("authz: claim-based rules (F1) + any-of presets (F2)", () => {
@@ -432,11 +433,10 @@ describe("authz: Phase-12 review regressions", () => {
     const created = await mcp(p.mcpToken, "create_entry", { collection: "tickets", data: { subject: "rl", owner: "u_acme", org: "acme" } });
     const id = created.value.id;
     const ip = "10.77.77.77";
-    let got429 = false;
-    for (let i = 0; i < 25; i++) {
-      const r = await delivery(p.deliveryToken, `/tickets/${id}`, { method: "PATCH", body: { subject: `e${i}` }, userToken: acme, ip });
-      if (r.status === 429) { got429 = true; break; }
-    }
-    assert.ok(got429, "expected a 429 within 25 rapid PATCHes from one IP");
+    // Bucket-aware driver (fixed minute windows) — see expectRateLimit429.
+    await expectRateLimit429(
+      async (i) =>
+        (await delivery(p.deliveryToken, `/tickets/${id}`, { method: "PATCH", body: { subject: `e${i}` }, userToken: acme, ip })).status,
+    );
   });
 });

@@ -351,3 +351,23 @@ export async function collectionId(projectId, name) {
 }
 
 export { randomUUID };
+
+/**
+ * Drive a rate-limited endpoint until it 429s. Deterministic against the
+ * limiter's FIXED one-minute windows: attempts are counted per wall-clock
+ * minute bucket (mirroring rate_windows), so a run that straddles a boundary
+ * just keeps going in the new bucket instead of flaking — only a single
+ * bucket exceeding the limit without a 429 is a real failure.
+ */
+export async function expectRateLimit429(fire, { max = 20, cap = 60 } = {}) {
+  const perBucket = new Map();
+  for (let i = 0; i < cap; i++) {
+    const bucket = Math.floor(Date.now() / 60_000); // send-time ≈ server arrival
+    const status = await fire(i);
+    if (status === 429) return;
+    const n = (perBucket.get(bucket) ?? 0) + 1;
+    perBucket.set(bucket, n);
+    if (n > max) throw new Error(`no 429 after ${n} requests inside one minute bucket`);
+  }
+  throw new Error(`no 429 within ${cap} attempts`);
+}

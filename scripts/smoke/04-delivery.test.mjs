@@ -1,6 +1,6 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { ensureServer, createEphemeralProject, mcp, delivery } from "./helpers.mjs";
+import { ensureServer, createEphemeralProject, mcp, delivery, expectRateLimit429 } from "./helpers.mjs";
 
 describe("delivery API projection + gates", () => {
   let p, authorId;
@@ -80,14 +80,10 @@ describe("delivery API projection + gates", () => {
 
   it("rate limit: 429 within one window for a single IP", async () => {
     const ip = "10.99.99.99";
-    let got429 = false;
-    for (let i = 0; i < 25; i++) {
-      const r = await delivery(p.deliveryToken, "/inbox", { method: "POST", body: {}, ip });
-      if (r.status === 429) {
-        got429 = true;
-        break;
-      }
-    }
-    assert.ok(got429, "expected a 429 within 25 rapid posts from one IP");
+    // Bucket-aware driver: the limiter uses FIXED minute windows, so a naive
+    // 25-shot loop flakes when it straddles a boundary (neither bucket fills).
+    await expectRateLimit429(
+      async () => (await delivery(p.deliveryToken, "/inbox", { method: "POST", body: {}, ip })).status,
+    );
   });
 });
