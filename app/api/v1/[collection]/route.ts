@@ -286,7 +286,11 @@ export async function GET(
       if (rel) picked.related = rel;
       return picked;
     });
-    return cachedJson(req, { data });
+    // Shareable (edge-cacheable) iff the response is a pure function of
+    // (token → project, URL): no x-user-token sent (user identity can alter
+    // ref/relation visibility even on public reads) and no owner row-clauses.
+    const share = req.headers.get("x-user-token") === null && (gate.rowClauses ?? []).length === 0;
+    return cachedJson(req, { data }, { share });
   } catch (e) {
     if (e instanceof ValidationError) {
       return deliveryError(422, e.message, undefined, e.issues);

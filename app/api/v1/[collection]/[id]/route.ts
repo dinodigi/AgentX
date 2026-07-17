@@ -146,7 +146,9 @@ export async function GET(req: NextRequest, { params }: Params) {
     if (rel) view.related = rel;
   }
 
-  return cachedJson(req, { data: view });
+  // Same shareability rule as the list route: pure function of (token, URL).
+  const share = req.headers.get("x-user-token") === null && (gate.rowClauses ?? []).length === 0;
+  return cachedJson(req, { data: view }, { share });
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
