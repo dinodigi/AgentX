@@ -53,7 +53,7 @@ import type { ErrorCode } from "./error-codes";
 import type { AuditActor } from "@/db/schema";
 
 const UNKNOWN_ACTOR: AuditActor = { type: "unknown" };
-import { fieldLocalized, type FieldDef, type ArrayItem } from "./field-types";
+import { fieldLocalized, type FieldDef, type ArrayItem, type BlockDef } from "./field-types";
 import { z } from "zod";
 
 /**
@@ -2161,6 +2161,21 @@ export async function resolveAssets(
 
 type AssetRow = { id: string; url: string; contentType: string };
 
+/**
+ * The per-element shape of an array value: the uniform `item`, or — for typed
+ * blocks — the block matching the element's own `_type` (as a group-shaped
+ * spec). null = unknown block type; validation already rejects those on write,
+ * so a read-side miss just leaves the element untouched.
+ */
+function elementSpec(spec: { item?: ArrayItem; blocks?: BlockDef[] }, el: unknown): FieldDef | ArrayItem | null {
+  if (spec.blocks) {
+    const t = el && typeof el === "object" && !Array.isArray(el) ? (el as Record<string, unknown>)._type : undefined;
+    const block = typeof t === "string" ? spec.blocks.find((b) => b.name === t) : undefined;
+    return block ? ({ type: "group", fields: block.fields } as ArrayItem) : null;
+  }
+  return spec.item ?? null;
+}
+
 /** Collect asset ids from a value, recursing into group/array (nested images). */
 function collectAssetIds(spec: FieldDef | ArrayItem, value: unknown, ids: Set<string>): void {
   if (spec.type === "asset") {
@@ -2171,7 +2186,12 @@ function collectAssetIds(spec: FieldDef | ArrayItem, value: unknown, ids: Set<st
       for (const sub of spec.fields) collectAssetIds(sub, src[sub.name], ids);
     }
   } else if (spec.type === "array") {
-    if (Array.isArray(value)) for (const el of value) collectAssetIds(spec.item, el, ids);
+    if (Array.isArray(value)) {
+      for (const el of value) {
+        const item = elementSpec(spec, el);
+        if (item) collectAssetIds(item, el, ids);
+      }
+    }
   }
 }
 
@@ -2193,7 +2213,10 @@ function replaceAssets(spec: FieldDef | ArrayItem, value: unknown, byId: Map<str
   }
   if (spec.type === "array") {
     if (!Array.isArray(value)) return value;
-    return value.map((el) => replaceAssets(spec.item, el, byId));
+    return value.map((el) => {
+      const item = elementSpec(spec, el);
+      return item ? replaceAssets(item, el, byId) : el;
+    });
   }
   return value;
 }
@@ -2612,7 +2635,18 @@ function projectStructured(spec: FieldDef | ArrayItem, value: unknown): unknown 
   }
   if (spec.type === "array") {
     if (!Array.isArray(value)) return value;
-    return value.map((el) => projectStructured(spec.item, el));
+    return value.map((el) => {
+      // Typed blocks: project through the matching block's fields and KEEP the
+      // `_type` discriminator — the frontend dispatches its renderer on it.
+      if ((spec as { blocks?: BlockDef[] }).blocks) {
+        const item = elementSpec(spec as { blocks?: BlockDef[] }, el);
+        if (!item || !el || typeof el !== "object") return el;
+        const projected = projectStructured(item, el) as Record<string, unknown>;
+        projected._type = (el as Record<string, unknown>)._type;
+        return projected;
+      }
+      return projectStructured((spec as { item?: ArrayItem }).item!, el);
+    });
   }
   return value; // scalar leaf — copied as-is
 }

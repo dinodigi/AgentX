@@ -26,6 +26,7 @@ export const MAX_ARRAY_ITEMS = 200; // hard per-array ceiling, regardless of a f
 export const MAX_CONTAINER_DEPTH = 5; // total group/array nesting depth (safety net)
 export const MAX_ARRAY_GROUP_DEPTH = 1; // ONE level of repeating: no repeater-in-repeater — model a deeper list as a related collection (scalar sub-arrays like tags are still fine)
 export const MAX_ENTRY_NODES = 2000; // total nested values across one entry's structured fields
+export const MAX_BLOCK_TYPES = 20; // block vocabularies stay curated, not unbounded
 
 export type FieldType = (typeof FIELD_TYPES)[number];
 
@@ -165,10 +166,30 @@ export type ArrayItem =
   | { type: "asset" }
   | { type: "group"; fields: FieldDef[] };
 
-/** A repeatable field: a list of scalar leaves or repeated groups. */
+/**
+ * One typed block in a heterogeneous `blocks` array. Stored elements carry the
+ * block's `name` as their `_type` discriminator: {"_type":"hero", ...fields}.
+ * A block's fields follow the same nested-field rules as a repeated group
+ * (one-level rule: no repeater-of-groups/blocks inside a block).
+ */
+export interface BlockDef {
+  /** Machine name — the stored `_type` discriminator. */
+  name: string;
+  label: string;
+  fields: FieldDef[];
+}
+
+/**
+ * A repeatable field. Exactly ONE of:
+ *  - `item`   — uniform repeater: every element is the same scalar/group shape.
+ *  - `blocks` — typed blocks: each element is one of several named shapes
+ *               (hero, features, cta…), discriminated by its stored `_type`.
+ *               This is what makes a page body a real builder.
+ */
 export interface ArrayField extends FieldBase {
   type: "array";
-  item: ArrayItem;
+  item?: ArrayItem;
+  blocks?: BlockDef[];
   /** Element cap (author-set); MAX_ARRAY_ITEMS applies as a hard ceiling regardless. */
   maxItems?: number;
 }
@@ -249,13 +270,20 @@ export const FIELD_TYPE_SPECS: Record<
     ],
   },
   array: {
-    summary: "A repeatable list (a repeater) — of scalar values OR of groups (repeatable sections).",
+    summary:
+      "A repeatable list — a uniform repeater (item) OR typed blocks (blocks: hero/features/cta…, " +
+      "each element one of several named shapes). Exactly one of item|blocks.",
     config: [
-      "item: {type,...scalar} | {type:'group',fields:[...]} (required — the element shape)",
+      "item: {type,...scalar} | {type:'group',fields:[...]} — uniform repeater: every element the same shape",
+      "blocks: [{name,label,fields:[...]}, ...] — TYPED BLOCKS for page bodies: each element is one " +
+        "of the named shapes and stores its block name as `_type` " +
+        '(e.g. {"_type":"hero","heading":"…"}). Up to 20 block types; block names snake_case and ' +
+        "unique; `_type` is reserved (never define a field with that name). Use this when a page is " +
+        "a sequence of DIFFERENT sections; use item when every element is the same shape.",
       "maxItems?: number (element cap; hard ceiling 200 regardless)",
-      "ONE level of repeating: a repeater item may NOT contain another repeater-of-groups; model a " +
-        "deeper/repeating list as its own collection + a relation (then it's queryable/searchable/" +
-        "reusable too). Scalar sub-arrays like tags inside an item are fine.",
+      "ONE level of repeating: a repeater/block item may NOT contain another repeater-of-groups or " +
+        "blocks; model a deeper/repeating list as its own collection + a relation (then it's " +
+        "queryable/searchable/reusable too). Scalar sub-arrays like tags inside an item are fine.",
     ],
   },
 };

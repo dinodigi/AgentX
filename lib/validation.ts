@@ -9,6 +9,7 @@ import {
   MAX_CONTAINER_DEPTH,
   MAX_ARRAY_GROUP_DEPTH,
   MAX_ENTRY_NODES,
+  MAX_BLOCK_TYPES,
   type FieldDef,
 } from "./field-types";
 import type { ProjectLocales } from "@/db/schema";
@@ -230,6 +231,17 @@ const arrayItemSchema: z.ZodTypeAny = z.lazy(() =>
   ]),
 );
 
+/** One typed block: a named, labeled group of fields (`_type` discriminator). */
+const blockDefSchema: z.ZodTypeAny = z.lazy(() =>
+  z
+    .object({
+      name: z.string().min(1).regex(NAME_RE, "block name must be snake_case starting with a letter"),
+      label: z.string().min(1),
+      fields: z.array(fieldDefSchema).min(1),
+    })
+    .strict(),
+);
+
 /** Meta-schema: the shape of a single field definition. */
 const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
   z
@@ -277,6 +289,7 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
     // walkStructure() below (depth / nesting / forbidden-nested rules).
     fields: z.array(fieldDefSchema).optional(),
     item: arrayItemSchema.optional(),
+    blocks: z.array(blockDefSchema).min(1).optional(),
     maxItems: z.number().int().positive().optional(),
   })
   .strict()
@@ -455,18 +468,34 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: "a group field needs a non-empty fields[]" });
       }
     } else if (f.type === "array") {
-      if (f.item === undefined) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "an array field needs an item spec" });
+      // Exactly ONE of item (uniform repeater) | blocks (typed blocks).
+      if ((f.item === undefined) === (f.blocks === undefined)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "an array field needs exactly one of item (uniform repeater) or blocks (typed blocks)",
+        });
       }
       if (typeof f.maxItems === "number" && f.maxItems > MAX_ARRAY_ITEMS) {
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: `array maxItems must be <= ${MAX_ARRAY_ITEMS}` });
+      }
+      if (f.blocks !== undefined) {
+        if (f.blocks.length > MAX_BLOCK_TYPES) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `at most ${MAX_BLOCK_TYPES} block types per array` });
+        }
+        const names = new Set<string>();
+        for (const b of f.blocks as { name: string }[]) {
+          if (names.has(b.name)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `duplicate block name: ${b.name}` });
+          }
+          names.add(b.name);
+        }
       }
     }
     if (f.type !== "group" && f.fields !== undefined) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "fields[] is only valid on a group field" });
     }
-    if (f.type !== "array" && (f.item !== undefined || f.maxItems !== undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "item/maxItems are only valid on an array field" });
+    if (f.type !== "array" && (f.item !== undefined || f.maxItems !== undefined || f.blocks !== undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "item/blocks/maxItems are only valid on an array field" });
     }
   }),
 );
@@ -478,6 +507,7 @@ type NestedNode = {
   name?: string;
   fields?: NestedNode[];
   item?: { type: string; fields?: NestedNode[] };
+  blocks?: { name?: string; fields?: NestedNode[] }[];
   computed?: unknown;
   localized?: unknown;
   unique?: unknown;
@@ -532,6 +562,38 @@ function walkStructure(
       walkStructure(sub, ctx, `${path}.${sub.name}`, depth + 1, arrGroupDepth, counter);
     }
   } else if (node.type === "array") {
+    // Typed blocks: each block is a repeated group shape — the one-level rule
+    // applies exactly as for array-of-group (a block may not contain another
+    // repeater-of-groups or blocks).
+    if (node.blocks) {
+      const nextArrGroup = arrGroupDepth + 1;
+      if (nextArrGroup > MAX_ARRAY_GROUP_DEPTH) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${path}: blocks inside a repeater are too deep (> ${MAX_ARRAY_GROUP_DEPTH}) — model the inner list as a related collection instead`,
+        });
+        return;
+      }
+      for (const block of node.blocks) {
+        const seen = new Set<string>();
+        for (const sub of block.fields ?? []) {
+          const subPath = `${path}[${block.name}].${sub.name}`;
+          if (sub.name === "_type") {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `${subPath}: "_type" is reserved — it stores the block's discriminator`,
+            });
+          }
+          if (sub.name && seen.has(sub.name)) {
+            ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${subPath}: duplicate field name in block` });
+          }
+          if (sub.name) seen.add(sub.name);
+          assertNestedAllowed(sub, ctx, subPath);
+          walkStructure(sub, ctx, subPath, depth + 1, nextArrGroup, counter);
+        }
+      }
+      return;
+    }
     const item = node.item;
     if (!item) return;
     const isGroup = item.type === "group";
@@ -717,15 +779,35 @@ function valueSchemaFor(field: FieldDef): z.ZodTypeAny {
     case "group":
       return groupValueSchema(field.fields);
     case "array": {
-      const item = field.item;
+      const cap = Math.min(field.maxItems ?? MAX_ARRAY_ITEMS, MAX_ARRAY_ITEMS);
+      // Typed blocks: a discriminated union on the stored `_type` — each
+      // element must be exactly one declared block shape (strict per block).
+      if (field.blocks) {
+        const variants = field.blocks.map((b) => blockValueSchema(b)) as [
+          z.ZodDiscriminatedUnionOption<"_type">,
+          ...z.ZodDiscriminatedUnionOption<"_type">[],
+        ];
+        return z.array(z.discriminatedUnion("_type", variants)).max(cap, `at most ${cap} items`);
+      }
+      const item = field.item!;
       const itemSchema =
         item.type === "group"
           ? groupValueSchema(item.fields)
           : valueSchemaFor(item as unknown as FieldDef);
-      const cap = Math.min(field.maxItems ?? MAX_ARRAY_ITEMS, MAX_ARRAY_ITEMS);
       return z.array(itemSchema).max(cap, `at most ${cap} items`);
     }
   }
+}
+
+/** One block element: { _type: <block name>, ...its fields' value schemas }. */
+function blockValueSchema(block: { name: string; fields: FieldDef[] }) {
+  const shape: Record<string, z.ZodTypeAny> = { _type: z.literal(block.name) };
+  for (const sub of block.fields) {
+    let sv = valueSchemaFor(sub);
+    if (!sub.required) sv = sv.optional();
+    shape[sub.name] = sv;
+  }
+  return z.object(shape).strict();
 }
 
 /** A group value = a strict object of its sub-fields' value schemas (recursive).

@@ -398,6 +398,18 @@ function collectNestedWriteViolations(
     }
   } else if (spec.type === "array") {
     if (!Array.isArray(value)) return;
-    value.forEach((el, i) => collectNestedWriteViolations(spec.item, el, user, `${path}[${i}]`, offending));
+    value.forEach((el, i) => {
+      // Typed blocks: gate through the block matching the element's own
+      // `_type`. A mismatched/unknown _type has no declared fields to gate —
+      // the strict discriminated-union validation rejects it right after, so
+      // nothing writable slips through the gap (F2 holds per block).
+      let item: FieldDef | ArrayItem | undefined = spec.item;
+      if (spec.blocks) {
+        const t = el && typeof el === "object" && !Array.isArray(el) ? (el as Record<string, unknown>)._type : undefined;
+        const block = typeof t === "string" ? spec.blocks.find((b) => b.name === t) : undefined;
+        item = block ? ({ type: "group", fields: block.fields } as ArrayItem) : undefined;
+      }
+      if (item) collectNestedWriteViolations(item, el, user, `${path}[${i}]`, offending);
+    });
   }
 }

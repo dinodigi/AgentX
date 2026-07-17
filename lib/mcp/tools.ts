@@ -187,7 +187,10 @@ export const TOOL_DEFS: ToolDef[] = [
       "patternHint? = the failure message; requiredIf?: {field, equals} against a sibling enum) and " +
       "type-specific config (enum:options[], relation:{targetCollection,labelField}, " +
       "group:{fields:[...]} = a nested set of sub-fields, array:{item, maxItems?} = a repeater of " +
-      "scalars OR groups — use array-of-group for repeatable page sections; see list_field_types). " +
+      "scalars OR groups — use array-of-group for repeatable SAME-shape sections, or " +
+      "array:{blocks:[{name,label,fields},...]} = TYPED BLOCKS for page bodies of DIFFERENT " +
+      "sections (hero/features/cta…): each element stores its block name as `_type` " +
+      '(e.g. {"_type":"hero","heading":"…"}); see list_field_types). ' +
       "Instantly manageable in the admin; no per-project UI code. Public fields are served " +
       "by the delivery API (see get_project_info). Set publicWrite:true + webhookUrl for a form. " +
       "Redefining an existing collection with dropped/retyped fields returns a diff plan " +

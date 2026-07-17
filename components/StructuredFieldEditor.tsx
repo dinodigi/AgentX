@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { FieldDef, ArrayItem } from "@/lib/field-types";
+import type { FieldDef, ArrayItem, BlockDef } from "@/lib/field-types";
 
 /**
  * Visual editor for group/array (structured) fields (Layer 3b). Holds the value
@@ -49,7 +49,9 @@ function NodeEditor({
     return <GroupEditor projectId={projectId} fields={spec.fields} value={value} onChange={onChange} />;
   }
   if (spec.type === "array") {
-    return <ArrayEditor projectId={projectId} item={spec.item} value={value} onChange={onChange} />;
+    return (
+      <ArrayEditor projectId={projectId} item={spec.item} blocks={spec.blocks} value={value} onChange={onChange} />
+    );
   }
   return <LeafEditor projectId={projectId} spec={spec} value={value} onChange={onChange} />;
 }
@@ -92,44 +94,88 @@ function GroupEditor({
 function ArrayEditor({
   projectId,
   item,
+  blocks,
   value,
   onChange,
 }: {
   projectId: string;
-  item: ArrayItem;
+  item?: ArrayItem;
+  blocks?: BlockDef[];
   value: unknown;
   onChange: (v: unknown) => void;
 }) {
   const arr = Array.isArray(value) ? value : [];
+  // Typed blocks: each element edits through the block matching its `_type`.
+  const blockFor = (el: unknown): BlockDef | undefined => {
+    if (!blocks || !el || typeof el !== "object") return undefined;
+    return blocks.find((b) => b.name === (el as Record<string, unknown>)._type);
+  };
   return (
     <div className="space-y-2">
-      {arr.map((el, i) => (
-        <div key={i} className="rounded-lg border border-line p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="font-mono text-[11px] text-ink-mute">#{i + 1}</span>
-            <button
-              type="button"
-              onClick={() => onChange(arr.filter((_, idx) => idx !== i))}
-              className="text-xs text-err hover:underline"
-            >
-              Remove
-            </button>
+      {arr.map((el, i) => {
+        const block = blockFor(el);
+        const spec: Spec | undefined = blocks
+          ? block && ({ type: "group", fields: block.fields } as ArrayItem)
+          : item;
+        return (
+          <div key={i} className="rounded-lg border border-line p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="font-mono text-[11px] text-ink-mute">
+                #{i + 1}
+                {block ? <span className="ml-1.5 uppercase tracking-[0.08em] text-ink-soft">{block.label}</span> : null}
+              </span>
+              <button
+                type="button"
+                onClick={() => onChange(arr.filter((_, idx) => idx !== i))}
+                className="text-xs text-err hover:underline"
+              >
+                Remove
+              </button>
+            </div>
+            {spec ? (
+              <NodeEditor
+                projectId={projectId}
+                spec={spec}
+                value={el}
+                onChange={(v) =>
+                  onChange(
+                    arr.map((old, idx) =>
+                      idx === i
+                        ? // keep the discriminator when editing a block element
+                          block && v && typeof v === "object"
+                          ? { ...(v as Record<string, unknown>), _type: block.name }
+                          : v
+                        : old,
+                    ),
+                  )
+                }
+              />
+            ) : (
+              <p className="text-xs text-ink-mute">unknown block type — edit as JSON in the raw field</p>
+            )}
           </div>
-          <NodeEditor
-            projectId={projectId}
-            spec={item}
-            value={el}
-            onChange={(v) => onChange(arr.map((old, idx) => (idx === i ? v : old)))}
-          />
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() => onChange([...arr, emptyValue(item)])}
-        className="btn btn-ghost text-xs"
-      >
-        + Add item
-      </button>
+        );
+      })}
+      {blocks ? (
+        blocks.map((b) => (
+          <button
+            key={b.name}
+            type="button"
+            onClick={() => onChange([...arr, { _type: b.name }])}
+            className="btn btn-ghost mr-2 text-xs"
+          >
+            + {b.label}
+          </button>
+        ))
+      ) : (
+        <button
+          type="button"
+          onClick={() => onChange([...arr, emptyValue(item!)])}
+          className="btn btn-ghost text-xs"
+        >
+          + Add item
+        </button>
+      )}
     </div>
   );
 }
