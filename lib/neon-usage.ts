@@ -52,6 +52,7 @@ export async function snapshotNeonUsage(): Promise<number> {
         writtenDataBytes: c.writtenDataBytes,
         dataStorageBytesHour: c.dataStorageBytesHour,
         syntheticStorageSizeBytes: c.syntheticStorageSizeBytes,
+        dataTransferBytes: c.dataTransferBytes,
         consumptionPeriodStart: c.consumptionPeriodStart ? new Date(c.consumptionPeriodStart) : null,
         capturedAt: new Date(),
       };

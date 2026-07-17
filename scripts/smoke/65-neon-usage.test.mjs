@@ -27,6 +27,9 @@ describe("neon usage snapshot (Track 4b)", () => {
     assert.equal(r2.status, 200);
     const b2 = await r2.json();
     assert.equal(b2.neonUsage, 0, "second sweep within the interval must be throttled");
+    // Track 4d rails: inert until METERED_RATES is set — must report 0, never crash.
+    assert.equal(typeof b2.metered, "number");
+    assert.equal(b2.metered, 0);
   });
 
   it("captured snapshots (if any) are sane per-project rows", async () => {

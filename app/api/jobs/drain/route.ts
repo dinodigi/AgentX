@@ -5,6 +5,7 @@ import { drainJobs, reclaimStale } from "@/lib/jobs";
 import { tickSchedules } from "@/lib/schedules";
 import { rollupUsage } from "@/lib/ratelimit";
 import { snapshotNeonUsage } from "@/lib/neon-usage";
+import { reportMeteredUsage } from "@/lib/metered-billing";
 import { HANDLERS } from "@/lib/job-handlers";
 
 /**
@@ -54,7 +55,18 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error("neon usage snapshot failed (will retry next drain)", e instanceof Error ? e.message : e);
   }
-  return json(200, { ...result, reclaimed, ticked, rolledUp, neonUsage });
+  // Track 4d: month-to-date metered usage → Stripe, riding the sweep cadence
+  // (fresh snapshot → report; action=set is idempotent). Inert until the
+  // operator sets METERED_RATES.
+  let metered = 0;
+  if (neonUsage > 0) {
+    try {
+      metered = await reportMeteredUsage();
+    } catch (e) {
+      console.error("metered usage report failed (will retry next sweep)", e instanceof Error ? e.message : e);
+    }
+  }
+  return json(200, { ...result, reclaimed, ticked, rolledUp, neonUsage, metered });
 }
 
 function constantTimeEqual(a: string, b: string): boolean {

@@ -438,6 +438,8 @@ export const neonUsageDaily = pgTable(
     dataStorageBytesHour: bigint("data_storage_bytes_hour", { mode: "number" }).notNull().default(0),
     /** Neon's storage-cost driver: logical size + history (bytes). */
     syntheticStorageSizeBytes: bigint("synthetic_storage_size_bytes", { mode: "number" }).notNull().default(0),
+    /** Egress this period (bytes) — present on the project object (verified live). */
+    dataTransferBytes: bigint("data_transfer_bytes", { mode: "number" }).notNull().default(0),
     consumptionPeriodStart: timestamp("consumption_period_start", { withTimezone: true }),
     capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
   },

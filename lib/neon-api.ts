@@ -105,8 +105,10 @@ export interface NeonProjectConsumption {
   computeTimeSeconds: number;
   activeTimeSeconds: number;
   writtenDataBytes: number;
+  /** Byte-hour accumulator — 0 on some org plans (verified live); synthetic size is the fallback. */
   dataStorageBytesHour: number;
   syntheticStorageSizeBytes: number;
+  dataTransferBytes: number;
   consumptionPeriodStart: string | null;
 }
 
@@ -120,6 +122,7 @@ export async function getNeonProjectConsumption(neonProjectId: string): Promise<
     writtenDataBytes: num(p.written_data_bytes),
     dataStorageBytesHour: num(p.data_storage_bytes_hour),
     syntheticStorageSizeBytes: num(p.synthetic_storage_size),
+    dataTransferBytes: num(p.data_transfer_bytes),
     consumptionPeriodStart:
       typeof p.consumption_period_start === "string" ? p.consumption_period_start : null,
   };
