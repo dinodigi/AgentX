@@ -471,6 +471,24 @@ export const projectConnectors = pgTable(
   (t) => [uniqueIndex("project_connectors_type_idx").on(t.projectId, t.type)],
 );
 
+/**
+ * Per-project plugin enablement (Post-Deployment v1.0 Track 2). The catalog is
+ * in-code (lib/plugins.ts PLUGIN_CATALOG); this table records which plugins a
+ * project has enabled. Enabling unlocks the plugin's MCP tools and signals the
+ * capability to the AI via list_plugins.
+ */
+export const projectPlugins = pgTable(
+  "project_plugins",
+  {
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    pluginId: text("plugin_id").notNull(),
+    enabledAt: timestamp("enabled_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.pluginId] })],
+);
+
 /** Outcome log for public-write webhooks — a lost lead must at least be visible. */
 export const webhookDeliveries = pgTable(
   "webhook_deliveries",

@@ -24,6 +24,7 @@ import {
   provisionManagedBucketAction,
   deprovisionManagedBucketAction,
   openBillingPortalAction,
+  togglePluginAction,
 } from "./actions";
 
 const inputClass = "field-input";
@@ -1006,6 +1007,59 @@ export function MembersSection({
         </button>
       </form>
       <ErrorLine error={error} />
+    </div>
+  );
+}
+
+/** Track 2: plugin enablement — the catalog with per-project toggles. */
+export function PluginsSection({
+  projectId,
+  plugins,
+}: {
+  projectId: string;
+  plugins: { id: string; name: string; version: string; description: string; enabled: boolean }[];
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [state, setState] = useState(plugins);
+  return (
+    <div className="space-y-3">
+      {state.map((p) => (
+        <div key={p.id} className="flex items-start justify-between gap-4 rounded-lg border border-line p-3">
+          <div className="min-w-0">
+            <p className="text-sm font-medium">
+              {p.name} <span className="font-mono text-[10px] text-ink-mute">v{p.version}</span>
+              {p.enabled && (
+                <span className="ml-2 rounded bg-ok/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.08em] text-ok">
+                  enabled
+                </span>
+              )}
+            </p>
+            <p className="mt-1 text-xs text-ink-soft">{p.description}</p>
+          </div>
+          <button
+            type="button"
+            disabled={busy === p.id}
+            className={p.enabled ? "btn btn-ghost text-xs" : "btn btn-ink text-xs"}
+            onClick={async () => {
+              setBusy(p.id);
+              setError(null);
+              const res = await togglePluginAction(projectId, p.id, !p.enabled);
+              setBusy(null);
+              if (res.error) setError(res.error);
+              else setState((s) => s.map((x) => (x.id === p.id ? { ...x, enabled: !p.enabled } : x)));
+            }}
+          >
+            {busy === p.id ? "…" : p.enabled ? "Disable" : "Enable"}
+          </button>
+        </div>
+      ))}
+      {state.length === 0 && <p className="text-sm text-ink-mute">No plugins in the catalog yet.</p>}
+      <ErrorLine error={error} />
+      <p className="text-xs text-ink-mute">
+        Enabling records the capability and unlocks the plugin&apos;s tools; your AI applies its
+        structure via MCP (list_plugins → get_plugin).
+      </p>
     </div>
   );
 }

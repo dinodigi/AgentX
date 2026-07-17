@@ -47,6 +47,14 @@ import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connec
 import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
 import { setLocales } from "@/lib/locales";
+import {
+  PLUGIN_CATALOG,
+  getPluginDef,
+  enabledPlugins,
+  pluginEnabled,
+  enablePlugin,
+  disablePlugin,
+} from "@/lib/plugins";
 import { exportEntries } from "@/lib/export";
 import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
 import type { ErrorCode } from "@/lib/error-codes";
@@ -146,6 +154,58 @@ export const TOOL_DEFS: ToolDef[] = [
       "number, boolean, date, enum, asset, relation) and each one's config. You must " +
       `only use these types. ${BOUNDARIES}`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "list_plugins",
+    description:
+      "Plugins available to this project and whether each is enabled. A plugin is ONE " +
+      "installable unit declaring intent you realize: structure (a content model to reconcile " +
+      "into the project), tools (extra MCP verbs unlocked by enabling), and guidance (domain " +
+      "operating context). When the user asks for a capability (contact forms, SEO, booking…), " +
+      "check here FIRST before hand-rolling one — an enabled plugin is a capability the project " +
+      "already committed to.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "get_plugin",
+    description:
+      "Full spec of one plugin: structure.intent + structure.baseline (a known-good starting " +
+      "model) + structure.reconcile (composition rules), guidance, and acceptance criteria. " +
+      "To APPLY a plugin: enable it (enable_plugin), then RECONCILE its baseline with the " +
+      "project's existing collections using define_collection — adapt naming, merge overlapping " +
+      "models, add project-specific fields; do NOT blindly stamp the baseline. Finally verify " +
+      "every acceptance criterion holds and fix what doesn't.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", description: "plugin id from list_plugins" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "enable_plugin",
+    description:
+      "Enable a plugin for this project (idempotent). Enabling unlocks the plugin's tools (if " +
+      "any) and records the capability so future sessions see it in list_plugins. Follow up by " +
+      "applying its structure per get_plugin.",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", description: "plugin id from list_plugins" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "disable_plugin",
+    description:
+      "Disable a plugin for this project. Its tools stop working; content/collections it " +
+      "created stay (removing content is a separate, deliberate act).",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string", description: "plugin id from list_plugins" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
   },
   {
     name: "set_locales",
@@ -1319,6 +1379,67 @@ export async function callTool(
             return { type: c.type, status: c.status, config };
           }),
         );
+      }
+
+      case "list_plugins": {
+        const enabled = await enabledPlugins(projectId);
+        return ok(
+          PLUGIN_CATALOG.map((p) => ({
+            id: p.id,
+            name: p.name,
+            version: p.version,
+            description: p.description,
+            enabled: enabled.has(p.id),
+            ingredients: {
+              structure: Boolean(p.structure),
+              tools: p.tools ?? [],
+              guidance: Boolean(p.guidance),
+            },
+          })),
+        );
+      }
+
+      case "get_plugin": {
+        const a = rawArgs as { id?: string };
+        const def = typeof a?.id === "string" ? getPluginDef(a.id) : null;
+        if (!def) {
+          return err(
+            `unknown plugin "${a?.id ?? ""}" — list_plugins shows what's available`,
+            "E_NOT_FOUND",
+          );
+        }
+        return ok({ ...def, enabled: await pluginEnabled(projectId, def.id) });
+      }
+
+      case "enable_plugin": {
+        const a = rawArgs as { id?: string };
+        const def = typeof a?.id === "string" ? getPluginDef(a.id) : null;
+        if (!def) {
+          return err(
+            `unknown plugin "${a?.id ?? ""}" — list_plugins shows what's available`,
+            "E_NOT_FOUND",
+          );
+        }
+        await enablePlugin(projectId, def.id);
+        return ok({
+          enabled: def.id,
+          next:
+            "apply the plugin now: get_plugin for the spec, reconcile its baseline into the " +
+            "project's collections, then verify its acceptance criteria",
+        });
+      }
+
+      case "disable_plugin": {
+        const a = rawArgs as { id?: string };
+        const def = typeof a?.id === "string" ? getPluginDef(a.id) : null;
+        if (!def) {
+          return err(
+            `unknown plugin "${a?.id ?? ""}" — list_plugins shows what's available`,
+            "E_NOT_FOUND",
+          );
+        }
+        await disablePlugin(projectId, def.id);
+        return ok({ disabled: def.id, note: "its collections/content remain — removal is a separate act" });
       }
 
       case "get_project_info": {

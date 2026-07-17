@@ -8,7 +8,8 @@ import { canDeleteProject } from "@/lib/workspaces";
 import { listCollections } from "@/lib/collections";
 import { listSchedules } from "@/lib/schedules";
 import { listProjectPlatformEvents } from "@/lib/platform-events";
-import { TokensSection, WebhookForm, MembersSection, SecretReveal, ManageBillingButton } from "./sections";
+import { TokensSection, WebhookForm, MembersSection, SecretReveal, ManageBillingButton, PluginsSection } from "./sections";
+import { PLUGIN_CATALOG, enabledPlugins } from "@/lib/plugins";
 import { DeleteProjectSection } from "./DeleteProjectSection";
 import { refireDeliveryAction, cancelJobAction, toggleScheduleAction } from "./actions";
 
@@ -31,7 +32,7 @@ export default async function SettingsPage({
   // Tokens/members/jobs/project = control plane; deliveries + the delete-plan
   // counts below read the project's data plane.
   const tdb = await tenantDb(projectId);
-  const [collections, tokens, members, deliveries, projectRow, automationJobs, schedules, platformTrail] = await Promise.all([
+  const [collections, tokens, members, deliveries, projectRow, automationJobs, schedules, platformTrail, enabledPluginIds] = await Promise.all([
     listCollections(projectId),
     db
       .select({
@@ -74,6 +75,7 @@ export default async function SettingsPage({
       .limit(20),
     listSchedules(projectId),
     listProjectPlatformEvents(projectId, 12),
+    enabledPlugins(projectId),
   ]);
 
   const formCollections = collections.filter((c) => c.publicWrite);
@@ -326,6 +328,25 @@ export default async function SettingsPage({
             )}
           </div>
         )}
+      </section>
+
+      <section className="mb-9">
+        <h2 className="section-label mb-1">Plugins</h2>
+        <p className="mb-3 max-w-md text-sm text-ink-mute">
+          Installable capabilities — structure, tools, and guidance your AI
+          applies to the project. A structure-only plugin is what you&apos;d call
+          a template; same mechanism.
+        </p>
+        <PluginsSection
+          projectId={projectId}
+          plugins={PLUGIN_CATALOG.map((p) => ({
+            id: p.id,
+            name: p.name,
+            version: p.version,
+            description: p.description,
+            enabled: enabledPluginIds.has(p.id),
+          }))}
+        />
       </section>
 
       <section className="mb-9">

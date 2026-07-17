@@ -696,3 +696,19 @@ export async function deleteProjectAction(
   await db.delete(projects).where(eq(projects.id, projectId));
   redirect("/admin");
 }
+
+/** Track 2 (plugins): enable/disable a catalog plugin for this project. */
+export async function togglePluginAction(
+  projectId: string,
+  pluginId: string,
+  enable: boolean,
+): Promise<{ error?: string }> {
+  const denied = await requireOperator(projectId);
+  if (denied) return { error: denied };
+  const { getPluginDef, enablePlugin, disablePlugin } = await import("@/lib/plugins");
+  if (!getPluginDef(pluginId)) return { error: "Unknown plugin" };
+  if (enable) await enablePlugin(projectId, pluginId);
+  else await disablePlugin(projectId, pluginId);
+  revalidatePath(`/admin/${projectId}/settings`);
+  return {};
+}
