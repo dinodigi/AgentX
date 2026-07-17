@@ -55,6 +55,7 @@ import {
   enablePlugin,
   disablePlugin,
 } from "@/lib/plugins";
+import { fetchPageHead, scoreHead } from "@/lib/seo";
 import { exportEntries } from "@/lib/export";
 import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
 import type { ErrorCode } from "@/lib/error-codes";
@@ -204,6 +205,34 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: { id: { type: "string", description: "plugin id from list_plugins" } },
       required: ["id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "fetch_page",
+    description:
+      "SEO plugin tool (enable_plugin {id:'seo'} first): fetch ONE live page's <head> facts — " +
+      "title, meta description, canonical, og:*, h1 count, lang, viewport, JSON-LD presence, " +
+      "robots. SSRF-guarded like webhooks (public https targets only), bounded read. Use " +
+      "score_page instead when you want the graded scorecard.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string", description: "absolute URL of the live page" } },
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "score_page",
+    description:
+      "SEO plugin tool (enable_plugin {id:'seo'} first): fetch a live page and grade it — " +
+      "returns {score: 0-100, findings:[{check, severity, found, fix}], head}. Each finding's " +
+      "`fix` names the seo.* entry field to write (update_entry), so the loop is: score → fix " +
+      "the entry → site re-renders → re-score to prove it moved.",
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string", description: "absolute URL of the live page" } },
+      required: ["url"],
       additionalProperties: false,
     },
   },
@@ -1440,6 +1469,30 @@ export async function callTool(
         }
         await disablePlugin(projectId, def.id);
         return ok({ disabled: def.id, note: "its collections/content remain — removal is a separate act" });
+      }
+
+      case "fetch_page":
+      case "score_page": {
+        // Plugin-gated tools: the capability must be enabled for THIS project.
+        if (!(await pluginEnabled(projectId, "seo"))) {
+          return err(
+            'the seo plugin is not enabled for this project — call enable_plugin {"id":"seo"} first',
+            "E_VALIDATION",
+          );
+        }
+        const a = rawArgs as { url?: string };
+        if (typeof a?.url !== "string" || a.url.length === 0) return err("url is required", "E_VALIDATION");
+        try {
+          const head = await fetchPageHead(a.url);
+          if (name === "fetch_page") return ok(head);
+          const { score, findings } = scoreHead(head);
+          return ok({ url: a.url, score, findings, head });
+        } catch (e) {
+          return err(
+            `could not audit ${a.url}: ${e instanceof Error ? e.message : "fetch failed"}`,
+            "E_UPSTREAM",
+          );
+        }
       }
 
       case "get_project_info": {

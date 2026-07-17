@@ -55,6 +55,59 @@ export interface PluginDef {
 
 export const PLUGIN_CATALOG: PluginDef[] = [
   {
+    id: "seo",
+    version: "1.0.0",
+    name: "SEO agent",
+    description:
+      "Audit → scorecard → fix loop for the live site: fetch_page + score_page tools, an `seo` group on page-shaped collections, and the operating guidance. Advisor v1 (read-only against the site; fixes flow through entries).",
+    structure: {
+      intent:
+        "Every page-shaped collection carries an `seo` group the site's <head> renders from, so " +
+        "search/share metadata is CONTENT (auditable, fixable, versioned) instead of hardcoded.",
+      baseline: [
+        {
+          name: "pages",
+          displayName: "Pages",
+          fields: [
+            { name: "title", label: "Title", type: "text", required: true, publicRead: true },
+            {
+              name: "seo",
+              label: "SEO",
+              type: "group",
+              publicRead: true,
+              fields: [
+                { name: "title", label: "Meta title", type: "text", max: 70 },
+                { name: "description", label: "Meta description", type: "text", max: 200 },
+                { name: "canonical", label: "Canonical URL", type: "text" },
+                { name: "og_title", label: "OG title", type: "text", max: 100 },
+                { name: "og_description", label: "OG description", type: "text", max: 300 },
+                { name: "og_image", label: "OG image", type: "asset" },
+                { name: "noindex", label: "Hide from search", type: "boolean" },
+              ],
+            },
+          ],
+        },
+      ],
+      reconcile:
+        "The `pages` collection here is a REFERENCE — do not create it if the project already has " +
+        "page-shaped collections. Instead ADD the `seo` group (define_collection update) to each " +
+        "existing collection that renders as a page (pages, posts, products…). Keep the group " +
+        "publicRead so the site's head template can read it.",
+    },
+    tools: ["fetch_page", "score_page"],
+    guidance:
+      "Operate the loop: score_page each key live URL → write the fixes into the matching entry's " +
+      "`seo` group (update_entry) → the site renders them (its layout reads the group via the " +
+      "delivery API, e.g. Next.js generateMetadata) → re-run score_page to PROVE the fix moved the " +
+      "score. Findings' `fix` fields name the exact seo.* field to write. score_page reads the " +
+      "LIVE page, so a fix only shows after the site redeploys/revalidates.",
+    acceptance: [
+      "each page-shaped collection carries a publicRead `seo` group with at least title + description",
+      "score_page returns a scorecard for the site's key URLs",
+      "after writing fixes and the site re-rendering, re-scored pages improve",
+    ],
+  },
+  {
     id: "contact_forms",
     version: "1.0.0",
     name: "Contact forms",
