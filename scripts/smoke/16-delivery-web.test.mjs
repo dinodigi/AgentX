@@ -56,7 +56,10 @@ describe("delivery web behavior: error codes, ETags, public uploads", () => {
     assert.equal(first.status, 200);
     const etag = first.headers.get("etag");
     assert.ok(etag && etag.startsWith('"'), "expected a strong ETag");
-    assert.equal(first.headers.get("cache-control"), "no-cache");
+    // Public reads are edge-shareable since the CDN batch (s-maxage for
+    // per-tenant-keyed shared caches; max-age=0 keeps direct clients
+    // revalidating exactly as before). Full contract: 63-delivery-cache-headers.
+    assert.match(first.headers.get("cache-control") ?? "", /max-age=0.*s-maxage=\d+/);
 
     const revalidate = await fetch(url, { headers: { ...headers, "if-none-match": etag } });
     // Netlify's CDN strips If-None-Match before functions run (verified

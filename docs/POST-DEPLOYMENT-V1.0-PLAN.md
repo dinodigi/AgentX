@@ -115,6 +115,20 @@ Separate from the product tracks but the same "safe-to-grow" gate:
 
 ---
 
+## Operator to-do (post-deploy, 2026-07-17 batch)
+
+Everything code-side is shipped; these are the operator-side steps, in order of impact:
+
+1. **Cloudflare CDN (activates item #1)** — ~15 min, steps + verification curls in **docs/CDN-SETUP.md**: proxy pluggie.app (orange cloud, SSL Full strict) → paste `infra/cloudflare/delivery-cache-worker.js` into Workers → route `pluggie.app/api/v1/*` → curl-verify `x-edge-cache: MISS-STORED → HIT`. Until then the s-maxage headers are emitted but no edge caches them (harmless).
+2. **Cap numbers sign-off (4a)** — `lib/caps.ts`: dataBytes sandbox **50 MB** / paid **5 GB** are my defaults marked `OPERATOR REVIEW` — confirm or change (one constant each).
+3. **METERED_RATES (activates 4d)** — set the env on Render when pricing is decided, e.g. `{"computeCentsPerCuHour":12,"storageCentsPerGbMonth":8}` (cents; ≥ Neon COGS). Until set, metered billing is INERT — flat subscriptions unchanged. After setting: verify in Stripe test mode that a managed project's subscription gains the two metered items + usage.
+4. **Neon org plan** — the org is at/near the Free ceiling (14 projects); graduate before onboarding more managed customers. (Also unlocks `data_storage_bytes_hour` byte-hour accounting — storage billing currently falls back to synthetic size.)
+5. **Glance the operator console** — `/admin/console` now shows per-project **content bytes vs cap** + **neon CU-h / db storage** on managed rows.
+6. **Prod DDL: already applied** — `neon_usage_daily` (+ `data_transfer_bytes`) and `project_plugins` were created on the shared control DB during the batch (dev and prod share it). Nothing to run.
+7. **(When ready) SEO plugin on a real project** — enable `seo` on Stallion, `score_page` its key URLs, and let the agent write the fixes; that's the dogfood for Tracks 2+3.
+
+---
+
 ## Parked — cross-project connection (a product PATH, not a feature)
 
 Connecting Project A ↔ B (a suite of internal apps that talk) is **parked** because it's a different **product path**, not a bolt-on:
