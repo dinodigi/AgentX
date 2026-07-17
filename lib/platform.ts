@@ -1,10 +1,11 @@
 import "server-only";
-import { count, eq, sql } from "drizzle-orm";
+import { count, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   assets,
   collections,
   entries,
+  neonUsageDaily,
   projectConnectors,
   projects,
   rateWindows,
@@ -47,6 +48,10 @@ export interface PlatformProject {
   entries: number;
   /** Media bytes (shared-plane sum, tenant-DB overlay for connector-backed). */
   assetBytes: number;
+  /** Stored entry JSONB bytes (post-TOAST) — the 4a cap dimension. */
+  dataBytes: number;
+  /** Track 4b: latest Neon consumption snapshot; null = not a managed plane. */
+  neon: { computeTimeSeconds: number; syntheticStorageSizeBytes: number; capturedAt: string } | null;
   connectors: { type: string; status: string }[];
   lastActivity: string | null;
   createdAt: string;
@@ -57,7 +62,7 @@ export interface PlatformProject {
   /** B3: 'active' | 'past_due' | 'canceled' | 'exempt' | null (unbilled). */
   billing: string | null;
   /** The plan's caps (B2 sandbox / B3 paid ceilings); null = uncapped legacy. */
-  caps: { entries: number; collections: number; assetBytes: number } | null;
+  caps: { entries: number; collections: number; assetBytes: number; dataBytes: number } | null;
   /** C2 metering: today's limited-surface requests (UTC day, rollup + live windows). */
   requestsToday: number;
 }
@@ -71,7 +76,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
   const viewer = await getViewer();
   if (!viewer?.isPlatformOperator) return null;
 
-  const [allWorkspaces, memberCounts, allProjects, collectionCounts, entryCounts, connectorRows, activityRows, assetSums, requestsById] =
+  const [allWorkspaces, memberCounts, allProjects, collectionCounts, entryCounts, connectorRows, activityRows, assetSums, dataSums, neonRows, requestsById] =
     await Promise.all([
       db.select({ id: workspaces.id, name: workspaces.name, createdAt: workspaces.createdAt }).from(workspaces),
       db.select({ workspaceId: workspaceMembers.workspaceId, n: count() }).from(workspaceMembers).groupBy(workspaceMembers.workspaceId),
@@ -81,6 +86,18 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
       db.select({ projectId: projectConnectors.projectId, type: projectConnectors.type, status: projectConnectors.status }).from(projectConnectors),
       db.select({ projectId: entries.projectId, last: sql<string | null>`max(${entries.updatedAt})` }).from(entries).groupBy(entries.projectId),
       db.select({ projectId: assets.projectId, total: sql<string>`coalesce(sum(${assets.size}::bigint), 0)` }).from(assets).groupBy(assets.projectId),
+      // 4a dimension on the shared plane (tenant-DB overlay below, like the rest).
+      db.select({ projectId: entries.projectId, total: sql<string>`coalesce(sum(pg_column_size(${entries.data})), 0)` }).from(entries).groupBy(entries.projectId),
+      // 4b: latest Neon snapshot per managed project (any day).
+      db
+        .selectDistinctOn([neonUsageDaily.projectId], {
+          projectId: neonUsageDaily.projectId,
+          computeTimeSeconds: neonUsageDaily.computeTimeSeconds,
+          syntheticStorageSizeBytes: neonUsageDaily.syntheticStorageSizeBytes,
+          capturedAt: neonUsageDaily.capturedAt,
+        })
+        .from(neonUsageDaily)
+        .orderBy(neonUsageDaily.projectId, desc(neonUsageDaily.capturedAt)),
       requestsTodayByProject(),
     ]);
 
@@ -91,6 +108,17 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
   const entriesById = new Map(entryCounts.map((c) => [c.projectId, c.n]));
   const activityById = new Map(activityRows.map((a) => [a.projectId, a.last]));
   const bytesById = new Map(assetSums.map((a) => [a.projectId, Number(a.total)]));
+  const dataById = new Map(dataSums.map((d) => [d.projectId, Number(d.total)]));
+  const neonById = new Map(
+    neonRows.map((n) => [
+      n.projectId,
+      {
+        computeTimeSeconds: Number(n.computeTimeSeconds),
+        syntheticStorageSizeBytes: Number(n.syntheticStorageSizeBytes),
+        capturedAt: n.capturedAt.toISOString(),
+      },
+    ]),
+  );
   const connectorsById = new Map<string, { type: string; status: string }[]>();
   for (const c of connectorRows) {
     const list = connectorsById.get(c.projectId) ?? [];
@@ -135,6 +163,8 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
         collections: colsById.get(p.id) ?? 0,
         entries: tenant ? tenant.entries : (entriesById.get(p.id) ?? 0),
         assetBytes: tenant ? tenant.assetBytes : (bytesById.get(p.id) ?? 0),
+        dataBytes: tenant ? tenant.dataBytes : (dataById.get(p.id) ?? 0),
+        neon: neonById.get(p.id) ?? null,
         connectors: connectorsById.get(p.id) ?? [],
         lastActivity: tenant ? tenant.lastActivity : last ? new Date(last).toISOString() : null,
         createdAt: p.createdAt.toISOString(),

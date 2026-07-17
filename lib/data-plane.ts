@@ -140,6 +140,8 @@ export interface TenantContentStats {
   entries: number;
   /** Sum of assets.size tenant-side — the console's media-vs-cap column (B4). */
   assetBytes: number;
+  /** Total stored entry JSONB (post-TOAST) — the 4a cap / stats dimension. */
+  dataBytes: number;
   lastActivity: string | null;
 }
 
@@ -159,7 +161,11 @@ export async function tenantContentStats(projectIds: string[]): Promise<Map<stri
         const tdb = await tenantDb(pid);
         const [[row], [bytes]] = await Promise.all([
           tdb
-            .select({ n: count(), last: sql<string | null>`max(${schema.entries.updatedAt})` })
+            .select({
+              n: count(),
+              last: sql<string | null>`max(${schema.entries.updatedAt})`,
+              dataBytes: sql<string>`coalesce(sum(pg_column_size(${schema.entries.data})), 0)`,
+            })
             .from(schema.entries)
             .where(eq(schema.entries.projectId, pid)),
           tdb
@@ -170,10 +176,11 @@ export async function tenantContentStats(projectIds: string[]): Promise<Map<stri
         out.set(pid, {
           entries: Number(row?.n ?? 0),
           assetBytes: Number(bytes?.total ?? 0),
+          dataBytes: Number(row?.dataBytes ?? 0),
           lastActivity: row?.last ? new Date(row.last).toISOString() : null,
         });
       } catch {
-        out.set(pid, { entries: 0, assetBytes: 0, lastActivity: null });
+        out.set(pid, { entries: 0, assetBytes: 0, dataBytes: 0, lastActivity: null });
       }
     }),
   );

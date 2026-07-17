@@ -288,6 +288,13 @@ function ProjectRow({ p, showWorkspace = false }: { p: PlatformProject; showWork
           <span className="text-ink-mute"> · </span>
           <span className="text-ink-soft">{p.plan ?? "legacy"}</span>
           {p.billing === "exempt" && <span> (exempt)</span>}
+          {p.neon && (
+            // Track 4b: what this managed tenant costs US this billing period.
+            <span className="text-ink-mute">
+              {" "}
+              · neon {(p.neon.computeTimeSeconds / 3600).toFixed(1)} CU-h · {fmtBytes(p.neon.syntheticStorageSizeBytes)} db
+            </span>
+          )}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-3 xl:hidden">
           <span className="font-mono text-[11px] text-ink-mute">
@@ -304,6 +311,7 @@ function ProjectRow({ p, showWorkspace = false }: { p: PlatformProject; showWork
       <div className="hidden items-center gap-6 xl:flex">
         <Usage value={p.entries} cap={p.caps?.entries} label="entries" />
         <Usage value={p.collections} cap={p.caps?.collections} label="collections" />
+        <Usage value={p.dataBytes} cap={p.caps?.dataBytes} label="content" bytes />
         <Usage value={p.assetBytes} cap={p.caps?.assetBytes} label="media" bytes />
         <Usage value={p.requestsToday} label="req today" />
       </div>
@@ -435,7 +443,8 @@ function nearCap(p: PlatformProject): boolean {
   return (
     p.entries / p.caps.entries >= 0.8 ||
     p.collections / p.caps.collections >= 0.8 ||
-    p.assetBytes / p.caps.assetBytes >= 0.8
+    p.assetBytes / p.caps.assetBytes >= 0.8 ||
+    p.dataBytes / p.caps.dataBytes >= 0.8
   );
 }
 
