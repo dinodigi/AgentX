@@ -36,6 +36,12 @@ export async function fetchPageHead(rawUrl: string): Promise<PageHead> {
     headers: { "user-agent": "PluggieSEO/1.0 (+https://pluggie.app)", accept: "text/html" },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
+  // Dogfood finding: a cold-starting origin once got its 503 placeholder page
+  // GRADED (a misleading 44/100). Non-200 pages are never scored.
+  if (res.status !== 200) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(`page returned HTTP ${res.status} — not scored; retry when the site is serving normally`);
+  }
   const type = res.headers.get("content-type") ?? "";
   if (!type.includes("text/html")) {
     await res.body?.cancel().catch(() => {});

@@ -49,18 +49,23 @@ function rpcError(id: JsonRpcRequest["id"], code: number, message: string) {
 }
 
 export async function POST(req: NextRequest) {
+  // Dogfood finding: bare-text 401s broke agents' response parsing — auth
+  // failures now carry the same {error, code} JSON envelope as the rest of
+  // the API (these fire before the JSON-RPC body is read, so no request id).
+  const authErr = (error: string, code: string, status = 401) =>
+    Response.json({ error, code }, { status });
   const token = bearerFrom(req.headers.get("authorization"));
   if (!token) {
-    return new Response("Unauthorized: missing bearer token", { status: 401 });
+    return authErr("missing bearer token", "E_AUTH");
   }
   const info = await resolveToken(token);
   if (!info) {
-    return new Response("Unauthorized: invalid project token", { status: 401 });
+    return authErr("invalid project token", "E_AUTH");
   }
   if (info.scope !== "mcp") {
-    return new Response(
-      "Unauthorized [E_SCOPE]: this token is delivery-scoped (public read/write only). MCP needs an mcp-scoped token.",
-      { status: 401 },
+    return authErr(
+      "this token is delivery-scoped (public read/write only) — the MCP endpoint needs an mcp-scoped token; mint one in project Settings → Tokens",
+      "E_SCOPE",
     );
   }
   if (info.projectStatus === "suspended") {

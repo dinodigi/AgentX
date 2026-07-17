@@ -42,7 +42,7 @@ export async function projectPlan(projectId: string): Promise<"sandbox" | "byo" 
       return rows[0]?.plan ?? null;
     },
     ["project-plan", projectId],
-    { tags: [`project:${projectId}`] },
+    { tags: [`project:${projectId}`], revalidate: 60 }, // billing webhook lands on ONE instance — TTL converges the rest
   );
   return cached();
 }

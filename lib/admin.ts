@@ -13,7 +13,7 @@ export async function getProject(projectId: string): Promise<Project | null> {
   const cached = unstable_cache(
     () => db.select().from(projects).where(eq(projects.id, projectId)).limit(1),
     ["project", projectId],
-    { tags: [`project:${projectId}`] },
+    { tags: [`project:${projectId}`], revalidate: 60 }, // per-instance revalidateTag — TTL converges the fleet
   );
   const rows = await cached();
   if (!rows[0]) return null;

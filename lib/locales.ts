@@ -35,7 +35,7 @@ export async function getLocales(projectId: string): Promise<ProjectLocales | nu
       return rows[0]?.locales ?? null;
     },
     ["locales", projectId],
-    { tags: [`project:${projectId}`] },
+    { tags: [`project:${projectId}`], revalidate: 60 },
   );
   return cached();
 }

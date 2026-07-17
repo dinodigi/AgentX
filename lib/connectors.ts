@@ -134,7 +134,7 @@ export async function getConnector(
       return rows[0] ?? null;
     },
     ["connector", projectId, type],
-    { tags: [tag(projectId)] },
+    { tags: [tag(projectId)], revalidate: 60 }, // per-instance revalidateTag — TTL converges the fleet
   );
   const row = await cached();
   if (!row) return null;

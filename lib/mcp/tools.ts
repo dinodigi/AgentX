@@ -787,7 +787,7 @@ export const TOOL_DEFS: ToolDef[] = [
       "Returns {entries, limit, offset, hasMore, nextOffset, nextCursor} — page with offset: " +
       "nextOffset, or (preferred for deep/chronological paging) pass cursor: nextCursor, which " +
       "uses the stable default ordering and stays exact past thousands of rows. cursor excludes " +
-      "offset/orderBy. No full-text search service.",
+      "offset/orderBy. For keyword/full-text queries use search_entries instead (over searchable:true fields).",
     inputSchema: {
       type: "object",
       properties: {

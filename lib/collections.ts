@@ -39,7 +39,10 @@ export async function listCollections(projectId: string): Promise<Collection[]> 
   const cached = unstable_cache(
     () => db.select().from(collections).where(eq(collections.projectId, projectId)),
     ["collections-list", projectId],
-    { tags: [collectionsTag(projectId)] },
+    // TTL: revalidateTag is per-instance — with N app instances the other N-1
+    // converge via this window (found live: a confirmed retype looked unapplied
+    // because the OTHER instance kept serving the old schema indefinitely).
+    { tags: [collectionsTag(projectId)], revalidate: 15 },
   );
   return (await cached()).map(revive);
 }
@@ -57,7 +60,7 @@ export async function getCollection(
         .where(and(eq(collections.projectId, projectId), eq(collections.name, name)))
         .limit(1),
     ["collection", projectId, name],
-    { tags: [collectionsTag(projectId)] },
+    { tags: [collectionsTag(projectId)], revalidate: 15 },
   );
   const rows = await cached();
   return rows[0] ? revive(rows[0]) : null;
