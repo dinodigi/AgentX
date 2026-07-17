@@ -1,6 +1,6 @@
 # Post-Deployment v1.0 Plan
 
-**Status:** planning — rooted in the shipped code (file refs throughout).
+**Status: BUILT 2026-07-17 — all code items 1–8 SHIPPED in one batch** (commits e11faad → 666ec6a): CDN edge cache (code halves), Track 4 a–d (byte cap, Neon usage pull, unified stats, metered rails), block types, plugin system, SEO plugin. Remaining: the operator-side list (Cloudflare setup, METERED_RATES, cap-number sign-off) — see the deploy notes. Original plan below, statuses inline.
 **Baseline (deployed to pluggie.app, 2026-07-16):** security hardening, styled HTML email, **structured fields** (group/array repeaters, one-level, F2/F3-safe), the **scale layer** (`indexed` fields → expression indexes, index-backed pagination). The data model is now blob-per-entry + declared indexes + relations + one-level repeaters — Dari-shaped, EXPLAIN-verified.
 **This plan = the next phase**, in priority order. Cross-project connection is explicitly parked (see end).
 
