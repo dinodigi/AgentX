@@ -58,7 +58,24 @@ v1 advisor shipped + dogfooded (87/100 on a real site). v2 = APPLY fixes behind 
 
 ---
 
+## Decision record — direct-DB REST (PostgREST/Neon Data API): REJECTED as default; opt-in read escape-hatch is future-optional (2026-07-17)
+
+Proposal: mint tokens so apps query the DB directly over REST, decoupling from the app server so scaling is Neon's problem. **Two premises examined against code:**
+
+- **"A page is ~1 query" — FALSE (my earlier claim was wrong).** No cross-collection batch endpoint exists; delivery is per-collection (`/v1/[collection]`). A multi-section page (post + nav + footer + sidebar + settings) is ~5 calls / 8–15 queries. **BUT** the repeated sections (nav/footer/sidebar) are identical per-visitor + rarely change = the MOST cacheable → ~100% CDN HIT = 0 origin queries (live-verified). The multi-call cost is already absorbed by the CDN precisely because those sections are cacheable; only the per-URL body reaches origin.
+- **"Still REST, so no added AI hallucination" — true but beside the point.** AI-simplicity was A motivation for the interface, not the only one. Code shows the READ path also enforces per-field publicRead projection (toPublicView, JSONB-key filtering) + publicFilter/owner/org row gates; the WRITE path carries validation, writableBy, identity stamping, hooks, computed, workflows, caps, events, audit, change-feed, idempotency, metering. The interface IS the security + billing + logic boundary, not just an AI convenience.
+
+**Reads vs writes split cleanly (the real finding):** reads are *potentially* portable (projection + row gates → a generated view+RLS per collection); writes are NOT (hooks/computed/workflow/events/caps/audit/metering have no DB equivalent). So the decoupling instinct only ever applies to reads.
+
+**Why PostgREST specifically fights our model:** (1) fields are JSONB keys not columns (`entries.data jsonb`) — per-field publicRead needs a generated view per collection, regenerated on every define_collection, per tenant; (2) relations are JSONB string values not FK columns — PostgREST auto-embed can't resolve them without manual view JOINs; (3) shared sandbox plane = one RLS mistake is a cross-tenant breach; (4) **billing inversion (decisive):** metering makes every Neon query = CU-hours; the CDN makes repeat reads = $0; direct-DB REST bypasses the CDN so the highest-volume cacheable reads (nav/footer) become billed Neon compute — backwards from the cost goal.
+
+**Conclusion:** don't expose the DB as the default path. The valid kernel — reads shouldn't require scaling Render — is already met (reads terminate at Cloudflare; Render is stateless + N-instance and handles only writes + cache-miss reads). Escalation path, guarantee-preserving, in order: CDN (SHIPPED) → ?include/?expand fewer-bigger-calls (exists) → **edge delivery reader** (read path as a CF Worker on Neon — Neon-adjacent, zero Render, KEEPS our interface + CDN, no per-tenant view codegen). A Neon Data API read endpoint could later be offered as an OPT-IN power-user escape hatch for a tenant's own heavy/uncacheable dashboard reads (managed plane only, reads only, their own DB) — never the default, never writes, never shared plane.
+
+---
+
 ## Track 7 — Infra / platform hardening (carry-over)
+
+- **Edge delivery reader (future scale lever)** — port the delivery GET path (projection + gates, read-only) to a Cloudflare Worker querying Neon over HTTP: DB-adjacent reads without Render, guarantees intact. Only when CDN-miss volume actually pressures origin.
 
 - **CDN purge-on-write** (entry write → Cloudflare purge API) — only if 60s staleness ever bites; TTL is fine today.
 - **Content migration between data planes** — managed provisioning is greenfield-only (content must be empty); build shared→dedicated migration for upgrading a live project.
