@@ -30,7 +30,13 @@ Result: a `services` block = `{heading, items: relation → services}` — decla
 
 ---
 
-## Track 3 — Query surface: `ne` + `exists`/`unset` operators
+## Track 3 — Read ergonomics: batch endpoint + `ne`/`exists` operators
+
+**3a. Cross-collection batch read** (from the developer review — the actionable strategic note). One request carrying several collection queries (`{queries:[{collection, where?, select?, limit?}, …]}`), each run through the SAME delivery gates (publicRead projection, publicFilter/identity, relation/asset resolution), returned together. Collapses a page's ~5 round trips → 1; DB never touched directly; every guarantee intact.
+- **Caveat (rooted in the CDN work):** batch is a POST → not edge-cacheable. Public marketing pages are BETTER as individual GETs (nav/footer become free CDN HITs; batch would send all to origin). Batch's win is the AUTHENTICATED DASHBOARD (a user's own varied, uncacheable data). Document this so agents pick the right tool: public page → GETs+CDN; logged-in dashboard → batch.
+- Touch: new `POST /v1/batch` route reusing the GET handler's gate/query pipeline per sub-query; bound the number of sub-queries; per-tenant rate-limit.
+
+**3b. `ne` + `exists`/`unset` operators.**
 
 "published OR unset" is currently inexpressible; agents contort models into draft-by-default. Add `ne` (accessor-based, null-safe semantics decided explicitly: does `ne:true` match unset rows? document the choice) and `exists`/`unset` (`data ? 'field'` / `IS NULL`) to `OPS_BY_TYPE` + `buildWhereParts` + publicFilter validation + MCP docs. Touch: lib/query.ts, validation of clauses, tools.ts docs, smoke test.
 
