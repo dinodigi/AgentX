@@ -42,7 +42,7 @@ import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workf
 import { recordChange, recordChanges, type ChangeInput } from "./changes";
 import type { WorkflowActor } from "@/db/schema";
 import { recordAudit } from "./audit";
-import { assertEntryCap } from "./caps";
+import { assertEntryCap, assertDataBytes } from "./caps";
 import { defer } from "./defer";
 import { type DbExecutor } from "./db-tx";
 import { recordVersion } from "./versions";
@@ -378,6 +378,7 @@ export async function createEntry(
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
   await assertEntryCap(projectId); // B2 sandbox cap — before the hook's external call
+  await assertDataBytes(projectId); // byte ceiling (Track 4a) — same placement
 
   // I1a/I1b: consult the before-create hook AFTER cheap local validation, BEFORE
   // the write. A rejection or fail-closed outage stops the insert; a transform
@@ -619,6 +620,9 @@ export async function updateEntry(
   let patch = validate(collection.fields, data, true, "input", locales);
   const { refChecks } = buildEntrySchema(collection.fields, true);
   await verifyRefs(projectId, patch, refChecks);
+  // Byte ceiling (Track 4a): the count cap can't see update-inflation — row
+  // count never moves while every row grows toward the body limit.
+  await assertDataBytes(projectId);
 
   // I1b: consult the before-update hook (validate gates; transform replaces the
   // patch with the re-validated, identity-re-stripped full entry). A transform's
@@ -1101,6 +1105,7 @@ export async function updateEntryIf(
   id: string,
   opts: UpdateIfOpts,
 ): Promise<UpdateIfResult> {
+  await assertDataBytes(projectId); // byte ceiling (Track 4a) — CAS grows rows too
   const plan = await prepareUpdateIf(projectId, collection, opts);
   const result = await updateEntryIfCore(await tenantDb(collection.projectId), collection, id, opts, plan, false);
   if (!result.ok) return result.diagnosis;
@@ -1555,6 +1560,9 @@ export async function transact(
   // dry run reports the plan without consuming cap).
   const createCount = prepared.filter((p) => p.kind === "create").length;
   if (createCount > 0 && !runOpts.dryRun) await assertEntryCap(projectId, createCount);
+  // Byte ceiling (Track 4a): updates grow rows without moving the count, so
+  // gate ANY writing batch, not just net-new creates.
+  if (prepared.length > 0 && !runOpts.dryRun) await assertDataBytes(projectId);
 
   // dryRun: everything above proves the batch is well-formed (any failure already
   // threw an op-indexed error). Report the plan without opening a transaction.
@@ -1767,6 +1775,7 @@ export async function bulkCreateEntries(
 ): Promise<BulkItemResult[]> {
   if (items.length > 100) throw new ValidationError("max 100 entries per bulk call");
   await assertEntryCap(projectId, items.length); // B2 sandbox cap — whole batch
+  await assertDataBytes(projectId); // byte ceiling (Track 4a)
   const hook = collection.hooks?.beforeCreate;
   const hookEnabled = Boolean(hook && !hook.disabled);
   if (hookEnabled) {

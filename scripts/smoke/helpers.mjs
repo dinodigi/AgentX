@@ -8,7 +8,7 @@ import http from "node:http";
 
 /** Override with SMOKE_BASE to run the suite against a deployment (prod smoke). */
 export const BASE = process.env.SMOKE_BASE ?? "http://localhost:3000";
-const sql = neon(process.env.DATABASE_URL);
+export const sql = neon(process.env.DATABASE_URL);
 
 export async function ensureServer() {
   try {

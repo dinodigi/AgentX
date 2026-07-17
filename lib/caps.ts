@@ -9,27 +9,34 @@ import { ValidationError } from "./validation";
 /**
  * Plan caps (B2): the free sandbox is the abuse gate — hard limits with
  * agent-repairable errors (E_CAP_REACHED names the cap and the way out).
- * Values here are the B2 placeholders; B3 finalizes them alongside the paid
- * plans' allowances. `plan` NULL (legacy/operator projects) and paid plans
- * are uncapped until B3.
+ * `plan` NULL (legacy/operator projects) stays uncapped; sandbox and paid
+ * plans are capped per the tables below.
+ *
+ * Under the usage-metering decision (2026-07-17, POST-DEPLOYMENT-V1.0-PLAN
+ * Track 4) these caps are the SAFETY FLOOR, not the biller: the meter bills
+ * actual Neon/R2 usage; caps bound the blast radius of a runaway agent.
  */
 export const SANDBOX_CAPS = {
   entries: 1_000,
   collections: 20,
   assetBytes: 100 * 1024 * 1024, // 100 MB
+  // Total stored JSONB (post-TOAST, what Neon storage actually costs). The
+  // entries cap bounds row COUNT; this bounds row FAT — 1k entries × 1 MiB
+  // bodies would otherwise be a 1 GB free sandbox.
+  dataBytes: 50 * 1024 * 1024, // 50 MB — OPERATOR REVIEW: tune with pricing
 } as const;
 
 /**
- * B3: paid plans get generous ABUSE CEILINGS, not product tiers — flat price +
- * included allowances per the caps-not-metering decision. High enough that a
- * real site never sees them; low enough that a runaway agent or abuser can't
- * turn $19 into unbounded storage. Request metering rides the C2 durable
- * store, not these stored-dimension checks.
+ * Paid plans get generous ABUSE CEILINGS, not product tiers — high enough that
+ * a real site never sees them; low enough that a runaway agent or abuser can't
+ * turn a flat month into unbounded storage. Request metering rides the C2
+ * durable store; Neon/R2 usage metering (Track 4b) bills the real usage.
  */
 export const PAID_CAPS = {
   entries: 250_000,
   collections: 500,
   assetBytes: 25 * 1024 * 1024 * 1024, // 25 GB
+  dataBytes: 5 * 1024 * 1024 * 1024, // 5 GB — OPERATOR REVIEW: tune with pricing
 } as const;
 
 function capsFor(plan: "sandbox" | "byo" | "managed" | null) {
@@ -82,6 +89,36 @@ export async function assertCollectionCap(projectId: string): Promise<void> {
     .from(collections)
     .where(eq(collections.projectId, projectId));
   if ((row?.n ?? 0) + 1 > c.caps.collections) capError(c.tier, "collections", c.caps.collections);
+}
+
+/**
+ * Gate TOTAL stored entry bytes (create/bulk/transact/update). Update matters
+ * most: row count never moves, so without this an at-cap project could inflate
+ * every entry toward the body limit unbounded (250k × 1 MiB = 244 GB).
+ *
+ * The sum is a per-project scan (pg_column_size = post-TOAST, i.e. what Neon
+ * storage costs), so it's CACHED ~60s — a ceiling, not a meter: overshoot is
+ * bounded by one rate-limited minute of writes, and exact usage is Track 4b's
+ * job. Reads the project's own tenant DB, like the entry/asset caps.
+ */
+export async function assertDataBytes(projectId: string): Promise<void> {
+  const c = capsFor(await projectPlan(projectId));
+  if (!c) return;
+  const cached = unstable_cache(
+    async () => {
+      const tdb = await tenantDb(projectId);
+      const [row] = await tdb
+        .select({ total: sql<string>`coalesce(sum(pg_column_size(${entries.data})), 0)` })
+        .from(entries)
+        .where(eq(entries.projectId, projectId));
+      return Number(row?.total ?? 0);
+    },
+    ["project-data-bytes", projectId],
+    { revalidate: 60, tags: [`project:${projectId}`] },
+  );
+  if ((await cached()) >= c.caps.dataBytes) {
+    capError(c.tier, "stored content", `${Math.round(c.caps.dataBytes / 1024 / 1024)} MB`);
+  }
 }
 
 /** Gate uploading `addBytes` of media. */
