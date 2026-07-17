@@ -39,12 +39,15 @@ export default {
 
     const cache = caches.default;
     const inm = request.headers.get("if-none-match");
+    // Compare on the bare hash: Cloudflare weakens ETags in flight (W/"…"),
+    // so both the W/ marker AND the quotes must be stripped before matching.
+    const bareTag = (s) => s.replace(/^W\//i, "").replaceAll('"', "");
 
     const hit = await cache.match(cacheKey);
     if (hit) {
       // Serve 304s AT the edge: the client's conditional never reaches origin.
       const etag = hit.headers.get("etag") ?? "";
-      if (inm && etag && inm.includes(etag.replaceAll('"', ""))) {
+      if (inm && etag && inm.includes(bareTag(etag))) {
         const h = new Headers(hit.headers);
         h.set("x-edge-cache", "HIT");
         return new Response(null, { status: 304, headers: h });
@@ -78,7 +81,7 @@ export default {
 
     // Honor the client's conditional against the fresh body.
     const etag = originResp.headers.get("etag") ?? "";
-    if (inm && etag && inm.includes(etag.replaceAll('"', ""))) {
+    if (inm && etag && inm.includes(bareTag(etag))) {
       const h = new Headers(originResp.headers);
       h.set("x-edge-cache", storable ? "MISS-STORED" : "MISS");
       return new Response(null, { status: 304, headers: h });
