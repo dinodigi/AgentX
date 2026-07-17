@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getViewer } from "@/lib/access";
 import { platformOverview } from "@/lib/platform";
@@ -21,6 +22,11 @@ export default async function ConsolePage() {
     <>
       <WorkspaceSidebar canCreateProjects isPlatformOperator />
       <div className="page-enter min-w-0 flex-1">
+        <div className="flex justify-end px-6 pt-4">
+          <Link href="/admin/console/settings" className="btn btn-ghost text-sm">
+            Platform settings
+          </Link>
+        </div>
         <PlatformConsole workspaces={overview.workspaces} projects={overview.projects} />
       </div>
     </>

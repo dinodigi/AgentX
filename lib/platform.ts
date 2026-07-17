@@ -16,7 +16,7 @@ import {
 import { tenantContentStats } from "./data-plane";
 import { getViewer } from "./access";
 import { brandInk } from "./brand";
-import { PAID_CAPS, SANDBOX_CAPS } from "./caps";
+import { effectiveCaps } from "./platform-settings";
 
 /**
  * Platform-wide (god-view) reads for the operator console (B4). Operator-gated
@@ -101,6 +101,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
       requestsTodayByProject(),
     ]);
 
+  const caps = await effectiveCaps(); // defaults + operator overrides — same source the gates enforce
   const wsName = new Map(allWorkspaces.map((w) => [w.id, w.name]));
   const memberById = new Map(memberCounts.map((m) => [m.workspaceId, m.n]));
   const projCountByWs = new Map<string, number>();
@@ -171,7 +172,7 @@ export async function platformOverview(): Promise<PlatformOverview | null> {
         status: p.status,
         plan: p.plan ?? null,
         billing: p.billingExempt ? "exempt" : (p.billingStatus ?? null),
-        caps: p.plan === "sandbox" ? SANDBOX_CAPS : p.plan === "byo" || p.plan === "managed" ? PAID_CAPS : null,
+        caps: p.plan === "sandbox" ? caps.sandbox : p.plan === "byo" || p.plan === "managed" ? caps.paid : null,
         requestsToday: requestsById.get(p.id) ?? 0,
       };
     })

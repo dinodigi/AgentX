@@ -41,6 +41,14 @@ export interface ProjectOverviewProps {
   entries: number;
   unhandled: number;
   activity: ActivityItem[];
+  /** Plan usage vs caps (null caps = legacy/uncapped project — bars hidden). */
+  usage?: {
+    plan: string | null;
+    dataBytes: number;
+    assetBytes: number;
+    requestsToday: number;
+    caps: { entries: number; dataBytes: number; assetBytes: number } | null;
+  } | null;
 }
 
 export function ProjectOverview(p: ProjectOverviewProps) {
@@ -100,6 +108,23 @@ export function ProjectOverview(p: ProjectOverviewProps) {
           </span>
         </div>
       </section>
+
+      {/* Usage vs plan — the meter the customer can trust (and the upsell). */}
+      {p.usage && (
+        <section className="rounded-xl border border-line bg-card p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="section-label m-0">Usage</h2>
+            <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-mute">
+              {p.usage.plan ?? "legacy"} plan · {p.usage.requestsToday} requests today
+            </span>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <UsageBar label="Entries" value={p.entries} cap={p.usage.caps?.entries} />
+            <UsageBar label="Content" value={p.usage.dataBytes} cap={p.usage.caps?.dataBytes} bytes />
+            <UsageBar label="Media" value={p.usage.assetBytes} cap={p.usage.caps?.assetBytes} bytes />
+          </div>
+        </section>
+      )}
 
       {/* Collections + activity */}
       <div className="grid gap-8 lg:grid-cols-[1.7fr_1fr]">
@@ -187,4 +212,40 @@ export function ProjectOverview(p: ProjectOverviewProps) {
       </div>
     </div>
   );
+}
+
+/** One usage dimension: value (vs cap when capped) + a quiet progress track. */
+function UsageBar({ label, value, cap, bytes }: { label: string; value: number; cap?: number; bytes?: boolean }) {
+  const fmt = (n: number) => (bytes ? fmtBytes(n) : n.toLocaleString());
+  const pct = cap ? Math.min(100, Math.round((value / cap) * 100)) : null;
+  return (
+    <div>
+      <div className="mb-1 flex items-baseline justify-between">
+        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-mute">{label}</span>
+        <span className="font-mono text-[11px] text-ink-soft">
+          {fmt(value)}
+          {cap ? <span className="text-line-strong"> / {fmt(cap)}</span> : null}
+        </span>
+      </div>
+      {pct !== null && (
+        <div className="h-1.5 overflow-hidden rounded-full bg-paper">
+          <div
+            className="h-full rounded-full"
+            style={{
+              width: `${Math.max(pct, value > 0 ? 2 : 0)}%`,
+              background: pct >= 80 ? "var(--color-accent)" : "var(--brand, var(--color-accent))",
+              opacity: pct >= 80 ? 1 : 0.55,
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function fmtBytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
+  if (n >= 1024 ** 2) return `${(n / 1024 ** 2).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
 }

@@ -10,39 +10,24 @@ import { ValidationError } from "./validation";
  * Plan caps (B2): the free sandbox is the abuse gate — hard limits with
  * agent-repairable errors (E_CAP_REACHED names the cap and the way out).
  * `plan` NULL (legacy/operator projects) stays uncapped; sandbox and paid
- * plans are capped per the tables below.
+ * plans are capped.
  *
  * Under the usage-metering decision (2026-07-17, POST-DEPLOYMENT-V1.0-PLAN
  * Track 4) these caps are the SAFETY FLOOR, not the biller: the meter bills
  * actual Neon/R2 usage; caps bound the blast radius of a runaway agent.
+ *
+ * Numbers: code defaults live in lib/caps-defaults.ts; the operator adjusts
+ * them from the console's Platform Settings page (platform_settings table) —
+ * effectiveCaps() merges the two, and every gate below reads THAT.
  */
-export const SANDBOX_CAPS = {
-  entries: 1_000,
-  collections: 20,
-  assetBytes: 100 * 1024 * 1024, // 100 MB
-  // Total stored JSONB (post-TOAST, what Neon storage actually costs). The
-  // entries cap bounds row COUNT; this bounds row FAT — 1k entries × 1 MiB
-  // bodies would otherwise be a 1 GB free sandbox.
-  dataBytes: 50 * 1024 * 1024, // 50 MB — OPERATOR REVIEW: tune with pricing
-} as const;
+export { SANDBOX_CAPS, PAID_CAPS } from "./caps-defaults";
+import { effectiveCaps } from "./platform-settings";
 
-/**
- * Paid plans get generous ABUSE CEILINGS, not product tiers — high enough that
- * a real site never sees them; low enough that a runaway agent or abuser can't
- * turn a flat month into unbounded storage. Request metering rides the C2
- * durable store; Neon/R2 usage metering (Track 4b) bills the real usage.
- */
-export const PAID_CAPS = {
-  entries: 250_000,
-  collections: 500,
-  assetBytes: 25 * 1024 * 1024 * 1024, // 25 GB
-  dataBytes: 5 * 1024 * 1024 * 1024, // 5 GB — OPERATOR REVIEW: tune with pricing
-} as const;
-
-function capsFor(plan: "sandbox" | "byo" | "managed" | null) {
-  if (plan === "sandbox") return { caps: SANDBOX_CAPS, tier: "sandbox" as const };
-  if (plan === "byo" || plan === "managed") return { caps: PAID_CAPS, tier: "plan" as const };
-  return null; // legacy/operator-era — uncapped
+async function capsFor(plan: "sandbox" | "byo" | "managed" | null) {
+  if (plan === null) return null; // legacy/operator-era — uncapped
+  const eff = await effectiveCaps();
+  if (plan === "sandbox") return { caps: eff.sandbox, tier: "sandbox" as const };
+  return { caps: eff.paid, tier: "plan" as const }; // byo | managed
 }
 
 /** Cached plan lookup — shares the project:{id} tag with the other config. */
@@ -73,7 +58,7 @@ function capError(tier: "sandbox" | "plan", what: string, limit: number | string
 
 /** Gate adding `add` entries (create/bulk/transact). */
 export async function assertEntryCap(projectId: string, add = 1): Promise<void> {
-  const c = capsFor(await projectPlan(projectId));
+  const c = await capsFor(await projectPlan(projectId));
   if (!c) return;
   const tdb = await tenantDb(projectId);
   const [row] = await tdb.select({ n: count() }).from(entries).where(eq(entries.projectId, projectId));
@@ -82,7 +67,7 @@ export async function assertEntryCap(projectId: string, add = 1): Promise<void> 
 
 /** Gate creating a NEW collection. */
 export async function assertCollectionCap(projectId: string): Promise<void> {
-  const c = capsFor(await projectPlan(projectId));
+  const c = await capsFor(await projectPlan(projectId));
   if (!c) return;
   const [row] = await controlDb
     .select({ n: count() })
@@ -102,7 +87,7 @@ export async function assertCollectionCap(projectId: string): Promise<void> {
  * job. Reads the project's own tenant DB, like the entry/asset caps.
  */
 export async function assertDataBytes(projectId: string): Promise<void> {
-  const c = capsFor(await projectPlan(projectId));
+  const c = await capsFor(await projectPlan(projectId));
   if (!c) return;
   const cached = unstable_cache(
     async () => {
@@ -123,7 +108,7 @@ export async function assertDataBytes(projectId: string): Promise<void> {
 
 /** Gate uploading `addBytes` of media. */
 export async function assertAssetCap(projectId: string, addBytes: number): Promise<void> {
-  const c = capsFor(await projectPlan(projectId));
+  const c = await capsFor(await projectPlan(projectId));
   if (!c) return;
   const tdb = await tenantDb(projectId);
   const [row] = await tdb

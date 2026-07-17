@@ -3,6 +3,7 @@ import { and, eq, gte, isNotNull, sql } from "drizzle-orm";
 import { controlDb } from "@/db";
 import { neonUsageDaily, projects } from "@/db/schema";
 import { stripeRequest, StripeError } from "./stripe";
+import { effectiveMeteredRates } from "./platform-settings";
 
 /**
  * Track 4d: METERED billing rails on top of the flat platform subscription.
@@ -31,21 +32,6 @@ import { stripeRequest, StripeError } from "./stripe";
 export interface MeteredRates {
   computeCentsPerCuHour: number;
   storageCentsPerGbMonth: number;
-}
-
-export function meteredRates(): MeteredRates | null {
-  const raw = process.env.METERED_RATES;
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const compute = Number(parsed.computeCentsPerCuHour);
-    const storage = Number(parsed.storageCentsPerGbMonth);
-    if (!Number.isFinite(compute) || !Number.isFinite(storage) || compute < 0 || storage < 0) return null;
-    return { computeCentsPerCuHour: compute, storageCentsPerGbMonth: storage };
-  } catch {
-    console.error("METERED_RATES is set but not valid JSON — metered billing stays off");
-    return null;
-  }
 }
 
 const METERED_PRICES = {
@@ -161,7 +147,8 @@ export async function monthToDateUsage(): Promise<
  * Returns how many projects were reported; 0 when inert (no METERED_RATES).
  */
 export async function reportMeteredUsage(): Promise<number> {
-  const rates = meteredRates();
+  // Console Platform Settings first, METERED_RATES env fallback.
+  const rates = await effectiveMeteredRates();
   if (!rates) return 0; // inert until the operator sets rates
 
   const billable = await controlDb

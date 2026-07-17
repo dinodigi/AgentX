@@ -79,3 +79,42 @@ export async function unsuspendProjectAction(projectId: string): Promise<{ error
   revalidatePath(`/admin/${projectId}`, "layout");
   return { ok: true };
 }
+
+/** Platform Settings: caps overrides + metered rates, operator-edited (no env). */
+export async function savePlatformSettingsAction(input: {
+  capsSandbox: Record<string, number>;
+  capsPaid: Record<string, number>;
+  meteredRates: { computeCentsPerCuHour: number; storageCentsPerGbMonth: number } | null;
+}): Promise<{ error?: string; ok?: boolean }> {
+  const viewer = await getViewer();
+  if (!viewer?.isPlatformOperator) return { error: "Platform operators only" };
+  const { setSetting, deleteSetting } = await import("@/lib/platform-settings");
+
+  const cleanCaps = (o: Record<string, number>) => {
+    const out: Record<string, number> = {};
+    for (const k of ["entries", "collections", "assetBytes", "dataBytes"]) {
+      const v = Number(o[k]);
+      if (Number.isFinite(v) && v > 0) out[k] = Math.floor(v);
+    }
+    return out;
+  };
+  await setSetting("caps.sandbox", cleanCaps(input.capsSandbox));
+  await setSetting("caps.paid", cleanCaps(input.capsPaid));
+
+  if (input.meteredRates) {
+    const compute = Number(input.meteredRates.computeCentsPerCuHour);
+    const storage = Number(input.meteredRates.storageCentsPerGbMonth);
+    if (!Number.isFinite(compute) || compute < 0 || !Number.isFinite(storage) || storage < 0) {
+      return { error: "Metered rates must be non-negative numbers (cents)" };
+    }
+    await setSetting("meteredRates", { computeCentsPerCuHour: compute, storageCentsPerGbMonth: storage });
+  } else {
+    // null = metering OFF (unless the METERED_RATES env is set as a fallback)
+    await deleteSetting("meteredRates");
+  }
+  // (platform_events is project-scoped; settings edits are traceable via
+  // platform_settings.updated_at)
+  revalidatePath("/admin/console/settings");
+  revalidatePath("/admin/console");
+  return { ok: true };
+}

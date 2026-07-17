@@ -1,8 +1,10 @@
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { and, count, eq, isNull, sql } from "drizzle-orm";
+import { db } from "@/db";
 import { tenantDb } from "@/lib/data-plane";
-import { entries, type AuditActor } from "@/db/schema";
+import { assets, entries, rateWindows, usageDaily, type AuditActor } from "@/db/schema";
+import { effectiveCaps } from "@/lib/platform-settings";
 import { listCollections } from "@/lib/collections";
 import { listConnectors } from "@/lib/connectors";
 import { listAuditLog } from "@/lib/audit";
@@ -52,7 +54,8 @@ export default async function ProjectHome({
   }
 
   const tdb = await tenantDb(projectId);
-  const [collections, entryCounts, lastByCol, unhandledByCol, connectors, audit, h] =
+  const today = new Date().toISOString().slice(0, 10);
+  const [collections, entryCounts, lastByCol, unhandledByCol, connectors, audit, h, dataBytesRow, assetBytesRow, reqRolled, reqLive, caps] =
     await Promise.all([
       listCollections(projectId),
       tdb.select({ id: entries.collectionId, n: count() }).from(entries).where(eq(entries.projectId, projectId)).groupBy(entries.collectionId),
@@ -61,6 +64,13 @@ export default async function ProjectHome({
       listConnectors(projectId),
       listAuditLog(projectId, { limit: 6, offset: 0 }),
       headers(),
+      // Usage card: stored content + media (tenant plane) and requests today
+      // (control plane: rollup + still-live windows, same math as the console).
+      tdb.select({ total: sql<string>`coalesce(sum(pg_column_size(${entries.data})), 0)` }).from(entries).where(eq(entries.projectId, projectId)),
+      tdb.select({ total: sql<string>`coalesce(sum(${assets.size}::bigint), 0)` }).from(assets).where(eq(assets.projectId, projectId)),
+      db.select({ n: usageDaily.count }).from(usageDaily).where(and(eq(usageDaily.projectId, projectId), eq(usageDaily.day, today))),
+      db.select({ n: sql<string>`coalesce(sum(${rateWindows.count}), 0)` }).from(rateWindows).where(sql`${rateWindows.projectId} = ${projectId} AND (${rateWindows.windowStart} AT TIME ZONE 'UTC')::date = ${today}`),
+      effectiveCaps(),
     ]);
 
   const countById = new Map(entryCounts.map((c) => [c.id, c.n]));
@@ -103,6 +113,18 @@ export default async function ProjectHome({
       connectors={connectors.map((c) => ({ type: c.type, status: c.status }))}
       entries={totalEntries}
       unhandled={totalUnhandled}
+      usage={{
+        plan: project.plan ?? null,
+        dataBytes: Number(dataBytesRow[0]?.total ?? 0),
+        assetBytes: Number(assetBytesRow[0]?.total ?? 0),
+        requestsToday: (reqRolled[0]?.n ?? 0) + Number(reqLive[0]?.n ?? 0),
+        caps:
+          project.plan === "sandbox"
+            ? caps.sandbox
+            : project.plan === "byo" || project.plan === "managed"
+              ? caps.paid
+              : null,
+      }}
       activity={audit.map(
         (a): ActivityItem => ({
           when: whenLabel(a.createdAt),
