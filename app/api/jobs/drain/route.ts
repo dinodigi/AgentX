@@ -4,6 +4,7 @@ import { bearerFrom } from "@/lib/tokens";
 import { drainJobs, reclaimStale } from "@/lib/jobs";
 import { tickSchedules } from "@/lib/schedules";
 import { rollupUsage } from "@/lib/ratelimit";
+import { snapshotNeonUsage } from "@/lib/neon-usage";
 import { HANDLERS } from "@/lib/job-handlers";
 
 /**
@@ -45,7 +46,15 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     console.error("usage rollup failed (will retry next drain)", e instanceof Error ? e.message : e);
   }
-  return json(200, { ...result, reclaimed, ticked, rolledUp });
+  // Track 4b: Neon consumption sweep (managed planes; self-throttled ~6h).
+  // Same contract as the rollup — never fails the drain.
+  let neonUsage = 0;
+  try {
+    neonUsage = await snapshotNeonUsage();
+  } catch (e) {
+    console.error("neon usage snapshot failed (will retry next drain)", e instanceof Error ? e.message : e);
+  }
+  return json(200, { ...result, reclaimed, ticked, rolledUp, neonUsage });
 }
 
 function constantTimeEqual(a: string, b: string): boolean {

@@ -4,6 +4,7 @@ import {
   text,
   boolean,
   integer,
+  bigint,
   bigserial,
   date,
   jsonb,
@@ -411,6 +412,34 @@ export const usageDaily = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     day: date("day").notNull(),
     count: integer("count").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.projectId, t.day] })],
+);
+
+/**
+ * Track 4b: per-project Neon consumption snapshots — MANAGED data planes only
+ * (BYO databases are the customer's cost). The Neon project object reports
+ * CURRENT-billing-period totals, so one row per (project, day) holds the
+ * latest snapshot that day; day-over-day deltas are computed at read time.
+ * consumption_period_start detects period resets so a delta never goes
+ * negative silently. Captured by the drain cron (lib/neon-usage.ts); feeds
+ * the per-project stats surface (4c) and metered billing (4d).
+ */
+export const neonUsageDaily = pgTable(
+  "neon_usage_daily",
+  {
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    day: date("day").notNull(),
+    computeTimeSeconds: bigint("compute_time_seconds", { mode: "number" }).notNull().default(0),
+    activeTimeSeconds: bigint("active_time_seconds", { mode: "number" }).notNull().default(0),
+    writtenDataBytes: bigint("written_data_bytes", { mode: "number" }).notNull().default(0),
+    dataStorageBytesHour: bigint("data_storage_bytes_hour", { mode: "number" }).notNull().default(0),
+    /** Neon's storage-cost driver: logical size + history (bytes). */
+    syntheticStorageSizeBytes: bigint("synthetic_storage_size_bytes", { mode: "number" }).notNull().default(0),
+    consumptionPeriodStart: timestamp("consumption_period_start", { withTimezone: true }),
+    capturedAt: timestamp("captured_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.projectId, t.day] })],
 );

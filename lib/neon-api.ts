@@ -95,6 +95,37 @@ export async function waitForNeonProject(neonProjectId: string, timeoutMs = 90_0
 }
 
 /**
+ * Per-project consumption for the CURRENT billing period, read straight off
+ * the project object (Track 4b). Broadly available — unlike the time-series
+ * /consumption_history endpoints (Scale+ only), which we don't need to bill:
+ * we snapshot these totals daily and diff. Missing fields read as 0 so a
+ * Neon-side shape change degrades to "no data", never a crash.
+ */
+export interface NeonProjectConsumption {
+  computeTimeSeconds: number;
+  activeTimeSeconds: number;
+  writtenDataBytes: number;
+  dataStorageBytesHour: number;
+  syntheticStorageSizeBytes: number;
+  consumptionPeriodStart: string | null;
+}
+
+export async function getNeonProjectConsumption(neonProjectId: string): Promise<NeonProjectConsumption> {
+  const resp = await neonFetch(`/projects/${neonProjectId}`);
+  const p = (resp.project ?? {}) as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    computeTimeSeconds: num(p.compute_time_seconds),
+    activeTimeSeconds: num(p.active_time_seconds),
+    writtenDataBytes: num(p.written_data_bytes),
+    dataStorageBytesHour: num(p.data_storage_bytes_hour),
+    syntheticStorageSizeBytes: num(p.synthetic_storage_size),
+    consumptionPeriodStart:
+      typeof p.consumption_period_start === "string" ? p.consumption_period_start : null,
+  };
+}
+
+/**
  * Delete the tenant's Neon project (managed teardown). A 404 is success — the
  * project is already gone, and retries after a network blip must not wedge
  * (Neon-side deletion is recoverable for 7 days via their console/API, so an
