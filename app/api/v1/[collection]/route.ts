@@ -368,6 +368,9 @@ export async function POST(
       // from a plain E_VALIDATION so delivery clients branch correctly.
       if (e.code === "E_HOOK_FAILED") return deliveryError(502, e.message, undefined, undefined, "E_HOOK_FAILED");
       if (e.code === "E_HOOK_REJECTED") return deliveryError(422, e.message, undefined, undefined, "E_HOOK_REJECTED");
+      // 0d: a cap/quota hit is 429 E_CAP_REACHED, not a validation error —
+      // clients must branch to "at capacity", not "fix the payload".
+      if (e.code === "E_CAP_REACHED") return deliveryError(429, e.message, undefined, undefined, "E_CAP_REACHED");
       return deliveryError(422, e.message, undefined, e.issues);
     }
     return deliveryError(500, "internal error");

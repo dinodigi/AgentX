@@ -73,7 +73,11 @@ export async function POST(
     });
     return corsJson({ id: asset.id, url: asset.url }, { status: 201 });
   } catch (e) {
-    if (e instanceof ValidationError) return deliveryError(422, e.message, undefined, e.issues);
+    if (e instanceof ValidationError) {
+      // 0d: cap hits are quota semantics (429 E_CAP_REACHED), not validation.
+      if (e.code === "E_CAP_REACHED") return deliveryError(429, e.message, undefined, undefined, "E_CAP_REACHED");
+      return deliveryError(422, e.message, undefined, e.issues);
+    }
     return deliveryError(500, "upload failed");
   }
 }

@@ -203,7 +203,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       data: localizeView(toPublicView(collection, resolved), collection.fields, locales),
     });
   } catch (e) {
-    if (e instanceof ValidationError) return err(422, e.message, undefined, e.issues);
+    if (e instanceof ValidationError) {
+      // 0d: cap hits are quota semantics (429 E_CAP_REACHED), not validation.
+      if (e.code === "E_CAP_REACHED") return deliveryError(429, e.message, undefined, undefined, "E_CAP_REACHED");
+      return err(422, e.message, undefined, e.issues);
+    }
     throw e;
   }
 }
