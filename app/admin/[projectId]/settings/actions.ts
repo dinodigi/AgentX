@@ -706,7 +706,7 @@ export async function togglePluginAction(
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
   const { getPluginDef, enablePlugin, disablePlugin } = await import("@/lib/plugins");
-  if (!getPluginDef(pluginId)) return { error: "Unknown plugin" };
+  if (!(await getPluginDef(projectId, pluginId))) return { error: "Unknown plugin" };
   if (enable) await enablePlugin(projectId, pluginId);
   else await disablePlugin(projectId, pluginId);
   revalidatePath(`/admin/${projectId}/settings`);

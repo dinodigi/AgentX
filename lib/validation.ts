@@ -411,13 +411,17 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
         message: "searchable is only valid on text/richtext fields",
       });
     }
-    if (f.indexed && (f.type === "richtext" || f.type === "group" || f.type === "array")) {
+    if (f.indexed && (f.type === "richtext" || f.type === "group" || f.type === "array" || f.type === "date")) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
           f.type === "richtext"
             ? "indexed is not valid on richtext — use searchable for full-text"
-            : "indexed is not valid on group/array — nested content isn't filterable/sortable",
+            : f.type === "date"
+              ? // Postgres rejects a ::timestamptz expression index (the cast is
+                // STABLE, not IMMUTABLE) — was surfacing as E_INTERNAL at define.
+                "indexed is not supported on date fields yet — date filters run unindexed (fine at moderate scale); index a text/number/enum dimension instead"
+              : "indexed is not valid on group/array — nested content isn't filterable/sortable",
       });
     }
     if (f.pattern !== undefined) {

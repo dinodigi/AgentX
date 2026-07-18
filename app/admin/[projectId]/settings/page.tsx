@@ -9,7 +9,7 @@ import { listCollections } from "@/lib/collections";
 import { listSchedules } from "@/lib/schedules";
 import { listProjectPlatformEvents } from "@/lib/platform-events";
 import { TokensSection, WebhookForm, MembersSection, SecretReveal, ManageBillingButton, PluginsSection } from "./sections";
-import { PLUGIN_CATALOG, enabledPlugins } from "@/lib/plugins";
+import { effectiveCatalog, enabledPlugins } from "@/lib/plugins";
 import { DeleteProjectSection } from "./DeleteProjectSection";
 import { refireDeliveryAction, cancelJobAction, toggleScheduleAction } from "./actions";
 
@@ -77,6 +77,7 @@ export default async function SettingsPage({
     listProjectPlatformEvents(projectId, 12),
     enabledPlugins(projectId),
   ]);
+  const pluginCatalog = await effectiveCatalog(projectId);
 
   const formCollections = collections.filter((c) => c.publicWrite);
 
@@ -339,7 +340,7 @@ export default async function SettingsPage({
         </p>
         <PluginsSection
           projectId={projectId}
-          plugins={PLUGIN_CATALOG.map((p) => ({
+          plugins={pluginCatalog.map((p) => ({
             id: p.id,
             name: p.name,
             version: p.version,

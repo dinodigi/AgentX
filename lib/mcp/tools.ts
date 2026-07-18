@@ -48,8 +48,10 @@ import { uploadAsset } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
 import { setLocales } from "@/lib/locales";
 import {
-  PLUGIN_CATALOG,
+  effectiveCatalog,
   getPluginDef,
+  upsertPluginDef,
+  deletePluginDef,
   enabledPlugins,
   pluginEnabled,
   enablePlugin,
@@ -224,6 +226,32 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: { name: { type: "string" } },
       required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "define_plugin",
+    description:
+      "Author or update a plugin IN THIS PROJECT'S private catalog (never visible to other " +
+      "projects — the platform-global catalog is operator-curated). A plugin = {id, version, name, " +
+      "description, structure?: {intent, baseline:[collection specs incl. workflow/publicFilter/" +
+      "access/events], reconcile}, guidance?, acceptance?}. Use it to package a proven domain model " +
+      "(a client CRM, a booking system) so it's installable via enable_plugin + get_plugin like any " +
+      "catalog plugin. Baseline fields are validated now; workflow/filters validate when applied.",
+    inputSchema: {
+      type: "object",
+      properties: { definition: { type: "object", description: "the full PluginDef" } },
+      required: ["definition"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "delete_plugin",
+    description: "Remove a plugin from THIS project's private catalog (built-ins/global are operator-managed).",
+    inputSchema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
       additionalProperties: false,
     },
   },
@@ -1550,10 +1578,27 @@ export async function callTool(
             );
       }
 
+      case "define_plugin": {
+        const a = rawArgs as { definition?: unknown };
+        if (!a?.definition || typeof a.definition !== "object") {
+          return err("definition (the full PluginDef object) is required", "E_VALIDATION");
+        }
+        const def = await upsertPluginDef(a.definition, projectId); // ALWAYS project-scoped via MCP
+        return ok({ defined: def.id, version: def.version, scope: "this project only" });
+      }
+      case "delete_plugin": {
+        const a = rawArgs as { id?: string };
+        if (typeof a?.id !== "string") return err("id is required", "E_VALIDATION");
+        const deleted = await deletePluginDef(a.id, projectId);
+        return deleted
+          ? ok({ deleted: a.id })
+          : err(`no project-scoped plugin "${a.id}" here (built-ins/global are operator-managed)`, "E_NOT_FOUND");
+      }
+
       case "list_plugins": {
-        const enabled = await enabledPlugins(projectId);
+        const [enabled, catalog] = await Promise.all([enabledPlugins(projectId), effectiveCatalog(projectId)]);
         return ok(
-          PLUGIN_CATALOG.map((p) => ({
+          catalog.map((p) => ({
             id: p.id,
             name: p.name,
             version: p.version,
@@ -1570,7 +1615,7 @@ export async function callTool(
 
       case "get_plugin": {
         const a = rawArgs as { id?: string };
-        const def = typeof a?.id === "string" ? getPluginDef(a.id) : null;
+        const def = typeof a?.id === "string" ? await getPluginDef(projectId, a.id) : null;
         if (!def) {
           return err(
             `unknown plugin "${a?.id ?? ""}" — list_plugins shows what's available`,
@@ -1582,7 +1627,7 @@ export async function callTool(
 
       case "enable_plugin": {
         const a = rawArgs as { id?: string };
-        const def = typeof a?.id === "string" ? getPluginDef(a.id) : null;
+        const def = typeof a?.id === "string" ? await getPluginDef(projectId, a.id) : null;
         if (!def) {
           return err(
             `unknown plugin "${a?.id ?? ""}" — list_plugins shows what's available`,
@@ -1600,7 +1645,7 @@ export async function callTool(
 
       case "disable_plugin": {
         const a = rawArgs as { id?: string };
-        const def = typeof a?.id === "string" ? getPluginDef(a.id) : null;
+        const def = typeof a?.id === "string" ? await getPluginDef(projectId, a.id) : null;
         if (!def) {
           return err(
             `unknown plugin "${a?.id ?? ""}" — list_plugins shows what's available`,

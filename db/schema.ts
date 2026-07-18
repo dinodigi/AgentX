@@ -507,6 +507,21 @@ export const platformSettings = pgTable("platform_settings", {
 });
 
 /**
+ * DB-backed plugin catalog (Track 6 decision: client/per-project plugins must
+ * never live in the platform binary). A row is a full PluginDef; project_id
+ * NULL = platform-global (operator-authored), set = visible ONLY to that
+ * project (authored via MCP define_plugin, always scoped to the caller).
+ * Effective catalog = in-code built-ins + global rows + the project's rows.
+ * Uniqueness via expression index (id, COALESCE(project_id, zero-uuid)).
+ */
+export const pluginDefs = pgTable("plugin_defs", {
+  id: text("id").notNull(),
+  projectId: uuid("project_id"),
+  definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
  * Per-project plugin enablement (Post-Deployment v1.0 Track 2). The catalog is
  * in-code (lib/plugins.ts PLUGIN_CATALOG); this table records which plugins a
  * project has enabled. Enabling unlocks the plugin's MCP tools and signals the

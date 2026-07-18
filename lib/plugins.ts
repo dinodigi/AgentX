@@ -1,7 +1,11 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
+import { sql } from "drizzle-orm";
+import { unstable_cache, revalidateTag } from "next/cache";
+import { z } from "zod";
 import { controlDb } from "@/db";
-import { projectPlugins } from "@/db/schema";
+import { pluginDefs, projectPlugins } from "@/db/schema";
+import { validateFieldDefs, ValidationError } from "./validation";
 import type { FieldDef } from "./field-types";
 
 /**
@@ -35,12 +39,18 @@ export interface PluginDef {
   structure?: {
     /** What the target model achieves (the intent the AI realizes). */
     intent: string;
-    /** Known-good starting spec — collections the AI adapts, not stamps. */
+    /** Known-good starting spec — collections the AI adapts, not stamps.
+     * Carries anything define_collection accepts (workflow, publicFilter,
+     * access, events) — validated when APPLIED, exactly like a direct call. */
     baseline: {
       name: string;
       displayName?: string;
       publicWrite?: boolean;
       fields: FieldDef[];
+      workflow?: unknown;
+      publicFilter?: unknown;
+      access?: unknown;
+      events?: unknown;
     }[];
     /** How to adapt/merge with what already exists (composition rules). */
     reconcile: string;
@@ -158,8 +168,34 @@ export const PLUGIN_CATALOG: PluginDef[] = [
   },
 ];
 
-export function getPluginDef(id: string): PluginDef | null {
-  return PLUGIN_CATALOG.find((p) => p.id === id) ?? null;
+/**
+ * Track 6 (DB-backed catalog): the EFFECTIVE catalog a project sees =
+ * in-code built-ins + platform-global DB defs + this project's own defs.
+ * Client plugins live in plugin_defs, never the binary. Cached 60s + tagged
+ * (the standing rule: revalidateTag is per-instance; TTL converges the fleet).
+ */
+export async function effectiveCatalog(projectId: string): Promise<PluginDef[]> {
+  const cached = unstable_cache(
+    async () => {
+      const rows = await controlDb
+        .select({ id: pluginDefs.id, projectId: pluginDefs.projectId, definition: pluginDefs.definition })
+        .from(pluginDefs)
+        .where(or(isNull(pluginDefs.projectId), eq(pluginDefs.projectId, projectId)));
+      return rows;
+    },
+    ["plugin-defs", projectId],
+    { tags: ["plugin-defs", `project:${projectId}`], revalidate: 60 },
+  );
+  const rows = await cached();
+  const fromDb = rows.map((r) => r.definition as unknown as PluginDef);
+  // A DB def with a built-in's id overrides it (project-scoped wins last).
+  const byId = new Map<string, PluginDef>();
+  for (const p of [...PLUGIN_CATALOG, ...fromDb]) byId.set(p.id, p);
+  return [...byId.values()];
+}
+
+export async function getPluginDef(projectId: string, id: string): Promise<PluginDef | null> {
+  return (await effectiveCatalog(projectId)).find((p) => p.id === id) ?? null;
 }
 
 /** The project's enabled plugin ids. */
@@ -189,4 +225,89 @@ export async function disablePlugin(projectId: string, pluginId: string): Promis
   await controlDb
     .delete(projectPlugins)
     .where(and(eq(projectPlugins.projectId, projectId), eq(projectPlugins.pluginId, pluginId)));
+}
+
+/* ── DB-backed authoring (Track 6) ─────────────────────────────────────── */
+
+const NAME_RE = /^[a-z][a-z0-9_]*$/;
+const baselineCollectionSchema = z
+  .object({
+    name: z.string().regex(NAME_RE),
+    displayName: z.string().optional(),
+    publicWrite: z.boolean().optional(),
+    fields: z.array(z.unknown()).min(1),
+    // Validated when APPLIED via define_collection — carried opaquely here.
+    workflow: z.unknown().optional(),
+    publicFilter: z.unknown().optional(),
+    access: z.unknown().optional(),
+    events: z.unknown().optional(),
+  })
+  .strict();
+const pluginDefSchema = z
+  .object({
+    id: z.string().regex(NAME_RE, "plugin id must be snake_case"),
+    version: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().min(1),
+    structure: z
+      .object({ intent: z.string().min(1), baseline: z.array(baselineCollectionSchema), reconcile: z.string().min(1) })
+      .strict()
+      .optional(),
+    tools: z.array(z.string()).optional(),
+    guidance: z.string().optional(),
+    acceptance: z.array(z.string()).optional(),
+  })
+  .strict();
+
+/**
+ * Author/update a plugin definition. projectId set → visible ONLY to that
+ * project (the MCP path — an agent can never publish into other tenants'
+ * catalogs); projectId null → platform-global (operator/seed-script only).
+ * Baseline field defs are deep-validated now; workflow/filters validate at
+ * apply time through define_collection like any direct call.
+ */
+export async function upsertPluginDef(def: unknown, projectId: string | null): Promise<PluginDef> {
+  let parsed: z.infer<typeof pluginDefSchema>;
+  try {
+    parsed = pluginDefSchema.parse(def);
+  } catch (e) {
+    if (e instanceof z.ZodError) {
+      throw new ValidationError(
+        "invalid plugin definition: " + e.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.message}`).join("; "),
+      );
+    }
+    throw e;
+  }
+  for (const c of parsed.structure?.baseline ?? []) {
+    try {
+      validateFieldDefs(c.fields);
+    } catch (e) {
+      throw new ValidationError(
+        `baseline collection "${c.name}": ${e instanceof z.ZodError ? e.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") : e instanceof Error ? e.message : "invalid fields"}`,
+      );
+    }
+  }
+  // Built-in ids are reserved — a DB def must not shadow seo/contact_forms.
+  if (PLUGIN_CATALOG.some((p) => p.id === parsed.id)) {
+    throw new ValidationError(`"${parsed.id}" is a built-in plugin id — pick another`);
+  }
+  const scope = projectId ?? null;
+  await controlDb.execute(sql`
+    INSERT INTO plugin_defs (id, project_id, definition, updated_at)
+    VALUES (${parsed.id}, ${scope}, ${JSON.stringify(parsed)}::jsonb, now())
+    ON CONFLICT (id, COALESCE(project_id, '00000000-0000-0000-0000-000000000000'::uuid))
+    DO UPDATE SET definition = EXCLUDED.definition, updated_at = now()`);
+  revalidateTag("plugin-defs");
+  if (projectId) revalidateTag(`project:${projectId}`);
+  return parsed as PluginDef;
+}
+
+export async function deletePluginDef(id: string, projectId: string | null): Promise<boolean> {
+  const result = await controlDb.execute(sql`
+    DELETE FROM plugin_defs WHERE id = ${id}
+      AND COALESCE(project_id, '00000000-0000-0000-0000-000000000000'::uuid)
+        = COALESCE(${projectId}, '00000000-0000-0000-0000-000000000000'::uuid)`);
+  revalidateTag("plugin-defs");
+  const rows = (result as unknown as { rowCount?: number }).rowCount ?? 0;
+  return rows > 0;
 }
