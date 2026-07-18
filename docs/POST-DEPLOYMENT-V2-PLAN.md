@@ -1,6 +1,14 @@
 # Post-Deployment v2 Plan
 
-**Status (2026-07-17 EOD): CORE SHIPPED — 9 items live on pluggie.app in one run** (c1851d8→9a7a047): ✅ Track 0 complete (0b F6 clamp, 0a storage guardrail, 0c audit retention, 0d error codes) · ✅ Track 1 complete (1a relations-in-blocks, 1b block library) · ✅ Track 3 complete (3b ne/exists, 3a batch reads) · ✅ 2a email senders · ✅ Track 5 audit_site (SEO v2 as scoped). **REMAINING (paced):** 2b inbound email · 2c template management · Track 4 docs/legibility (positioning, token-split docs) · Track 6 marketplace gallery + package-project-as-plugin · Track 7 infra (status page = operator config, purge-on-write, plane migration, tenant-migration fan-out, HA re-run, Phase C, edge reader — mostly trigger-based). Original plan below.
+**Status (2026-07-17 EOD): v2 CLOSED OUT — every track at a terminal state.** 11 code/doc items shipped live on pluggie.app in one run (c1851d8→d187a46+): ✅ Track 0 (0b F6 clamp, 0a storage guardrail, 0c audit retention, 0d error codes) · ✅ Track 1 (1a relations-in-blocks, 1b block library) · ✅ Track 2 (2a email senders, **2b inbound email**) · ✅ Track 3 (3b ne/exists, 3a batch reads) · ✅ Track 5 (audit_site) · ✅ Track 4 docs half (two-token-split in get_project_info, error-copy audited in 0d) + status-page setup doc.
+
+**Terminal dispositions for the non-code remainder:**
+- **2c email template management UI** — DEFERRED (nice-to-have; the send ENGINE + `html` templates work today via define_collection; a human template-builder is low-priority for an AI-authored product). Revisit on demand.
+- **Track 4 positioning (landing page)** — the "not-WordPress" thesis is captured in `docs/ARCHITECTURE-RATIONALE.md`; APPLYING it to the marketing landing page is a DESIGN pass, not a code task. Handed to design.
+- **Track 6 marketplace gallery + package-project-as-plugin** — DECISION-GATED: needs the catalog-storage call (in-code PLUGIN_CATALOG vs DB-backed) before the authoring tool + gallery UI. First-party-only direction is set; build once the storage decision is made.
+- **Track 7 infra** — status page = OPERATOR config (`docs/STATUS-PAGE-SETUP.md`, ~10 min external monitor); the rest (CDN purge-on-write, plane migration, tenant-migration fan-out, HA re-run, edge reader, Phase C) are TRIGGER-BASED — build when the specific pressure appears, not speculatively.
+
+Original plan + full track detail below.
 
 **Status:** planning (2026-07-17). **Source of truth for the next build phase** — carries everything open after v1.0 shipped + the Stallion dogfood triage, so nothing gets lost. v1.0 (all shipped, deployed, live-verified): CDN edge cache, caps/metering/stats/metered-rails, block types, plugin system, SEO plugin, Platform Settings console + tenant usage cards. Field report + same-day fixes: multi-instance cache TTLs, SEO non-200 guard, JSON MCP auth errors (6dceefa).
 

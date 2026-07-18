@@ -1780,6 +1780,12 @@ export async function callTool(
             conventions:
               "errors are {error, code} with stable E_* codes; GETs carry ETags " +
               "(send If-None-Match, get 304)",
+            tokenScopes:
+              "TWO token scopes, do not mix them: an MCP-scoped token authors the backend at " +
+              "{mcpEndpoint} (define_collection, entries, config — this connection); a DELIVERY-scoped " +
+              "token reads/writes published content at {deliveryBase} (public API your site/app uses). " +
+              "A delivery token on the MCP endpoint (or vice versa) is rejected with E_SCOPE — mint the " +
+              "right scope in Settings → Tokens.",
             batch:
               "POST {deliveryBase}/batch { queries: [{collection, params?}, ...] } (max 10) answers " +
               "several reads in ONE round trip — params = the same keys as the list GET's query " +
