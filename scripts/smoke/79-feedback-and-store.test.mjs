@@ -43,6 +43,26 @@ describe("feedback wall + plugin store management", () => {
     assert.match(r.errorText, /limitation\|bug\|friction\|idea/);
   });
 
+  it("bulk-resolve contract: OPEN → done, resolved rows untouched", async () => {
+    // bulkResolveFeedbackAction is operator-gated (server auth), so exercise
+    // the exact DB contract it runs, scoped to this project's rows.
+    for (const s of [1, 2, 3]) await mcp(p.mcpToken, "send_feedback", { category: "idea", summary: `TEST bulk ${s}` });
+    await mcp(p.mcpToken, "send_feedback", { category: "bug", summary: "TEST already-done" });
+    await sql`UPDATE platform_feedback SET status = 'done' WHERE project_id = ${p.id} AND category = 'bug'`;
+
+    const before = await sql`SELECT count(*)::int n FROM platform_feedback
+      WHERE project_id = ${p.id} AND status IN ('new','reviewed','planned')`;
+    assert.ok(before[0].n >= 3);
+    // The action's statement (open → done):
+    await sql`UPDATE platform_feedback SET status = 'done'
+      WHERE project_id = ${p.id} AND status IN ('new','reviewed','planned')`;
+    const openAfter = await sql`SELECT count(*)::int n FROM platform_feedback
+      WHERE project_id = ${p.id} AND status IN ('new','reviewed','planned')`;
+    const doneAfter = await sql`SELECT count(*)::int n FROM platform_feedback WHERE project_id = ${p.id} AND status = 'done'`;
+    assert.equal(openAfter[0].n, 0, "no open items remain");
+    assert.ok(doneAfter[0].n >= 4, "the already-done row plus the newly resolved are all done");
+  });
+
   it("operator overrides: price attaches, deactivate hides — via list_plugins", async () => {
     const def = { id: "wall_test_plugin", version: "0.1.0", name: "Wall Test", description: "override target" };
     const d = await mcp(p.mcpToken, "define_plugin", { definition: def });

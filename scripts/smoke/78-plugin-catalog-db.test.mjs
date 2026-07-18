@@ -50,7 +50,7 @@ describe("DB plugin catalog + Countryside CRM plugin", () => {
     const g = await mcp(p.mcpToken, "get_plugin", { id: "countryside_crm" });
     assert.ok(g.ok, g.errorText);
     assert.equal(g.value.enabled, true);
-    assert.equal(g.value.structure.baseline.length, 5);
+    assert.equal(g.value.structure.baseline.length, 6); // + reps (v1.1)
   });
 
   it("APPLY: the full baseline defines cleanly (workflow + computed-unique included)", async () => {
@@ -122,7 +122,7 @@ describe("DB plugin catalog + Countryside CRM plugin", () => {
     assert.ok(otherSlot.ok, "different slot books fine");
   });
 
-  it("the unprotected queue = owner exists:false (the 3.1k-backlog query)", async () => {
+  it("the unprotected queue = owner exists:false, and owner is a rep RELATION", async () => {
     const q = await mcp(p.mcpToken, "query_entries", {
       collection: "leads",
       where: [{ field: "owner", op: "exists", value: false }],
@@ -130,13 +130,28 @@ describe("DB plugin catalog + Countryside CRM plugin", () => {
     assert.ok(q.ok, q.errorText);
     const rows = q.value.entries ?? q.value;
     assert.ok(rows.length >= 2, "both ownerless leads surface");
-    // Protect one; it must leave the queue.
+    // A rep is a real entry now — protect by its id (relation), not a string.
+    const rep = await mcp(p.mcpToken, "create_entry", { collection: "reps", data: { name: "Dana", active: true } });
+    assert.ok(rep.ok, rep.errorText);
     const id = rows[0].id;
-    await mcp(p.mcpToken, "update_entry", { collection: "leads", id, data: { owner: "Dana" } });
+    const assign = await mcp(p.mcpToken, "update_entry", { collection: "leads", id, data: { owner: rep.value.id } });
+    assert.ok(assign.ok, assign.errorText);
     const after = await mcp(p.mcpToken, "query_entries", {
       collection: "leads",
       where: [{ field: "owner", op: "exists", value: false }],
     });
     assert.ok(!(after.value.entries ?? after.value).some((r) => r.id === id), "protected lead left the queue");
+  });
+
+  it("leads-by-rep report runs (groupBy owner) — the v1.1 defect fix", async () => {
+    // The recipe the plugin's own guidance advertises; impossible when owner
+    // was text (aggregate groupBy needs enum/relation).
+    const r = await mcp(p.mcpToken, "aggregate_entries", {
+      collection: "leads",
+      groupBy: "owner",
+      aggregates: [{ fn: "count" }],
+    });
+    assert.ok(r.ok, r.errorText);
+    assert.ok(Array.isArray(r.value.groups), JSON.stringify(r.value));
   });
 });

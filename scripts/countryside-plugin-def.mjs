@@ -13,7 +13,7 @@
  */
 export const COUNTRYSIDE_PLUGIN = {
   id: "countryside_crm",
-  version: "1.0.0",
+  version: "1.1.0",
   name: "Countryside Land-Tour CRM",
   description:
     "Land-tour sales machine replacing a Salesforce org: ranch-scoped leads with a protection/recycle lifecycle, KIT cadence, appointment board with no-double-book, opportunities, and live report recipes. Lean first cut per the reference architecture (§10).",
@@ -34,18 +34,31 @@ export const COUNTRYSIDE_PLUGIN = {
         ],
       },
       {
+        // Sales reps — a first-class collection so leads.owner is a RELATION,
+        // which makes the documented "leads-by-rep = groupBy owner" report
+        // actually run (aggregate groupBy needs enum/relation, not text). v1.1.
+        name: "reps",
+        displayName: "Reps",
+        fields: [
+          { name: "name", label: "Name", type: "text", required: true, unique: true, searchable: true },
+          { name: "email", label: "Email", type: "text" },
+          { name: "active", label: "Active", type: "boolean" },
+        ],
+      },
+      {
         name: "leads",
         displayName: "Leads",
         publicWrite: true, // ranch site forms POST straight in
         fields: [
-          { name: "name", label: "Name", type: "text", required: true },
-          { name: "email", label: "Email", type: "text", indexed: true },
-          { name: "phone", label: "Phone", type: "text" },
+          { name: "name", label: "Name", type: "text", required: true, searchable: true }, // ?q=/search_entries
+          { name: "email", label: "Email", type: "text", indexed: true, searchable: true },
+          { name: "phone", label: "Phone", type: "text", searchable: true },
           { name: "ranch_code", label: "Ranch code", type: "text", indexed: true }, // form-supplied; agent links `ranch`
           { name: "ranch", label: "Ranch", type: "relation", targetCollection: "ranches", labelField: "name", writableBy: "none" },
           { name: "source", label: "Source", type: "enum", options: ["web", "callrail", "referral", "other"] },
-          { name: "owner", label: "Owner (rep)", type: "text", writableBy: "none", indexed: true }, // unset = UNPROTECTED
-          { name: "previous_owner", label: "Previous owner", type: "text", writableBy: "none" },
+          // RELATION to reps — unset = UNPROTECTED; enables groupBy owner reporting.
+          { name: "owner", label: "Owner (rep)", type: "relation", targetCollection: "reps", labelField: "name", writableBy: "none", indexed: true },
+          { name: "previous_owner", label: "Previous owner", type: "relation", targetCollection: "reps", labelField: "name", writableBy: "none" },
           { name: "min_price", label: "Min price", type: "number" },
           { name: "max_price", label: "Max price", type: "number" },
           { name: "state_interest", label: "State interest", type: "text" },
@@ -124,21 +137,24 @@ export const COUNTRYSIDE_PLUGIN = {
       },
     ],
     reconcile:
-      "Fresh client project: apply the baseline as-is, then seed `ranches` with their five (SPR/SOR/" +
-      "HCR/CCR/GOR — confirm the CCR/GOR full names, doc §11). If a collection already exists, " +
-      "EXTEND it. Point each ranch site's form at POST /v1/leads (publicWrite) sending name/email/" +
-      "phone/ranch_code/source/honeypot; CallRail via the inbound webhook or a form relay. Keep " +
-      "internal fields (owner, status, rating, KIT dates) writableBy:'none' — web can never set them.",
+      "Fresh client project: apply the baseline IN ORDER (reps + ranches exist before leads relates " +
+      "to them). Seed `ranches` with their five (SPR/SOR/HCR/CCR/GOR — confirm CCR/GOR names, doc " +
+      "§11) and `reps` with the active sales reps (owner/previous_owner are RELATIONS to reps — " +
+      "assign by rep id). If a collection already exists, EXTEND it. Point each ranch site's form " +
+      "at POST /v1/leads (publicWrite) sending name/email/phone/ranch_code/source/honeypot; CallRail " +
+      "via the inbound webhook or a form relay. Keep internal fields (owner, status, rating, KIT " +
+      "dates) writableBy:'none' — web can never set them.",
   },
   tools: [],
   guidance:
     "You are the queue-worker for a land-tour CRM (next-best-action loop, doc §7). CONVENTIONS: " +
-    "PROTECTION = leads.owner set; UNPROTECTED QUEUE = query_entries leads where " +
+    "PROTECTION = leads.owner set (a rep RELATION); UNPROTECTED QUEUE = query_entries leads where " +
     "[{field:'owner',op:'exists',value:false}] (optionally + ranch_code) — this replaces the 3.1k " +
-    "dead pile. ASSIGN = set owner + status new→left_message as you work. RECYCLE SWEEP (run " +
+    "dead pile. ASSIGN = set owner (a reps id) + status new→left_message as you work. RECYCLE SWEEP (run " +
     "daily, YOU are the job): query leads where last_kit_at lt <30 days ago> (or " +
     "last_activity_at stale) and status in [left_message,kit] → for each: set previous_owner = " +
-    "owner, clear owner (null), transition status→unprotected. KIT CADENCE: logging a KIT = create " +
+    "owner (copy the rep id), clear owner (null), transition status→unprotected. SEARCH leads by " +
+    "name/email/phone via search_entries. KIT CADENCE: logging a KIT = create " +
     "an activities row {type:'kit'} + set leads.last_kit_at/last_activity_at = now + status→kit. " +
     "APPOINTMENTS: create appointments {rep, tour_date, slot} — a duplicate rep+date+slot is " +
     "REJECTED by the unique slot_key (that's the no-double-book guarantee; catch the conflict and " +
@@ -150,7 +166,8 @@ export const COUNTRYSIDE_PLUGIN = {
     "you/admin set it). REPORTS (aggregate_entries): leads-by-rep = groupBy owner; unprotected " +
     "backlog depth = count where owner exists:false; board-by-slot = appointments groupBy slot; " +
     "pipeline = opportunities groupBy stage + sum amount; KIT-overdue = leads where last_kit_at lt " +
-    "<cutoff>. CONVERSION: hot→converted + create the opportunity ([RANCH]-[seq]-[buyers] naming).",
+    "<cutoff>. leads-by-rep = aggregate_entries groupBy owner (works now — owner is a relation). " +
+      "CONVERSION: hot→converted + create the opportunity ([RANCH]-[seq]-[buyers] naming).",
   acceptance: [
     "all five baseline collections exist with the leads workflow enforcing initial status 'new' on every create path",
     "a lead can travel new→left_message→kit→appointment_made and kit→unprotected→new (the recycle re-entry)",

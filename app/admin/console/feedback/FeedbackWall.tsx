@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { setFeedbackStatusAction } from "../actions";
+import { setFeedbackStatusAction, bulkResolveFeedbackAction } from "../actions";
 
 type Item = {
   id: string;
@@ -24,6 +24,20 @@ const catColor: Record<string, string> = {
   idea: "var(--color-ok, #0e7c5f)",
 };
 
+function Stat({ n, label, accent }: { n: number; label: string; accent?: boolean }) {
+  return (
+    <span className="flex items-baseline gap-1.5">
+      <span
+        className="font-mono text-lg font-semibold tabular-nums"
+        style={accent && n > 0 ? { color: "var(--color-accent, #0f766e)" } : undefined}
+      >
+        {n}
+      </span>
+      <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-ink-mute">{label}</span>
+    </span>
+  );
+}
+
 export function FeedbackWall({ items: initial }: { items: Item[] }) {
   const [items, setItems] = useState(initial);
   const [cat, setCat] = useState<(typeof CATEGORIES)[number]>("all");
@@ -40,11 +54,34 @@ export function FeedbackWall({ items: initial }: { items: Item[] }) {
       (!openOnly || (i.status !== "done" && i.status !== "dismissed")),
   );
 
+  const OPEN = new Set(["new", "reviewed", "planned"]);
+  const counts = {
+    total: items.length,
+    open: items.filter((i) => OPEN.has(i.status)).length,
+    done: items.filter((i) => i.status === "done").length,
+    dismissed: items.filter((i) => i.status === "dismissed").length,
+  };
+
   async function setStatus(id: string, status: (typeof STATUSES)[number]) {
     setBusy(id);
     const r = await setFeedbackStatusAction(id, status);
     setBusy(null);
     if (!r.error) setItems((all) => all.map((i) => (i.id === id ? { ...i, status } : i)));
+  }
+
+  async function bulkResolve(status: "done" | "dismissed") {
+    const label = cat === "all" ? "all open items" : `all open ${cat} items`;
+    if (!confirm(`Mark ${label} as ${status}?`)) return;
+    setBusy("bulk");
+    const r = await bulkResolveFeedbackAction(cat, status);
+    setBusy(null);
+    if (!r.error) {
+      setItems((all) =>
+        all.map((i) =>
+          OPEN.has(i.status) && (cat === "all" || i.category === cat) ? { ...i, status } : i,
+        ),
+      );
+    }
   }
 
   // When grouped, section the shown items by project (most items first).
@@ -91,6 +128,34 @@ export function FeedbackWall({ items: initial }: { items: Item[] }) {
 
   return (
     <div className="max-w-3xl">
+      {/* Summary bar — what's left vs done at a glance + bulk resolve */}
+      <div className="mb-4 flex flex-wrap items-center gap-4 rounded-xl border border-line bg-card px-5 py-3">
+        <Stat n={counts.open} label="open" accent />
+        <Stat n={counts.done} label="done" />
+        <Stat n={counts.dismissed} label="dismissed" />
+        <span className="ml-auto flex items-center gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-line-strong">
+            bulk {cat === "all" ? "(all)" : `(${cat})`}
+          </span>
+          <button
+            type="button"
+            disabled={busy === "bulk" || counts.open === 0}
+            onClick={() => bulkResolve("done")}
+            className="btn btn-ghost text-xs disabled:opacity-40"
+          >
+            Resolve open → done
+          </button>
+          <button
+            type="button"
+            disabled={busy === "bulk" || counts.open === 0}
+            onClick={() => bulkResolve("dismissed")}
+            className="btn btn-ghost text-xs disabled:opacity-40"
+          >
+            Dismiss open
+          </button>
+        </span>
+      </div>
+
       {/* Controls: category chips + project filter + group/open toggles */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {CATEGORIES.map((c) => (

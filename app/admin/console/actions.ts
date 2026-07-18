@@ -132,6 +132,22 @@ export async function setFeedbackStatusAction(
   return { ok: true };
 }
 
+/** Bulk-resolve every OPEN feedback item in one category (or all). */
+export async function bulkResolveFeedbackAction(
+  category: string | "all",
+  status: "done" | "dismissed",
+): Promise<{ error?: string; ok?: boolean; count?: number }> {
+  const viewer = await getViewer();
+  if (!viewer?.isPlatformOperator) return { error: "Platform operators only" };
+  const { platformFeedback } = await import("@/db/schema");
+  const { inArray, and, eq: eqCol } = await import("drizzle-orm");
+  const open = inArray(platformFeedback.status, ["new", "reviewed", "planned"]);
+  const where = category === "all" ? open : and(open, eqCol(platformFeedback.category, category));
+  const rows = await db.update(platformFeedback).set({ status }).where(where).returning({ id: platformFeedback.id });
+  revalidatePath("/admin/console/feedback");
+  return { ok: true, count: rows.length };
+}
+
 /** Plugin management: fleet-wide activate/deactivate + display price. */
 export async function savePluginOverrideAction(
   id: string,
