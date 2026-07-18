@@ -177,6 +177,10 @@ export interface BlockDef {
   name: string;
   label: string;
   fields: FieldDef[];
+  /** v1.1b provenance: set when this def was MATERIALIZED from the project's
+   * block library (array:{blocks:["name"]}). define_block re-materializes
+   * every block carrying its name here on a confirmed edit. */
+  library?: string;
 }
 
 /**

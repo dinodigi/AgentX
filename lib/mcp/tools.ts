@@ -56,6 +56,7 @@ import {
   disablePlugin,
 } from "@/lib/plugins";
 import { fetchPageHead, scoreHead } from "@/lib/seo";
+import { defineBlock, deleteBlock, listBlocks } from "@/lib/blocks";
 import { exportEntries } from "@/lib/export";
 import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
 import type { ErrorCode } from "@/lib/error-codes";
@@ -155,6 +156,47 @@ export const TOOL_DEFS: ToolDef[] = [
       "number, boolean, date, enum, asset, relation) and each one's config. You must " +
       `only use these types. ${BOUNDARIES}`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "define_block",
+    description:
+      "Create or update a NAMED block in the project's block library — 'declare a block as a " +
+      "template'. Define once, then reference by name from any collection: " +
+      'array:{blocks:["hero", ...]} (define_collection materializes the full def). Editing a ' +
+      "block that collections already use returns a plan naming them and requires confirm:true — " +
+      "the new shape is re-materialized into every using collection (existing entries keep their " +
+      "stored data; new writes validate against the new shape). Block fields follow the same " +
+      "rules as inline blocks (one-level, `_type` reserved, relation allowed).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "snake_case — the stored `_type` and the reference name" },
+        label: { type: "string" },
+        fields: { type: "array", items: { type: "object" }, description: "the block's FieldDefs" },
+        confirm: { type: "boolean", description: "apply an edit that re-materializes into using collections" },
+      },
+      required: ["name", "label", "fields"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_blocks",
+    description:
+      "The project's block library: each named block with its label, field count, and which " +
+      "collections use it. Check here before inlining a block shape a second time.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "delete_block",
+    description:
+      "Remove a library block. Refused while any collection still uses it (the response lists " +
+      "them) — redefine those collections without it first.",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+      additionalProperties: false,
+    },
   },
   {
     name: "list_plugins",
@@ -1408,6 +1450,24 @@ export async function callTool(
             return { type: c.type, status: c.status, config };
           }),
         );
+      }
+
+      case "define_block": {
+        const a = rawArgs as { name: string; label: string; fields: unknown[]; confirm?: boolean };
+        return ok(await defineBlock(projectId, a));
+      }
+      case "list_blocks":
+        return ok(await listBlocks(projectId));
+      case "delete_block": {
+        const a = rawArgs as { name?: string };
+        if (typeof a?.name !== "string") return err("name is required", "E_VALIDATION");
+        const r = await deleteBlock(projectId, a.name);
+        return r.deleted
+          ? ok(r)
+          : err(
+              `"${a.name}" is still used by: ${r.usedBy!.join(", ")} — redefine those collections without it first`,
+              "E_CONFLICT",
+            );
       }
 
       case "list_plugins": {

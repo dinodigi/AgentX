@@ -10,6 +10,7 @@ import { parseAfter } from "./events";
 import { validateWorkflow } from "./workflow";
 import { recordChangesStrict } from "./changes";
 import { ValidationError } from "./validation";
+import { getBlockLibrary, resolveLibraryBlocks } from "./blocks";
 import { validateFieldDefs, collectionNameSchema } from "./validation";
 import { buildWhere, type WhereItem } from "./query";
 import { fieldMin, fieldMax, fieldPattern, fieldInteger, fieldLocalized, type FieldDef } from "./field-types";
@@ -1027,7 +1028,10 @@ export async function defineCollection(
   input: DefineCollectionInput,
 ): Promise<DefineResult> {
   const name = collectionNameSchema.parse(input.name);
-  const fields = validateFieldDefs(input.fields);
+  // v1.1b: resolve library block refs (blocks:["hero"]) BEFORE meta-validation —
+  // stored fields stay fully materialized, so nothing downstream changes.
+  const library = await getBlockLibrary(projectId); // direct read — resolution must never see a stale library
+  const fields = validateFieldDefs(resolveLibraryBlocks(input.fields, library));
 
   // publicFilter clauses must be valid against these fields (throws with hint).
   if (input.publicFilter?.length) buildWhere(fields, input.publicFilter);

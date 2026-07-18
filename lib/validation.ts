@@ -238,6 +238,7 @@ const blockDefSchema: z.ZodTypeAny = z.lazy(() =>
       name: z.string().min(1).regex(NAME_RE, "block name must be snake_case starting with a letter"),
       label: z.string().min(1),
       fields: z.array(fieldDefSchema).min(1),
+      library: z.string().optional(), // provenance marker (materialized from the block library)
     })
     .strict(),
 );

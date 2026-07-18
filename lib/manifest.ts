@@ -6,6 +6,7 @@ import { projects, type Branding, type Collection, type ProjectLocales } from "@
 import { accessSchema } from "./access-rules";
 import { getProject } from "./admin";
 import { setLocales, type LocalesPlan } from "./locales";
+import { defineBlock } from "./blocks";
 import {
   listCollections,
   defineCollection,
@@ -24,7 +25,13 @@ import { ValidationError } from "./validation";
 
 export interface ProjectManifest {
   version: 1;
-  project: { name: string; branding: Branding; locales?: ProjectLocales | null };
+  project: {
+    name: string;
+    branding: Branding;
+    locales?: ProjectLocales | null;
+    /** v1.1b: the block library (named BlockDefs) — optional; older manifests lack it. */
+    blockLibrary?: Record<string, { label: string; fields: FieldDef[] }> | null;
+  };
   collections: {
     name: string;
     displayName: string;
@@ -60,6 +67,11 @@ const manifestSchema = z.object({
     // Optional since J3 — version stays 1; older manifests simply lack it.
     locales: z
       .object({ default: z.string(), supported: z.array(z.string()).min(1) })
+      .nullable()
+      .optional(),
+    // v1.1b — block library; fields deep-validated on apply via define_block.
+    blockLibrary: z
+      .record(z.string(), z.object({ label: z.string().min(1), fields: z.array(z.unknown()).min(1) }))
       .nullable()
       .optional(),
   }),
@@ -124,6 +136,9 @@ export async function exportProject(projectId: string): Promise<ProjectManifest>
       name: project.name,
       branding: project.branding,
       ...(project.locales ? { locales: project.locales } : {}),
+      ...(project.blockLibrary && Object.keys(project.blockLibrary).length > 0
+        ? { blockLibrary: project.blockLibrary }
+        : {}),
     },
     collections: collections.map((c) => ({
       name: c.name,
@@ -219,6 +234,21 @@ export async function importProject(
   if (manifest.project.locales) {
     const r = await setLocales(projectId, manifest.project.locales, confirm);
     if (!r.applied) localesPlan = { plan: r.plan, hint: r.hint };
+  }
+
+  // v1.1b: block library also applies BEFORE collections — a manifest whose
+  // collections reference library blocks must resolve against the imported
+  // library. Each block deep-validates through defineBlock (confirm carries
+  // through so an edit fan-out into pre-existing collections isn't silent).
+  if (manifest.project.blockLibrary) {
+    for (const [name, def] of Object.entries(manifest.project.blockLibrary)) {
+      const r = await defineBlock(projectId, { name, label: def.label, fields: def.fields, confirm });
+      if (!r.applied) {
+        warnings.push(
+          `block library "${name}" not applied: ${r.hint ?? "requires confirmation"} — re-run with confirm: true`,
+        );
+      }
+    }
   }
 
   // A before-write hook needs the project's signing secret. Rather than hard-fail

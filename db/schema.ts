@@ -144,6 +144,9 @@ export const projects = pgTable("projects", {
   branding: jsonb("branding").$type<Branding>().notNull().default({}),
   /** i18n locale registry {default, supported}; null = localized fields unavailable (J3). */
   locales: jsonb("locales").$type<ProjectLocales>(),
+  /** v2 Track 1b: project-level block library — named BlockDefs materialized
+   * into collections at define time ({ [name]: {label, fields} }). */
+  blockLibrary: jsonb("block_library").$type<Record<string, { label: string; fields: FieldDef[] }>>(),
   /** Signs outgoing webhooks (X-AgentX-Signature); revealed to operators in settings. */
   webhookSigningSecret: text("webhook_signing_secret"),
   /**
