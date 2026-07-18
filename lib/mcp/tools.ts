@@ -57,6 +57,7 @@ import {
 } from "@/lib/plugins";
 import { fetchPageHead, scoreHead } from "@/lib/seo";
 import { defineBlock, deleteBlock, listBlocks } from "@/lib/blocks";
+import { WHERE_OPS } from "@/lib/query";
 import { exportEntries } from "@/lib/export";
 import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
 import type { ErrorCode } from "@/lib/error-codes";
@@ -96,7 +97,7 @@ const WHERE_CLAUSE_JSON = {
         "field — ops are type-checked against the target field; on MCP the target is read like " +
         "any MCP read (publicFilter/access do not apply)",
     },
-    op: { type: "string", enum: ["eq", "contains", "gt", "lt", "in"] },
+    op: { type: "string", enum: ["eq", "ne", "contains", "gt", "lt", "in", "exists"] },
     value: { description: "scalar, or string[] for op 'in'" },
   },
   required: ["field", "op", "value"],
@@ -820,8 +821,10 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "query_entries",
     description:
       "List entries in a collection (relations resolved to {id,label}). Supports limit/offset " +
-      "(default 100, max 500), where filters [{field, op: eq|contains|gt|lt|in, value}] and orderBy " +
-      "{field, dir: asc|desc}. Ops are type-checked: contains=text/richtext, gt/lt=number/date, " +
+      "(default 100, max 500), where filters [{field, op: eq|ne|contains|gt|lt|in|exists, value}] and orderBy " +
+      "{field, dir: asc|desc}. ne = SET-and-different (an unset field never matches); exists takes " +
+      "true|false (presence) — 'published OR unset' = {anyOf:[{field:'published',op:'eq',value:true}," +
+      "{field:'published',op:'exists',value:false}]}. Ops are type-checked: contains=text/richtext, gt/lt=number/date," +
       "in=text/enum/relation with value: string[]. Where items AND together; an item may be an OR " +
       "group {anyOf: [clauses]} (one level, no nesting). select: [fields] trims each entry's data " +
       "to those fields (id always included). expand: [relationField] replaces those relation values " +
@@ -934,7 +937,7 @@ export const TOOL_DEFS: ToolDef[] = [
       "Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggregates: " +
       "[{fn: count|sum|avg|min|max, field?}] (count takes no field; the rest need a number " +
       "field). Optional groupBy on an enum or relation field (relation groups include the " +
-      "target's label). Same where vocabulary as query_entries (eq/contains/gt/lt/in + anyOf). " +
+      "target's label). Same where vocabulary as query_entries (eq/ne/contains/gt/lt/in/exists + anyOf). " +
       "Groups are capped at 500, largest first, with truncatedGroups: true when cut. " +
       "Example: revenue by trip = {aggregates:[{fn:'sum',field:'price'}], groupBy:'trip'}.",
     inputSchema: {
@@ -1264,7 +1267,7 @@ export const TOOL_DEFS: ToolDef[] = [
 
 const whereClauseSchema = z.object({
   field: z.string(),
-  op: z.enum(["eq", "contains", "gt", "lt", "in"]),
+  op: z.enum(WHERE_OPS), // single source of truth — lib/query.ts
   value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
 });
 const whereItemSchema = z.union([

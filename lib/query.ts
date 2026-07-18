@@ -11,7 +11,7 @@ import { ValidationError } from "./validation";
  * exist, use an operator that doesn't fit the type, or inject anything.
  */
 
-export const WHERE_OPS = ["eq", "contains", "gt", "lt", "in"] as const;
+export const WHERE_OPS = ["eq", "ne", "contains", "gt", "lt", "in", "exists"] as const;
 export type WhereOp = (typeof WHERE_OPS)[number];
 
 export interface WhereClause {
@@ -35,14 +35,14 @@ export interface OrderByClause {
 
 /** Which operators make sense per primitive. */
 const OPS_BY_TYPE: Record<FieldDef["type"], WhereOp[]> = {
-  text: ["eq", "contains", "in"],
-  richtext: ["contains"],
-  number: ["eq", "gt", "lt"],
-  boolean: ["eq"],
-  date: ["eq", "gt", "lt"],
-  enum: ["eq", "in"],
-  asset: ["eq"],
-  relation: ["eq", "in"],
+  text: ["eq", "ne", "contains", "in", "exists"],
+  richtext: ["contains", "exists"],
+  number: ["eq", "ne", "gt", "lt", "exists"],
+  boolean: ["eq", "ne", "exists"],
+  date: ["eq", "ne", "gt", "lt", "exists"],
+  enum: ["eq", "ne", "in", "exists"],
+  asset: ["eq", "ne", "exists"],
+  relation: ["eq", "ne", "in", "exists"],
   // Structured fields aren't filterable/sortable — no ops means any where/orderBy
   // on a group/array is rejected with a clear message (v1 scope guard).
   group: [],
@@ -199,6 +199,22 @@ function compileScalarClause(
       if (f.type === "boolean") return sql`${lhs} = ${Boolean(clause.value)}`;
       if (f.type === "number") return sql`${lhs} = ${Number(clause.value)}`;
       return sql`${lhs} = ${String(clause.value)}`;
+    case "ne":
+      // SET AND different — an unset field never matches (SQL != excludes
+      // NULL; fail-closed for publicFilter). "different OR unset" composes as
+      // anyOf: [{ne}, {exists:false}].
+      if (f.type === "boolean") return sql`${lhs} != ${Boolean(clause.value)}`;
+      if (f.type === "number") return sql`${lhs} != ${Number(clause.value)}`;
+      return sql`${lhs} != ${String(clause.value)}`;
+    case "exists": {
+      if (typeof clause.value !== "boolean") {
+        throw new ValidationError(`where: op "exists" takes true or false (field "${f.name}")`);
+      }
+      // Presence = key present AND not JSON null — the raw ->> text probe
+      // (uncasted, so a malformed legacy value can never throw here).
+      const probe = sql`${entries.data}->>${f.name}`;
+      return clause.value ? sql`${probe} IS NOT NULL` : sql`${probe} IS NULL`;
+    }
     case "contains": {
       // F4: treat the needle as a literal — escape LIKE metacharacters so `%`/`_`
       // in user input match themselves, not as wildcards. matchesClauses() uses a
@@ -334,6 +350,16 @@ function matchClause(
     switch (c.op) {
       case "in":
         return Array.isArray(c.value) && c.value.some((x) => String(v ?? "") === String(x));
+      case "ne": {
+        // Mirror SQL exactly: unset never matches (fail-closed).
+        if (v == null) return false;
+        if (f.type === "number") return Number(v) !== Number(c.value);
+        if (f.type === "boolean") return Boolean(v) !== Boolean(c.value);
+        if (f.type === "date") return Date.parse(String(v)) !== Date.parse(String(c.value));
+        return String(v) !== String(c.value);
+      }
+      case "exists":
+        return (v != null) === Boolean(c.value);
       case "eq":
         if (f.type === "number") return Number(v) === Number(c.value);
         if (f.type === "boolean") return Boolean(v) === Boolean(c.value);
