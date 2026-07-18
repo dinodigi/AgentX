@@ -1,7 +1,15 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { tenantDb } from "./data-plane";
 import { auditLog, type AuditActor, type AuditLogRow } from "@/db/schema";
 import { defer } from "./defer";
+
+/** 0c: audit rows previously had NO retention (grew unbounded — a top storage
+ * amplifier in the free-tier wedge report). Probabilistic on-write prune,
+ * mirroring the change-feed's pattern: ~1% of writes delete a bounded batch of
+ * rows older than the retention window. */
+const AUDIT_RETENTION_DAYS = 90;
+const PRUNE_PROBABILITY = 0.01;
+const PRUNE_BATCH = 500;
 
 /**
  * Light audit trail: one row per entry mutation, recording which surface
@@ -32,6 +40,17 @@ export function recordAudit(opts: {
         changedFields: opts.changedFields ?? null,
       })
       .catch(() => {});
+    if (Math.random() < PRUNE_PROBABILITY) {
+      await tdb
+        .execute(
+          sql`DELETE FROM audit_log WHERE ctid IN (
+                SELECT ctid FROM audit_log
+                WHERE project_id = ${opts.projectId}
+                  AND created_at < now() - interval '${sql.raw(String(AUDIT_RETENTION_DAYS))} days'
+                LIMIT ${PRUNE_BATCH})`,
+        )
+        .catch(() => {});
+    }
   });
 }
 

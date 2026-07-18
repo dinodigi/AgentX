@@ -86,7 +86,48 @@ export async function assertCollectionCap(projectId: string): Promise<void> {
  * bounded by one rate-limited minute of writes, and exact usage is Track 4b's
  * job. Reads the project's own tenant DB, like the entry/asset caps.
  */
+/**
+ * 0a (free-tier wedge report): when a tenant DB fills its Neon limit, even
+ * DELETE fails ("could not extend file") — un-recoverable without operator
+ * SQL. The entry-bytes cap can't see this (the disk fills ~2.7× faster from
+ * change-feed + audit rows). Guardrail: measure the REAL database size and
+ * stop writes at ~90% of the plan's disk, with a repair-path message, before
+ * the un-deletable state. Applies to EVERY plan (legacy included) — it
+ * protects infra, not a pricing tier. FAIL-OPEN: a size-probe blip must never
+ * block writes. Cached 60s (same convergence pattern as the other caps).
+ */
+const TENANT_DB_LIMIT_BYTES = Number(process.env.TENANT_DB_LIMIT_BYTES ?? 512 * 1024 * 1024); // Neon free project
+const DB_HEADROOM_THRESHOLD = 0.9;
+
+async function assertDbHeadroom(projectId: string): Promise<void> {
+  const cached = unstable_cache(
+    async () => {
+      try {
+        const tdb = await tenantDb(projectId);
+        const result = await tdb.execute(sql`SELECT pg_database_size(current_database()) AS size`);
+        const rows = ((result as unknown as { rows?: { size: string }[] }).rows ??
+          (result as unknown as { size: string }[])) as { size: string }[];
+        return Number(rows[0]?.size ?? 0);
+      } catch {
+        return 0; // fail-open — the guardrail must not break writes on a probe blip
+      }
+    },
+    ["db-size", projectId],
+    { revalidate: 60, tags: [`project:${projectId}`] },
+  );
+  const size = await cached();
+  if (size >= TENANT_DB_LIMIT_BYTES * DB_HEADROOM_THRESHOLD) {
+    throw new ValidationError(
+      `database storage is ${Math.round((size / TENANT_DB_LIMIT_BYTES) * 100)}% full — writes are paused ` +
+        `before the disk wedges (a full database cannot even delete). Free space now: delete old entries, ` +
+        `empty the trash, or contact support to raise the storage plan`,
+      "E_CAP_REACHED",
+    );
+  }
+}
+
 export async function assertDataBytes(projectId: string): Promise<void> {
+  await assertDbHeadroom(projectId); // infra guardrail — ALL plans, legacy included
   const c = await capsFor(await projectPlan(projectId));
   if (!c) return;
   const cached = unstable_cache(
