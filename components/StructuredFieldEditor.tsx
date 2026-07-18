@@ -240,6 +240,17 @@ function LeafEditor({
       );
     case "asset":
       return <ControlledAsset projectId={projectId} value={str(value)} onChange={onChange} />;
+    case "relation":
+      // v1.1: nested relation — id input (already-resolved {id,label} values edit by id).
+      return (
+        <input
+          type="text"
+          value={typeof value === "object" && value !== null ? str((value as { id?: unknown }).id) : str(value)}
+          onChange={(e) => onChange(e.target.value || undefined)}
+          placeholder="related entry id"
+          className={cls}
+        />
+      );
   }
 }
 

@@ -171,9 +171,11 @@ describe("structured fields: group + array definition + validation", () => {
     assert.equal(bad.ok, false, "repeater nesting past depth 2 must be rejected");
   });
 
-  it("rejects a relation nested inside a group at define time", async () => {
-    const bad = await mcp(p.mcpToken, "define_collection", {
-      name: "badrel",
+  it("ACCEPTS a relation nested inside a group (v1.1 relations-in-blocks)", async () => {
+    // Contract flipped 2026-07-17 (v2 Track 1a): nested relation is the
+    // prescribed pattern for repeating cards — full coverage in 71-nested-relations.
+    const ok = await mcp(p.mcpToken, "define_collection", {
+      name: "goodrel",
       fields: [
         {
           name: "g",
@@ -185,6 +187,6 @@ describe("structured fields: group + array definition + validation", () => {
         },
       ],
     });
-    assert.equal(bad.ok, false, "relation nested in a group must be rejected in v1");
+    assert.ok(ok.ok, ok.errorText);
   });
 });

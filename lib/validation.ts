@@ -517,8 +517,11 @@ type NestedNode = {
 
 /** v1 restrictions on a field nested INSIDE a group/array (deferred, not gaps). */
 function assertNestedAllowed(f: NestedNode, ctx: z.RefinementCtx, path: string): void {
+  // v1.1 (Track 1a): relation is now ALLOWED nested — a block/group can point
+  // at a collection (the "repeating cards → related collection" pattern the
+  // one-level rule prescribes). The rest stay banned: their machinery
+  // (indexes, variant maps, cross-field rules) doesn't recurse.
   const banned: [string, unknown][] = [
-    ["relation fields", f.type === "relation" ? true : undefined],
     ["computed", f.computed],
     ["localized", f.localized],
     ["unique", f.unique],
@@ -844,9 +847,24 @@ export interface CompiledSchema {
 
 export interface RefCheck {
   field: string;
-  kind: "relation" | "asset";
+  kind: "relation" | "asset" | "container";
   /** For relations, the target collection slug. */
   targetCollection?: string;
+  /** For containers (group/array with nested relation/asset defs): the field
+   * spec verifyRefs walks to collect nested ids (v1.1 relations-in-blocks). */
+  spec?: FieldDef;
+}
+
+/** Does this subtree declare any relation/asset field (needs ref-verification)? */
+function containsRefDefs(f: FieldDef | { type: string; fields?: FieldDef[]; item?: unknown; blocks?: { fields: FieldDef[] }[] }): boolean {
+  if (f.type === "relation" || f.type === "asset") return true;
+  if (f.type === "group") return ((f as { fields?: FieldDef[] }).fields ?? []).some(containsRefDefs);
+  if (f.type === "array") {
+    const af = f as { item?: { type: string; fields?: FieldDef[] }; blocks?: { fields: FieldDef[] }[] };
+    if (af.blocks) return af.blocks.some((b) => b.fields.some(containsRefDefs));
+    if (af.item) return containsRefDefs(af.item as FieldDef);
+  }
+  return false;
 }
 
 /**
@@ -948,6 +966,10 @@ export function buildEntrySchema(
       refChecks.push({ field: field.name, kind: "relation", targetCollection: field.targetCollection });
     } else if (field.type === "asset") {
       refChecks.push({ field: field.name, kind: "asset" });
+    } else if ((field.type === "group" || field.type === "array") && containsRefDefs(field)) {
+      // v1.1: nested relations/assets inside groups/arrays/blocks — verifyRefs
+      // walks the value with this spec so dangling nested ids reject too.
+      refChecks.push({ field: field.name, kind: "container", spec: field });
     }
   }
 

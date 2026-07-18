@@ -266,7 +266,8 @@ export const FIELD_TYPE_SPECS: Record<
     summary: "A nested set of sub-fields — structured content (e.g. an `seo` group).",
     config: [
       "fields: FieldDef[] (required — the nested sub-fields, each with its own name/label/publicRead)",
-      "sub-fields can't be relation/computed/localized/unique/searchable/requiredIf yet",
+      "sub-fields MAY be relation (point a group/block at another collection — delivery resolves " +
+        "it to {id,label}); they can't be computed/localized/unique/searchable/requiredIf yet",
     ],
   },
   array: {
@@ -282,8 +283,9 @@ export const FIELD_TYPE_SPECS: Record<
         "a sequence of DIFFERENT sections; use item when every element is the same shape.",
       "maxItems?: number (element cap; hard ceiling 200 regardless)",
       "ONE level of repeating: a repeater/block item may NOT contain another repeater-of-groups or " +
-        "blocks; model a deeper/repeating list as its own collection + a relation (then it's " +
-        "queryable/searchable/reusable too). Scalar sub-arrays like tags inside an item are fine.",
+        "blocks; model a deeper/repeating list as its own collection + a RELATION FIELD inside the " +
+        "block/group (allowed — resolves to {id,label} on delivery; e.g. a services block = " +
+        "{heading, items: relation→services}). Scalar sub-arrays like tags inside an item are fine.",
     ],
   },
 };

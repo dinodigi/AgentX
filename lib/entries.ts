@@ -86,6 +86,11 @@ async function verifyRefs(
   for (const ref of refChecks) {
     const value = data[ref.field];
     if (value == null) continue; // optional / not provided
+    if (ref.kind === "container") {
+      // v1.1: walk nested relation/asset ids (path-labeled for error messages).
+      collectNestedRefIds(ref.spec!, value, ref.field, assetIds, relByTarget, assumeExisting);
+      continue;
+    }
     if (assumeExisting?.has(value as string)) continue; // same-batch create
     if (ref.kind === "asset") {
       assetIds.push({ field: ref.field, id: value as string });
@@ -2052,7 +2057,18 @@ export async function resolveRelations(
   const relationFields = collection.fields.filter(
     (f): f is Extract<FieldDef, { type: "relation" }> => f.type === "relation",
   );
-  if (relationFields.length === 0 || rows.length === 0) return rows;
+  // v1.1 (Track 1a): relations may live INSIDE groups/arrays/blocks. Walk the
+  // container values once per row, remembering each site (object + key) so the
+  // write-back below can resolve in place with the SAME fail-closed gating.
+  const nestedSites: NestedRelationSite[] = [];
+  const nestedTargets = new Set<string>();
+  if (rows.length > 0) {
+    const containers = collection.fields.filter((f) => f.type === "group" || f.type === "array");
+    for (const r of rows) {
+      for (const cf of containers) collectRelationSites(cf, r.data[cf.name], nestedSites, nestedTargets);
+    }
+  }
+  if ((relationFields.length === 0 && nestedSites.length === 0) || rows.length === 0) return rows;
 
   const allIds = new Set<string>();
   for (const rf of relationFields) {
@@ -2060,6 +2076,10 @@ export async function resolveRelations(
       const v = r.data[rf.name];
       if (typeof v === "string") allIds.add(v);
     }
+  }
+  for (const s of nestedSites) {
+    const v = s.obj[s.key];
+    if (typeof v === "string") allIds.add(v);
   }
   if (allIds.size === 0) return rows;
 
@@ -2085,11 +2105,12 @@ export async function resolveRelations(
     { org: { field: string; claim: string } | null; publicFilter: WhereItem[]; fields: FieldDef[] } | null
   >();
   if (!trusted) {
-    for (const rf of relationFields) {
-      if (!metaByTarget.has(rf.targetCollection)) {
-        const tc = await getCollection(projectId, rf.targetCollection);
+    const targetNames = new Set<string>([...relationFields.map((rf) => rf.targetCollection), ...nestedTargets]);
+    for (const name of targetNames) {
+      if (!metaByTarget.has(name)) {
+        const tc = await getCollection(projectId, name);
         metaByTarget.set(
-          rf.targetCollection,
+          name,
           tc
             ? {
                 org: tc.access?.org ? { field: tc.access.org.field, claim: tc.access.org.claim } : null,
@@ -2102,27 +2123,111 @@ export async function resolveRelations(
     }
   }
 
-  for (const rf of relationFields) {
+  // One resolver for BOTH top-level fields and nested sites — identical
+  // fail-closed gating (org scope + publicFilter) per target.
+  const resolveOne = (rf: Extract<FieldDef, { type: "relation" }>, v: string): { id: string; label: string } => {
+    const data = byId.get(v)!;
     const meta = trusted ? null : (metaByTarget.get(rf.targetCollection) ?? null);
     const org = meta?.org ?? null;
     const viewerOrg = org && viewerUser ? orgClaimValue(viewerUser, org.claim) : null;
+    const crossOrg = org ? viewerOrg === null || data[org.field] !== viewerOrg : false;
+    const hiddenByFilter =
+      meta && meta.publicFilter.length > 0 ? !matchesClauses(meta.fields, meta.publicFilter, data) : false;
+    return crossOrg || hiddenByFilter
+      ? { id: v, label: v } // fail-closed: never disclose an out-of-scope label
+      : { id: v, label: String(data[rf.labelField] ?? v) };
+  };
+
+  for (const rf of relationFields) {
     for (const r of rows) {
       const v = r.data[rf.name];
-      if (typeof v === "string" && byId.has(v)) {
-        const data = byId.get(v)!;
-        const crossOrg = org ? viewerOrg === null || data[org.field] !== viewerOrg : false;
-        const hiddenByFilter =
-          meta && meta.publicFilter.length > 0
-            ? !matchesClauses(meta.fields, meta.publicFilter, data)
-            : false;
-        r.data[rf.name] =
-          crossOrg || hiddenByFilter
-            ? { id: v, label: v } // fail-closed: never disclose an out-of-scope label
-            : { id: v, label: String(data[rf.labelField] ?? v) };
-      }
+      if (typeof v === "string" && byId.has(v)) r.data[rf.name] = resolveOne(rf, v);
     }
   }
+  for (const s of nestedSites) {
+    const v = s.obj[s.key];
+    if (typeof v === "string" && byId.has(v)) s.obj[s.key] = resolveOne(s.rf, v);
+  }
   return rows;
+}
+
+/**
+ * Collect nested relation/asset ids for write-time ref-verification (the
+ * verify twin of collectRelationSites) — path-labeled so a dangling id's
+ * error names the exact spot ("body[2].author").
+ */
+function collectNestedRefIds(
+  spec: FieldDef | ArrayItem,
+  value: unknown,
+  path: string,
+  assetIds: { field: string; id: string }[],
+  relByTarget: Map<string, { field: string; id: string }[]>,
+  assumeExisting?: Set<string>,
+): void {
+  if (spec.type === "relation") {
+    if (typeof value === "string" && !assumeExisting?.has(value)) {
+      const rf = spec as Extract<FieldDef, { type: "relation" }>;
+      const list = relByTarget.get(rf.targetCollection) ?? [];
+      list.push({ field: path, id: value });
+      relByTarget.set(rf.targetCollection, list);
+    }
+  } else if (spec.type === "asset") {
+    if (typeof value === "string" && !assumeExisting?.has(value)) {
+      assetIds.push({ field: path, id: value });
+    }
+  } else if (spec.type === "group") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const src = value as Record<string, unknown>;
+    for (const sub of spec.fields) {
+      if (src[sub.name] != null) collectNestedRefIds(sub, src[sub.name], `${path}.${sub.name}`, assetIds, relByTarget, assumeExisting);
+    }
+  } else if (spec.type === "array") {
+    if (!Array.isArray(value)) return;
+    value.forEach((el, i) => {
+      const item = elementSpec(spec, el);
+      if (item) collectNestedRefIds(item, el, `${path}[${i}]`, assetIds, relByTarget, assumeExisting);
+    });
+  }
+}
+
+/** One nested relation occurrence: the holding object + key, for in-place resolve. */
+type NestedRelationSite = {
+  rf: Extract<FieldDef, { type: "relation" }>;
+  obj: Record<string, unknown>;
+  key: string;
+};
+
+/**
+ * Walk a group/array value collecting nested relation sites (v1.1 — relations
+ * inside groups, repeater items, and typed blocks). Dispatches per element via
+ * elementSpec, exactly like replaceAssets/collectAssetIds.
+ */
+function collectRelationSites(
+  spec: FieldDef | ArrayItem,
+  value: unknown,
+  sites: NestedRelationSite[],
+  targets: Set<string>,
+): void {
+  if (spec.type === "group") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    const src = value as Record<string, unknown>;
+    for (const sub of spec.fields) {
+      if (sub.type === "relation") {
+        if (typeof src[sub.name] === "string") {
+          sites.push({ rf: sub, obj: src, key: sub.name });
+          targets.add(sub.targetCollection);
+        }
+      } else {
+        collectRelationSites(sub, src[sub.name], sites, targets);
+      }
+    }
+  } else if (spec.type === "array") {
+    if (!Array.isArray(value)) return;
+    for (const el of value) {
+      const item = elementSpec(spec, el);
+      if (item) collectRelationSites(item, el, sites, targets);
+    }
+  }
 }
 
 /**
