@@ -94,7 +94,14 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
  */
 export async function resolveProjectId(rawToken: string): Promise<string | null> {
   const info = await resolveToken(rawToken);
-  return info && info.projectStatus === "active" && info.billing === "ok" ? info.projectId : null;
+  // SCOPE ENFORCEMENT (security — reported via the feedback wall): the delivery
+  // surface accepts ONLY delivery-scoped tokens. Previously any active token
+  // passed, so the MCP master credential worked on /v1/* — meaning an MCP token
+  // leaked into a client context granted public writes PLUS full authoring. The
+  // MCP endpoint already rejects delivery tokens with E_SCOPE; this makes the
+  // separation symmetric, matching the documented contract.
+  if (!info || info.scope !== "delivery") return null;
+  return info.projectStatus === "active" && info.billing === "ok" ? info.projectId : null;
 }
 
 /** Extract a bearer token from an Authorization header value. */

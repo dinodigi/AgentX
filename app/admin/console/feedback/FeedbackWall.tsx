@@ -27,8 +27,18 @@ const catColor: Record<string, string> = {
 export function FeedbackWall({ items: initial }: { items: Item[] }) {
   const [items, setItems] = useState(initial);
   const [cat, setCat] = useState<(typeof CATEGORIES)[number]>("all");
+  const [proj, setProj] = useState<string>("all");
+  const [grouped, setGrouped] = useState(false);
+  const [openOnly, setOpenOnly] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const shown = items.filter((i) => (cat === "all" ? true : i.category === cat));
+
+  const projects = [...new Set(items.map((i) => i.project))].sort();
+  const shown = items.filter(
+    (i) =>
+      (cat === "all" || i.category === cat) &&
+      (proj === "all" || i.project === proj) &&
+      (!openOnly || (i.status !== "done" && i.status !== "dismissed")),
+  );
 
   async function setStatus(id: string, status: (typeof STATUSES)[number]) {
     setBusy(id);
@@ -37,34 +47,14 @@ export function FeedbackWall({ items: initial }: { items: Item[] }) {
     if (!r.error) setItems((all) => all.map((i) => (i.id === id ? { ...i, status } : i)));
   }
 
-  return (
-    <div className="max-w-3xl">
-      <div className="mb-4 flex flex-wrap gap-2">
-        {CATEGORIES.map((c) => (
-          <button
-            key={c}
-            type="button"
-            onClick={() => setCat(c)}
-            className={`rounded-full border px-3 py-1 font-mono text-[11px] uppercase tracking-[0.08em] ${
-              cat === c ? "border-line-strong bg-card" : "border-line text-ink-mute hover:border-line-strong"
-            }`}
-          >
-            {c}
-            {c !== "all" && (
-              <span className="ml-1.5 text-ink-mute">{items.filter((i) => i.category === c).length}</span>
-            )}
-          </button>
-        ))}
-      </div>
+  // When grouped, section the shown items by project (most items first).
+  const groups = grouped
+    ? [...new Set(shown.map((i) => i.project))]
+        .map((name) => ({ name, items: shown.filter((i) => i.project === name) }))
+        .sort((a, b) => b.items.length - a.items.length)
+    : [{ name: null as string | null, items: shown }];
 
-      {shown.length === 0 ? (
-        <div className="card p-8 text-center text-sm text-ink-mute">
-          Nothing here yet. Agents report via the <code className="font-mono text-xs">send_feedback</code> tool
-          whenever they hit a wall — it lands on this page.
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {shown.map((i) => (
+  const card = (i: Item) => (
             <div key={i.id} className="rounded-xl border border-line bg-card p-4">
               <div className="mb-1.5 flex flex-wrap items-center gap-2">
                 <span
@@ -96,6 +86,72 @@ export function FeedbackWall({ items: initial }: { items: Item[] }) {
                   </button>
                 ))}
               </div>
+            </div>
+  );
+
+  return (
+    <div className="max-w-3xl">
+      {/* Controls: category chips + project filter + group/open toggles */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {CATEGORIES.map((c) => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setCat(c)}
+            className={`rounded-full border px-3 py-1 font-mono text-[11px] uppercase tracking-[0.08em] ${
+              cat === c ? "border-line-strong bg-card" : "border-line text-ink-mute hover:border-line-strong"
+            }`}
+          >
+            {c}
+            {c !== "all" && <span className="ml-1.5 text-ink-mute">{items.filter((i) => i.category === c).length}</span>}
+          </button>
+        ))}
+        <span className="mx-1 h-5 w-px bg-line" />
+        <select
+          value={proj}
+          onChange={(e) => setProj(e.target.value)}
+          className="field-input h-8 w-auto py-0 text-xs"
+          aria-label="Filter by project"
+        >
+          <option value="all">All projects ({items.length})</option>
+          {projects.map((name) => (
+            <option key={name} value={name}>
+              {name} ({items.filter((i) => i.project === name).length})
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-1.5 font-mono text-[11px] text-ink-mute">
+          <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} className="h-3.5 w-3.5" />
+          group by project
+        </label>
+        <label className="flex items-center gap-1.5 font-mono text-[11px] text-ink-mute">
+          <input type="checkbox" checked={openOnly} onChange={(e) => setOpenOnly(e.target.checked)} className="h-3.5 w-3.5" />
+          open only
+        </label>
+      </div>
+
+      {shown.length === 0 ? (
+        <div className="card p-8 text-center text-sm text-ink-mute">
+          {items.length === 0 ? (
+            <>
+              Nothing here yet. Agents report via the <code className="font-mono text-xs">send_feedback</code> tool
+              whenever they hit a wall — it lands on this page.
+            </>
+          ) : (
+            "No items match these filters."
+          )}
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {groups.map((g) => (
+            <div key={g.name ?? "_all"}>
+              {g.name !== null && (
+                <div className="mb-2 flex items-baseline gap-2 border-b border-line pb-1.5">
+                  <h2 className="font-mono text-[12px] font-semibold uppercase tracking-[0.08em]">{g.name}</h2>
+                  <span className="font-mono text-[11px] text-ink-mute">{g.items.length}</span>
+                </div>
+              )}
+              <div className="space-y-3">{g.items.map(card)}</div>
             </div>
           ))}
         </div>
