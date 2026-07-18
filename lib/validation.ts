@@ -670,6 +670,18 @@ export const fieldsSchema = z
             code: z.ZodIssueCode.custom,
             message: `${f.name}.computed references localized field "${r}" — derive from a non-localized field`,
           });
+        } else if (f.publicRead && !sib.publicRead) {
+          // F6 (Hostile Agent free-tier report): a PUBLIC computed field whose
+          // template/slugify sources a private field would serve that value
+          // verbatim on the anonymous delivery API. Reject at define — the
+          // computed field's visibility may never exceed its sources'.
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              `${f.name} is publicRead but its computed source "${r}" is not — a public computed ` +
+              `field would leak the private value on the delivery API; make "${r}" publicRead ` +
+              `or make ${f.name} private`,
+          });
         }
       }
     }
