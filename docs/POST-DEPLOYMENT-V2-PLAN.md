@@ -1,5 +1,7 @@
 # Post-Deployment v2 Plan
 
+**Status (2026-07-17 EOD): CORE SHIPPED — 9 items live on pluggie.app in one run** (c1851d8→9a7a047): ✅ Track 0 complete (0b F6 clamp, 0a storage guardrail, 0c audit retention, 0d error codes) · ✅ Track 1 complete (1a relations-in-blocks, 1b block library) · ✅ Track 3 complete (3b ne/exists, 3a batch reads) · ✅ 2a email senders · ✅ Track 5 audit_site (SEO v2 as scoped). **REMAINING (paced):** 2b inbound email · 2c template management · Track 4 docs/legibility (positioning, token-split docs) · Track 6 marketplace gallery + package-project-as-plugin · Track 7 infra (status page = operator config, purge-on-write, plane migration, tenant-migration fan-out, HA re-run, Phase C, edge reader — mostly trigger-based). Original plan below.
+
 **Status:** planning (2026-07-17). **Source of truth for the next build phase** — carries everything open after v1.0 shipped + the Stallion dogfood triage, so nothing gets lost. v1.0 (all shipped, deployed, live-verified): CDN edge cache, caps/metering/stats/metered-rails, block types, plugin system, SEO plugin, Platform Settings console + tenant usage cards. Field report + same-day fixes: multi-instance cache TTLs, SEO non-200 guard, JSON MCP auth errors (6dceefa).
 
 **Standing engineering rule (from the dogfood root-cause):** every `unstable_cache` MUST carry a `revalidate` TTL — `revalidateTag` only reaches the serving instance; tag-only caching is a single-instance assumption and we run N instances.
