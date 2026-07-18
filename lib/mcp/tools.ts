@@ -1688,6 +1688,12 @@ export async function callTool(
             conventions:
               "errors are {error, code} with stable E_* codes; GETs carry ETags " +
               "(send If-None-Match, get 304)",
+            batch:
+              "POST {deliveryBase}/batch { queries: [{collection, params?}, ...] } (max 10) answers " +
+              "several reads in ONE round trip — params = the same keys as the list GET's query " +
+              "string; per-item {collection, status, data|error}. USE FOR authenticated dashboards " +
+              "(varied, uncacheable, per-user data). Do NOT batch PUBLIC page sections: a POST " +
+              "can't be edge-cached, while individual GETs are served free from the CDN.",
             userAuth:
               "collections with access rules need the end-user's JWT in the X-User-Token " +
               "header (issued by the project's connected Clerk instance). " +
