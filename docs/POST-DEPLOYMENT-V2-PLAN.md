@@ -6,7 +6,25 @@
 
 ---
 
-## Track 1 — Blocks v1.1: relations-in-blocks + block library — **PRIORITY 1**
+## Track 0 — Hardening — **DO FIRST** (safety + security; jumps the feature queue)
+
+Source: the free-tier Hostile Agent capacity report (`C:\dev\Tests\Security\HAv1\freetier-report.html`, 2026-07-17). **Security posture came back A−** — 24 techniques clean (the HAv1 remediation HELD; graceful-degradation-under-load confirmed as a resilience win). The report also *validates* our Track 4 pricing direction (meter bytes + requests, keep reads free, byte-aware cap). Three actionable items, two of which hit PAID customers / live data:
+
+**0a. Storage-wedge guardrail — CRITICAL (hits paid tenants too).** When a tenant DB fills its Neon limit, even DELETE fails (`could not extend file` — a delete needs scratch space); the tenant can read but can't write or self-recover, and the dashboard metric lags ~1h so there is NO warning. **Not free-tier-only — a Stallion-class paid tenant hits the same wall at a bigger number.**
+- **Our shipped 4a dataBytes cap does NOT cover this.** It counts `pg_column_size(entries.data)` — entries only. The report shows the disk fills from **2.7× amplification**: entries 179MB + change-feed 240MB + audit-log 61MB. A project can be far under the entry-bytes cap while the real DB is wedged from log churn. **We measured the wrong number.**
+- **Fix:** measure TOTAL tenant DB size (`pg_database_size` / summed table sizes) vs the plan's storage limit; **block writes at ~90% with a clear message BEFORE the un-deletable state**; surface real DB size in the console + tenant usage card (both currently show entry bytes, not DB size). Ship a recovery runbook for already-wedged DBs (`TRUNCATE entry_changes; TRUNCATE audit_log;` frees ~300MB of logs, not data).
+
+**0b. F6 computed-field leak — security (live delivery-API exposure).** A public computed field (`template`/`slugify`) whose source is a `publicRead:false` field serves that private value verbatim on the anonymous delivery API — accepted at define time with no warning (repro in the report). **Fix:** at `define_collection`, clamp a computed field's effective `publicRead` to the MINIMUM `publicRead` of its sources, or reject public-computed-from-private with a clear error. Small, contained; do it soon.
+
+**0c. Log retention as a plan lever (the 2.7× storage amplifier).** change-feed + audit are ~2.7× of storage, append-only ~30-day. Make retention tunable per plan (free = short retention or opt-in change-feed; paid = longer). Kills the biggest amplifier without touching real data. Pairs with 0a.
+
+**0d. Error-code polish (also in the developer review — Track 4).** public-write of a private field → 403 `E_SCOPE` (currently 404); delivery cap-hit → 429/403 `E_CAP_REACHED` (currently 422). Cheap consistency fix.
+
+**Also from the report (watch, not build-now):** broad full-text search is the one query shape that scales badly (557→1866→4063ms at 20k→100k→245k rows) — cost grows with match count; revisit if a real page leans on it. Untested-pending-external-inputs: email-relay, owner-IDOR positive path (needs 2 end-user JWTs), cross-tenant + CDN cache-key isolation (needs a 2nd project), Stripe checkout tampering.
+
+---
+
+## Track 1 — Blocks v1.1: relations-in-blocks + block library — **PRIORITY 1 (feature)**
 
 **Evidence (Stallion build):** the one-level rule + no-nested-relations left the agent modeling repeating cards (services, FAQ, hero slides) as index-aligned parallel scalar arrays (`titles[]`, `descriptions[]`, `hrefs[]`) — exactly the fragility the rule exists to prevent. The architectural answer is NOT re-allowing repeater-in-repeater (held back, deliberately); it's letting a block point at a collection.
 
@@ -111,8 +129,11 @@ Proposal: mint tokens so apps query the DB directly over REST, decoupling from t
 
 ## Suggested order
 
+0. **Track 0 (hardening) — FIRST.** 0a storage guardrail (can brick a paying tenant) + 0b F6 leak (live data exposure) are fix-soon, ahead of all features. 0c/0d fold in cheaply.
 1. **Track 1 (blocks v1.1)** — evidence-backed, unblocks the next real page build.
-2. **Track 3 (`ne`/`exists`)** — small, shapes data models fleet-wide.
+2. **Track 3a (batch read) + 3b (`ne`/`exists`)** — small, shapes data models + dashboard reads.
 3. **Track 2a (email from/reply_to)** — small, completes the mail primitive's send half.
 4. **Track 5 (SEO v2)** — proves the plugin loop end-to-end.
 5. Tracks 2b/6/7 as pull demands.
+
+**Health note:** this is a prioritized BACKLOG, not one cycle. Pull from the top; don't attempt all seven tracks at once. Track 0 is the only "urgent" bucket — the rest is paced feature work.
