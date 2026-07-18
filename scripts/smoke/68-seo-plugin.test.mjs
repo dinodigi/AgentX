@@ -25,7 +25,7 @@ describe("seo plugin (Track 3)", () => {
   it("get_plugin seo carries tools + structure + acceptance", async () => {
     const r = await mcp(p.mcpToken, "get_plugin", { id: "seo" });
     assert.ok(r.ok, r.errorText);
-    assert.deepEqual(r.value.tools, ["fetch_page", "score_page"]);
+    assert.deepEqual(r.value.tools, ["fetch_page", "score_page", "audit_site"]); // v2 adds the site-wide loop
     assert.match(r.value.structure.reconcile, /do not create it/i);
     assert.ok(r.value.acceptance.length >= 3);
   });

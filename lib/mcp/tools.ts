@@ -55,7 +55,7 @@ import {
   enablePlugin,
   disablePlugin,
 } from "@/lib/plugins";
-import { fetchPageHead, scoreHead } from "@/lib/seo";
+import { fetchPageHead, scoreHead, auditSite } from "@/lib/seo";
 import { defineBlock, deleteBlock, listBlocks } from "@/lib/blocks";
 import { WHERE_OPS } from "@/lib/query";
 import { exportEntries } from "@/lib/export";
@@ -276,6 +276,24 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: { url: { type: "string", description: "absolute URL of the live page" } },
       required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "audit_site",
+    description:
+      "SEO plugin tool (enable_plugin {id:'seo'} first): score up to 10 live pages in one call — " +
+      "pass urls:[...] or a sitemapUrl (its first 10 <loc> entries). Returns per-page scorecards " +
+      "({url, score, findings}) + a summary (averageScore, worst, failed). Operate the v2 loop: " +
+      "audit_site → write each page's fixes into its entry's seo group (update_entry; every " +
+      "finding's `fix` names the field) → after the site re-renders, audit_site again to PROVE " +
+      "the scores moved. Dead pages become per-page errors, never a failed audit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        urls: { type: "array", items: { type: "string" }, maxItems: 10 },
+        sitemapUrl: { type: "string", description: "absolute URL of sitemap.xml (used when urls is omitted)" },
+      },
       additionalProperties: false,
     },
   },
@@ -1548,6 +1566,21 @@ export async function callTool(
         }
         await disablePlugin(projectId, def.id);
         return ok({ disabled: def.id, note: "its collections/content remain — removal is a separate act" });
+      }
+
+      case "audit_site": {
+        if (!(await pluginEnabled(projectId, "seo"))) {
+          return err(
+            'the seo plugin is not enabled for this project — call enable_plugin {"id":"seo"} first',
+            "E_VALIDATION",
+          );
+        }
+        const a = rawArgs as { urls?: string[]; sitemapUrl?: string };
+        try {
+          return ok(await auditSite({ urls: a?.urls, sitemapUrl: a?.sitemapUrl }));
+        } catch (e) {
+          return err(`could not audit: ${e instanceof Error ? e.message : "failed"}`, "E_UPSTREAM");
+        }
       }
 
       case "fetch_page":

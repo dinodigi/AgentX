@@ -56,10 +56,10 @@ export interface PluginDef {
 export const PLUGIN_CATALOG: PluginDef[] = [
   {
     id: "seo",
-    version: "1.0.0",
+    version: "1.1.0",
     name: "SEO agent",
     description:
-      "Audit → scorecard → fix loop for the live site: fetch_page + score_page tools, an `seo` group on page-shaped collections, and the operating guidance. Advisor v1 (read-only against the site; fixes flow through entries).",
+      "Site-wide audit → scorecard → fix → re-score loop: audit_site (multi-page/sitemap) + fetch_page + score_page, an `seo` group on page-shaped collections, and the operating guidance. Read-only against the site; fixes flow through entries.",
     structure: {
       intent:
         "Every page-shaped collection carries an `seo` group the site's <head> renders from, so " +
@@ -94,13 +94,15 @@ export const PLUGIN_CATALOG: PluginDef[] = [
         "existing collection that renders as a page (pages, posts, products…). Keep the group " +
         "publicRead so the site's head template can read it.",
     },
-    tools: ["fetch_page", "score_page"],
+    tools: ["fetch_page", "score_page", "audit_site"],
     guidance:
-      "Operate the loop: score_page each key live URL → write the fixes into the matching entry's " +
-      "`seo` group (update_entry) → the site renders them (its layout reads the group via the " +
-      "delivery API, e.g. Next.js generateMetadata) → re-run score_page to PROVE the fix moved the " +
-      "score. Findings' `fix` fields name the exact seo.* field to write. score_page reads the " +
-      "LIVE page, so a fix only shows after the site redeploys/revalidates.",
+      "Operate the loop SITE-WIDE (v2): audit_site with the sitemap (or key urls, max 10) → for " +
+      "each page, write its fixes into the matching entry's `seo` group (update_entry — the user " +
+      "confirms the fix plan in chat before you write) → the site renders them (its layout reads " +
+      "the group via the delivery API, e.g. Next.js generateMetadata) → audit_site again to PROVE " +
+      "the scores moved. Findings' `fix` fields name the exact seo.* field to write. Pages are read " +
+      "LIVE, so a fix only shows after the site redeploys/revalidates. score_page remains for " +
+      "single-URL spot checks.",
     acceptance: [
       "each page-shaped collection carries a publicRead `seo` group with at least title + description",
       "score_page returns a scorecard for the site's key URLs",

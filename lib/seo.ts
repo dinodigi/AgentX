@@ -103,6 +103,70 @@ function parseHead(html: string): Omit<PageHead, "url" | "status"> {
   };
 }
 
+const MAX_AUDIT_PAGES = 10;
+const SITEMAP_READ_CAP = 256 * 1024;
+
+/** Bounded sitemap read: the first MAX_AUDIT_PAGES <loc> URLs, SSRF-guarded. */
+export async function fetchSitemapUrls(sitemapUrl: string): Promise<string[]> {
+  const refusal = await webhookTargetRefusal(sitemapUrl);
+  if (refusal) throw new Error(`sitemap ${refusal}`);
+  const res = await guardedFetch(sitemapUrl, {
+    headers: { "user-agent": "PluggieSEO/1.0 (+https://pluggie.app)" },
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  if (res.status !== 200) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(`sitemap returned HTTP ${res.status}`);
+  }
+  const xml = await readCapped(res, SITEMAP_READ_CAP);
+  const urls = [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/gi)].map((m) => m[1]);
+  if (urls.length === 0) throw new Error("no <loc> entries found — is this a sitemap.xml?");
+  return urls.slice(0, MAX_AUDIT_PAGES);
+}
+
+export interface SiteAuditPage {
+  url: string;
+  score?: number;
+  findings?: SeoFinding[];
+  error?: string;
+}
+
+/**
+ * v2 operator loop, site-wide: score up to MAX_AUDIT_PAGES URLs (explicit list
+ * or a sitemap) sequentially — each fetch SSRF-guarded + bounded; one dead
+ * page becomes a per-page error, never a failed audit.
+ */
+export async function auditSite(opts: { urls?: string[]; sitemapUrl?: string }): Promise<{
+  pages: SiteAuditPage[];
+  summary: { audited: number; failed: number; averageScore: number | null; worst: string | null };
+}> {
+  let urls = (opts.urls ?? []).slice(0, MAX_AUDIT_PAGES);
+  if (urls.length === 0 && opts.sitemapUrl) urls = await fetchSitemapUrls(opts.sitemapUrl);
+  if (urls.length === 0) throw new Error("provide urls[] or a sitemapUrl");
+
+  const pages: SiteAuditPage[] = [];
+  for (const url of urls) {
+    try {
+      const head = await fetchPageHead(url);
+      const { score, findings } = scoreHead(head);
+      pages.push({ url, score, findings });
+    } catch (e) {
+      pages.push({ url, error: e instanceof Error ? e.message : "fetch failed" });
+    }
+  }
+  const scored = pages.filter((p) => typeof p.score === "number");
+  const worst = scored.length > 0 ? scored.reduce((a, b) => (a.score! <= b.score! ? a : b)).url : null;
+  return {
+    pages,
+    summary: {
+      audited: scored.length,
+      failed: pages.length - scored.length,
+      averageScore: scored.length > 0 ? Math.round(scored.reduce((s, p) => s + p.score!, 0) / scored.length) : null,
+      worst,
+    },
+  };
+}
+
 export interface SeoFinding {
   check: string;
   severity: "critical" | "warn" | "info";
