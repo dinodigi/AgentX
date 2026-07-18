@@ -161,6 +161,13 @@ export const projects = pgTable("projects", {
   blockLibrary: jsonb("block_library").$type<Record<string, { label: string; fields: FieldDef[] }>>(),
   /** Signs outgoing webhooks (X-AgentX-Signature); revealed to operators in settings. */
   webhookSigningSecret: text("webhook_signing_secret"),
+  /** 2b inbound email: route a provider's parsed-inbound POST into a collection.
+   * { collectionName, secretHash, fieldMap:{from?,to?,subject?,text?,html?} }; null = off. */
+  inboundConfig: jsonb("inbound_config").$type<{
+    collectionName: string;
+    secretHash: string;
+    fieldMap: Record<string, string>;
+  }>(),
   /**
    * Lifecycle (B2): 'setup' = created but no data plane chosen yet — the admin
    * shows the setup surface and the MCP/delivery APIs stay dark; 'active' =
@@ -561,6 +568,7 @@ export type AuditActor =
   | { type: "mcp" }
   | { type: "admin"; userId?: string }
   | { type: "delivery"; userSub?: string }
+  | { type: "inbound" } // 2b: an inbound-email → collection route (trusted, secret-gated)
   | { type: "unknown" };
 
 /** Uploaded file metadata; bytes live in R2 under `r2Key`. */

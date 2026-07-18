@@ -153,6 +153,8 @@ function actorText(actor: AuditActor): string {
       return "admin";
     case "delivery":
       return actor.userSub ? "member" : "public";
+    case "inbound":
+      return "inbound:email";
     default:
       return "system";
   }

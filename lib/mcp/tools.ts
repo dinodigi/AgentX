@@ -57,6 +57,7 @@ import {
 } from "@/lib/plugins";
 import { fetchPageHead, scoreHead, auditSite } from "@/lib/seo";
 import { defineBlock, deleteBlock, listBlocks } from "@/lib/blocks";
+import { configureInbound, disableInbound } from "@/lib/inbound";
 import { WHERE_OPS } from "@/lib/query";
 import { exportEntries } from "@/lib/export";
 import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
@@ -156,6 +157,33 @@ export const TOOL_DEFS: ToolDef[] = [
       "List the 8 field primitives you may compose collections from (text, richtext, " +
       "number, boolean, date, enum, asset, relation) and each one's config. You must " +
       `only use these types. ${BOUNDARIES}`,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "configure_inbound",
+    description:
+      "Route inbound email into a collection (2b). A mail provider (Resend/SES/Postmark/Mailgun " +
+      "inbound parse) POSTs a normalized {from,to,subject,text,html?} to the returned postUrl with " +
+      "the returned SECRET as a bearer token; each message becomes an entry via fieldMap (inbound " +
+      "field → your collection field, e.g. {from:'email', subject:'subject', text:'message'}). The " +
+      "secret is shown ONCE — store it in your provider's webhook config. Trusted path: bypasses " +
+      "publicWrite, writes ONLY the mapped fields into the named collection. Re-run to rotate.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        collection: { type: "string" },
+        fieldMap: {
+          type: "object",
+          description: "inbound field → collection field; keys from: from|to|subject|text|html",
+        },
+      },
+      required: ["collection", "fieldMap"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "disable_inbound",
+    description: "Turn off inbound-email routing for this project (the secret stops working).",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -1488,6 +1516,21 @@ export async function callTool(
           }),
         );
       }
+
+      case "configure_inbound": {
+        const a = rawArgs as { collection?: string; fieldMap?: Record<string, string> };
+        if (typeof a?.collection !== "string" || typeof a?.fieldMap !== "object" || a.fieldMap === null) {
+          return err("collection and fieldMap are required", "E_VALIDATION");
+        }
+        const r = await configureInbound(projectId, { collection: a.collection, fieldMap: a.fieldMap });
+        return ok({
+          ...r,
+          note: "store `secret` in your mail provider's inbound webhook (bearer token) — it is not shown again",
+        });
+      }
+      case "disable_inbound":
+        await disableInbound(projectId);
+        return ok({ disabled: true });
 
       case "define_block": {
         const a = rawArgs as { name: string; label: string; fields: unknown[]; confirm?: boolean };
