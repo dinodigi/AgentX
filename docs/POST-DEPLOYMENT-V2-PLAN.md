@@ -42,11 +42,13 @@ Result: a `services` block = `{heading, items: relation → services}` — decla
 
 ---
 
-## Track 4 — DX / docs polish (small, high-leverage)
+## Track 4 — DX / docs / legibility (small, high-leverage — from the review)
 
-- **Two-token split documentation** — delivery vs mcp scope, prominent in get_project_info/docs page/client-code output (the bare-401 confusion is fixed; the discoverability gap remains).
-- **fromEmail via MCP?** Held for now (connectors = operator surface). Revisit narrowly for non-secret fields only, with an explicit decision.
-- Monitor the intermittent MCP 502s (transient/Render; watch, don't build).
+- **Positioning legibility (the "shittier WordPress" signal).** A competent dev's first read was "WordPress." That's a legibility failure, not an architecture one — the AI-native / headless / multi-tenant thesis isn't obvious at a glance. Docs + landing must LEAD with the three differentiators: (1) machine-authored via MCP (the AI defines the backend), (2) headless — we don't render, the AI/frontend does, (3) multi-tenant with provisioned + metered infra. Buildable as docs; also a marketing input. **Highest-leverage non-code item.**
+- **Error + tool-copy is AI-UX.** The AI is the user; a confusing error/description is a product bug (his opaque 401 + the "no full-text search" contradiction broke his flow — both fixed). Audit every delivery/MCP error for the structured `{error,code}` envelope + a repair hint, and every tool description for accuracy.
+- **Two-token split documentation** — delivery vs mcp scope, prominent in get_project_info / docs page / client-code output (bare-401 fixed; discoverability gap remains).
+- **fromEmail via MCP?** Held (connectors = operator surface). Revisit narrowly for non-secret fields only.
+- Monitor intermittent MCP 502s (transient/Render; watch, don't build).
 
 ---
 
@@ -89,6 +91,10 @@ Proposal: mint tokens so apps query the DB directly over REST, decoupling from t
 - **Re-run Hostile Agent** for a fresh security score (post-remediation verify; last score C/75 pre-fixes).
 - **Phase C scale items** (only when volume demands): relation-label denormalization, index-backed-query guard, A3 keyset-on-custom-sort.
 - **Delivery-read rate limit decision** (open from the security batch).
+- **Status / uptime page (trust signal — addresses the reliability critique directly).** Source exists: `GET /api/health` already returns `{status, db, latencyMs}` (+`?deep`). Two surfaces, deliberately different:
+  1. **Public status page — MUST be hosted OFF our infra.** A self-hosted status page is down exactly when you need it. Use an external monitor (UptimeRobot free / BetterStack) polling `/api/health` + `/api/health?deep`, with THEIR hosted status page on a `status.pluggie.app` CNAME. Near-zero cost, correctly decoupled, gives customers the GitHub-style uptime history that signals platform trust.
+  2. **Operator health widget (internal, fine to self-host)** — a small console panel reading recent health + the per-project stats we already compute (Track 4c), for the operator's own at-a-glance view.
+  - **Future product angle:** per-tenant status (each deployed site's uptime) as a customer-facing feature — parked until the platform page proves the pattern.
 
 ---
 
