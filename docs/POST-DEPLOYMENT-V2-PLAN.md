@@ -80,10 +80,13 @@ v1 advisor shipped + dogfooded (87/100 on a real site). v2 = APPLY fixes behind 
 
 ---
 
-## Track 6 — Plugin system v1.1
+## Track 6 — Plugin system v1.1 — **FIRST-PARTY ONLY (decided 2026-07-17)**
 
-- **Marketplace/gallery surface** (catalog is in-code; a browsable gallery + "template" filter for structure-only plugins).
-- **Plugin authoring** — compose a plugin FROM a project (`exportProject` as the seed): "make this project a template."
+**Decision:** the marketplace is **ours to build and capitalize on** — every plugin is first-party (authored by us), curated, quality-controlled. **Third-party listings are explicitly parked for the far future** (they'd need a review pipeline, sandboxing, and rev-share — a whole trust surface we don't want yet). The moat meanwhile: a catalog of proven, dogfooded plugins.
+
+- **Marketplace/gallery surface** — browsable gallery + "template" filter for structure-only plugins; catalog stays first-party/curated (in-code or DB-backed, but only WE write to it).
+- **Plugin authoring = INTERNAL operator tooling** — "package this project as a plugin" (`exportProject` as the seed): after a real build proves a structure (e.g., Stallion → a "contractor site" plugin), one step mints it into the catalog. This is OUR catalog-growth accelerator, not a public submission surface.
+- **Monetization lever (when wanted):** paid plugins per project can ride the existing platform-Stripe rails (enablement gated on payment) — pricing decision later, rails exist.
 - More catalog entries as dogfood demands (booking, blog, portfolio…).
 
 ---
