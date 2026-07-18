@@ -6,7 +6,11 @@
 
 ---
 
-## Track 0 — Hardening — **DO FIRST** (safety + security; jumps the feature queue)
+**VALIDATION ROUND 2 (2026-07-17) — claims re-verified against code:** F6 leak CONFIRMED (computed-ref validation checks sibling/non-computed/non-localized only — NO publicRead clamp exists, `lib/validation.ts` ~657); dataBytes cap = entries-only CONFIRMED (`assertDataBytes` sums `pg_column_size(entries.data)`); change-feed retention 30d CONFIRMED (`RETENTION_DAYS=30`, probabilistic prune, `lib/changes.ts`); **CORRECTION: audit_log has NO retention anywhere (grows unbounded — worse than the report's "~30-day both" claim)**; no `ne`/`exists` ops CONFIRMED (`OPS_BY_TYPE`, `lib/query.ts:37`); email action = to/subject/html only CONFIRMED (no from/reply_to/cc/bcc, `lib/events.ts`); no batch endpoint CONFIRMED (route glob); nested-relation ban CONFIRMED (`assertNestedAllowed`). 0d's "private-field write → 404" is report-observed — confirm exact code path at implementation.
+
+## Track 0 — Hardening (scheduled within v2 — NOT an interrupt)
+
+**Operator call (2026-07-17):** current tenants are small, operator-managed showcases — so Track 0 rides the roadmap rather than jumping it. 0b (a live leak) is still the recommended first pull when building resumes.
 
 Source: the free-tier Hostile Agent capacity report (`C:\dev\Tests\Security\HAv1\freetier-report.html`, 2026-07-17). **Security posture came back A−** — 24 techniques clean (the HAv1 remediation HELD; graceful-degradation-under-load confirmed as a resilience win). The report also *validates* our Track 4 pricing direction (meter bytes + requests, keep reads free, byte-aware cap). Three actionable items, two of which hit PAID customers / live data:
 
@@ -16,7 +20,7 @@ Source: the free-tier Hostile Agent capacity report (`C:\dev\Tests\Security\HAv1
 
 **0b. F6 computed-field leak — security (live delivery-API exposure).** A public computed field (`template`/`slugify`) whose source is a `publicRead:false` field serves that private value verbatim on the anonymous delivery API — accepted at define time with no warning (repro in the report). **Fix:** at `define_collection`, clamp a computed field's effective `publicRead` to the MINIMUM `publicRead` of its sources, or reject public-computed-from-private with a clear error. Small, contained; do it soon.
 
-**0c. Log retention as a plan lever (the 2.7× storage amplifier).** change-feed + audit are ~2.7× of storage, append-only ~30-day. Make retention tunable per plan (free = short retention or opt-in change-feed; paid = longer). Kills the biggest amplifier without touching real data. Pairs with 0a.
+**0c. Log retention as a plan lever (the 2.7× storage amplifier).** change-feed has a 30-day probabilistic prune (`lib/changes.ts RETENTION_DAYS`); **audit_log has NO retention at all (code-verified — grows unbounded)**. Add audit pruning + make both retentions tunable per plan (free = short retention or opt-in change-feed; paid = longer). Kills the biggest amplifier without touching real data. Pairs with 0a.
 
 **0d. Error-code polish (also in the developer review — Track 4).** public-write of a private field → 403 `E_SCOPE` (currently 404); delivery cap-hit → 429/403 `E_CAP_REACHED` (currently 422). Cheap consistency fix.
 
@@ -129,7 +133,7 @@ Proposal: mint tokens so apps query the DB directly over REST, decoupling from t
 
 ## Suggested order
 
-0. **Track 0 (hardening) — FIRST.** 0a storage guardrail (can brick a paying tenant) + 0b F6 leak (live data exposure) are fix-soon, ahead of all features. 0c/0d fold in cheaply.
+0. **Track 0 (hardening) — first pull when building resumes** (operator downgraded from interrupt: tenants are small, operator-managed showcases). Within it: 0b F6 leak first (live exposure, tiny fix), then 0a guardrail + 0c retention together (same storage story), 0d rides along.
 1. **Track 1 (blocks v1.1)** — evidence-backed, unblocks the next real page build.
 2. **Track 3a (batch read) + 3b (`ne`/`exists`)** — small, shapes data models + dashboard reads.
 3. **Track 2a (email from/reply_to)** — small, completes the mail primitive's send half.
