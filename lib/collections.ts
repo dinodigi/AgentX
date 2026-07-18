@@ -6,7 +6,7 @@ import { tenantDb } from "./data-plane";
 import type { DbExecutor } from "./db-tx";
 import { collections, entries, entriesTrash, entryVersions, projects, type Collection, type EventAction, type WriteHook } from "@/db/schema";
 import { getConnector } from "./connectors";
-import { parseAfter } from "./events";
+import { parseAfter, senderRefusal } from "./events";
 import { validateWorkflow } from "./workflow";
 import { recordChangesStrict } from "./changes";
 import { ValidationError } from "./validation";
@@ -222,6 +222,12 @@ async function validateAccessAndEvents(
       } else if (a.type === "email") {
         if (!a.to || !a.subject) throw new ValidationError("events: email actions need to + subject");
         assertNoLocalizedTemplateRefs(fields, a, "events");
+        // 2a: a custom sender must be approved at define time (fromEmail /
+        // its domain / approvedSenders) — send-time re-checks and falls back.
+        if (a.from) {
+          const refusal = await senderRefusal(projectId, a.from);
+          if (refusal) throw new ValidationError(`events: ${refusal}`);
+        }
       } else {
         throw new ValidationError('events: action type must be "webhook" or "email"');
       }
@@ -1058,6 +1064,14 @@ export async function defineCollection(
         }
       }
     });
+    // 2a: custom senders on transition emails — approved-sender gate (the
+    // validateWorkflow callback is sync, so this runs after it).
+    for (const a of input.workflow.transitions.flatMap((t) => t.actions ?? [])) {
+      if (a.type === "email" && a.from) {
+        const refusal = await senderRefusal(projectId, a.from);
+        if (refusal) throw new ValidationError(`workflow action: ${refusal}`);
+      }
+    }
     const hasEmail = input.workflow.transitions
       .flatMap((t) => t.actions ?? [])
       .some((a) => a.type === "email");

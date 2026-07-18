@@ -36,7 +36,19 @@ interface EventActionBase {
 /** An action fired by an entry event. Email requires the resend connector. */
 export type EventAction =
   | ({ type: "webhook"; url: string } & EventActionBase)
-  | ({ type: "email"; to: string; subject: string; html?: string } & EventActionBase);
+  | ({
+      type: "email";
+      to: string;
+      subject: string;
+      html?: string;
+      /** 2a: custom sender — validated against the connector's approved senders
+       * (fromEmail, its domain, or config.approvedSenders); never free-form. */
+      from?: string;
+      /** May interpolate {{field}} — the reply-to-submitter pattern. */
+      replyTo?: string;
+      cc?: string[];
+      bcc?: string[];
+    } & EventActionBase);
 
 /** Which surfaces may drive a transition. delivery (end users) is excluded by
  * default — the flagship approval flow is secure unless a transition opts in. */

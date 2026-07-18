@@ -209,6 +209,33 @@ function interpolateHtml(template: string, entry: { id: string; data?: Record<st
   );
 }
 
+const EMAIL_SHAPE_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * 2a: sender-identity gate. A custom `from` must be an APPROVED sender —
+ * the connector's fromEmail, any address on its (Resend-verified) domain, or
+ * an explicit config.approvedSenders entry. Never free-form: from is identity,
+ * and an unverified sender is a spoofing/deliverability hole. Returns the
+ * refusal message, or null when allowed.
+ */
+export async function senderRefusal(projectId: string, from?: string): Promise<string | null> {
+  if (!from) return null;
+  if (!EMAIL_SHAPE_RE.test(from)) return `from "${from}" is not a valid email address`;
+  const connector = await getConnector(projectId, "resend");
+  const configured = connector?.config?.fromEmail;
+  if (!configured) return "set the resend connector's fromEmail before using a custom from";
+  const lower = from.toLowerCase();
+  if (lower === String(configured).toLowerCase()) return null;
+  const approved = (connector.config as Record<string, unknown>).approvedSenders;
+  if (Array.isArray(approved) && approved.some((a) => String(a).toLowerCase() === lower)) return null;
+  const domain = (e: string) => e.split("@")[1]?.toLowerCase();
+  if (domain(from) && domain(from) === domain(String(configured))) return null;
+  return (
+    `from "${from}" is not an approved sender — allowed: the connector's fromEmail ` +
+    `(${configured}), any address on its domain, or an entry in the connector's approvedSenders list`
+  );
+}
+
 async function sendEmailAction(
   collection: Collection,
   event: string,
@@ -216,6 +243,9 @@ async function sendEmailAction(
   entry: { id: string; data?: Record<string, unknown> },
   basePayload: Record<string, unknown>,
 ): Promise<void> {
+  // replyTo may interpolate (reply-to-submitter); a bad rendered value is
+  // DROPPED, never sent malformed. cc/bcc are static, shape-filtered.
+  const replyTo = action.replyTo ? interpolate(action.replyTo, entry) : undefined;
   const rendered: RenderedEmail = {
     to: interpolate(action.to, entry),
     subject: interpolate(action.subject, entry),
@@ -225,6 +255,10 @@ async function sendEmailAction(
       ? htmlToText(interpolate(action.html, entry))
       : `${event} in "${collection.displayName}"\n\n${JSON.stringify(entry.data ?? { id: entry.id }, null, 2)}`,
     ...(action.html ? { html: interpolateHtml(action.html, entry) } : {}),
+    ...(action.from ? { from: action.from } : {}), // static — identity never interpolates
+    ...(replyTo && EMAIL_SHAPE_RE.test(replyTo) ? { replyTo } : {}),
+    ...(action.cc?.length ? { cc: action.cc.filter((a) => EMAIL_SHAPE_RE.test(a)) } : {}),
+    ...(action.bcc?.length ? { bcc: action.bcc.filter((a) => EMAIL_SHAPE_RE.test(a)) } : {}),
   };
   // The rendered email is stored with the log row so a failed send can be
   // re-fired verbatim later, without re-deriving templates.
@@ -240,6 +274,11 @@ export interface RenderedEmail {
   text: string;
   /** Optional styled HTML body (values already escaped); sent alongside text. */
   html?: string;
+  /** 2a: custom sender — re-approved at send time; falls back to fromEmail. */
+  from?: string;
+  replyTo?: string;
+  cc?: string[];
+  bcc?: string[];
 }
 
 /** Send one rendered email via the project's Resend connector; log the outcome.
@@ -262,15 +301,27 @@ export async function dispatchEmail(
       getConnector(projectId, "resend"),
     ]);
     if (!key || !connector) throw new Error("resend connector not configured");
+    // 2a: re-check the custom sender at SEND time (connector config may have
+    // changed since define) — a no-longer-approved from falls back to the
+    // connector default rather than failing the send or spoofing.
+    let from = connector.config.fromEmail;
+    if (rendered.from) {
+      const refusal = await senderRefusal(projectId, rendered.from);
+      if (!refusal) from = rendered.from;
+      else console.error(`email from "${rendered.from}" no longer approved — sent as ${from} (${refusal})`);
+    }
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
       body: JSON.stringify({
-        from: connector.config.fromEmail,
+        from,
         to: [rendered.to],
         subject: rendered.subject,
         text: rendered.text,
         ...(rendered.html ? { html: rendered.html } : {}),
+        ...(rendered.replyTo ? { reply_to: rendered.replyTo } : {}),
+        ...(rendered.cc?.length ? { cc: rendered.cc } : {}),
+        ...(rendered.bcc?.length ? { bcc: rendered.bcc } : {}),
       }),
       signal: AbortSignal.timeout(10_000),
     });

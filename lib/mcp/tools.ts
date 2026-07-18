@@ -389,8 +389,13 @@ export const TOOL_DEFS: ToolDef[] = [
           type: "object",
           description:
             "declarative actions on entry lifecycle: {created|updated|deleted: [{type:'webhook',url} " +
-            "| {type:'email',to,subject,html?}]}. Email needs the Resend connector; to/subject/html support " +
-            "{{field}} interpolation from entry data. html is an OPTIONAL styled HTML body for a " +
+            "| {type:'email',to,subject,html?,from?,replyTo?,cc?,bcc?}]}. Email needs the Resend connector; " +
+            "to/subject/html support {{field}} interpolation from entry data. from is a CUSTOM SENDER — " +
+            "static (never interpolated) and must be an APPROVED sender: the connector's fromEmail, any " +
+            "address on its verified domain, or the connector's approvedSenders list (rejected at define " +
+            "otherwise). replyTo MAY interpolate {{field}} — set replyTo:'{{email}}' on an inbox " +
+            "notification so replying answers the submitter. cc/bcc are static lists (max 10 each). " +
+            "html is an OPTIONAL styled HTML body for a " +
             "professional-looking email (interpolated values are HTML-escaped; a plain-text fallback is " +
             "derived automatically) — omit it for a plain notification. Any action takes when: [clauses] (same shape " +
             "as query where, evaluated against the post-change entry — e.g. fire only when " +
@@ -1285,7 +1290,18 @@ const eventActionBase = {
 };
 const eventActionSchema = z.union([
   z.object({ type: z.literal("webhook"), url: z.string(), ...eventActionBase }),
-  z.object({ type: z.literal("email"), to: z.string(), subject: z.string(), html: z.string().max(200_000).optional(), ...eventActionBase }),
+  z.object({
+    type: z.literal("email"),
+    to: z.string(),
+    subject: z.string(),
+    html: z.string().max(200_000).optional(),
+    // 2a: sender identity (approved senders only — checked at define + send)
+    from: z.string().optional(),
+    replyTo: z.string().optional(), // may interpolate {{field}} (reply-to-submitter)
+    cc: z.array(z.string()).max(10).optional(),
+    bcc: z.array(z.string()).max(10).optional(),
+    ...eventActionBase,
+  }),
 ]);
 
 const writeHookSchema = z.object({
