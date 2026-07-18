@@ -6,6 +6,7 @@ import { z } from "zod";
 import { controlDb } from "@/db";
 import { pluginDefs, projectPlugins } from "@/db/schema";
 import { validateFieldDefs, ValidationError } from "./validation";
+import { getSetting, setSetting } from "./platform-settings";
 import type { FieldDef } from "./field-types";
 
 /**
@@ -61,6 +62,42 @@ export interface PluginDef {
   guidance?: string;
   /** Verify-after-apply criteria — each must hold before the install is done. */
   acceptance?: string[];
+  /** Attached from operator overrides at read time (never stored on the def):
+   * display price in cents (billing enforcement is a later phase). */
+  priceCents?: number | null;
+}
+
+/** Operator per-plugin overrides (platform_settings key "pluginOverrides"). */
+export interface PluginOverride {
+  /** false hides the plugin fleet-wide (store, list_plugins, enable). */
+  active?: boolean;
+  priceCents?: number | null;
+}
+
+export async function pluginOverrides(): Promise<Record<string, PluginOverride>> {
+  const raw = (await getSetting("pluginOverrides")) ?? {};
+  return raw as Record<string, PluginOverride>;
+}
+
+/**
+ * Operator management view: built-ins + ALL global defs (never tenants'
+ * private defs), UNFILTERED (inactive included), override attached.
+ */
+export async function operatorCatalog(): Promise<(PluginDef & { override: PluginOverride })[]> {
+  const rows = await controlDb
+    .select({ definition: pluginDefs.definition })
+    .from(pluginDefs)
+    .where(isNull(pluginDefs.projectId));
+  const byId = new Map<string, PluginDef>();
+  for (const p of [...PLUGIN_CATALOG, ...rows.map((r) => r.definition as unknown as PluginDef)]) byId.set(p.id, p);
+  const overrides = await pluginOverrides();
+  return [...byId.values()].map((p) => ({ ...p, override: overrides[p.id] ?? {} }));
+}
+
+export async function savePluginOverride(id: string, override: PluginOverride): Promise<void> {
+  const all = await pluginOverrides();
+  const next = { ...all, [id]: { ...all[id], ...override } };
+  await setSetting("pluginOverrides", next as Record<string, unknown>);
 }
 
 export const PLUGIN_CATALOG: PluginDef[] = [
@@ -191,7 +228,11 @@ export async function effectiveCatalog(projectId: string): Promise<PluginDef[]> 
   // A DB def with a built-in's id overrides it (project-scoped wins last).
   const byId = new Map<string, PluginDef>();
   for (const p of [...PLUGIN_CATALOG, ...fromDb]) byId.set(p.id, p);
-  return [...byId.values()];
+  // Operator overrides: active:false hides fleet-wide; price attaches for display.
+  const overrides = await pluginOverrides();
+  return [...byId.values()]
+    .filter((p) => overrides[p.id]?.active !== false)
+    .map((p) => ({ ...p, priceCents: overrides[p.id]?.priceCents ?? null }));
 }
 
 export async function getPluginDef(projectId: string, id: string): Promise<PluginDef | null> {

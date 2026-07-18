@@ -60,6 +60,9 @@ import {
 import { fetchPageHead, scoreHead, auditSite } from "@/lib/seo";
 import { defineBlock, deleteBlock, listBlocks } from "@/lib/blocks";
 import { configureInbound, disableInbound } from "@/lib/inbound";
+import { rateLimit } from "@/lib/ratelimit";
+import { controlDb } from "@/db";
+import { platformFeedback } from "@/db/schema";
 import { WHERE_OPS } from "@/lib/query";
 import { exportEntries } from "@/lib/export";
 import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
@@ -226,6 +229,27 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: { name: { type: "string" } },
       required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "send_feedback",
+    description:
+      "Report platform feedback to the Pluggie team — USE THIS whenever you hit a limitation, a " +
+      "missing capability, a confusing error, or friction while working this project (e.g. 'no way " +
+      "to express X', 'tool Y rejected something reasonable', 'docs unclear about Z'). One call per " +
+      "distinct issue: {category: limitation|bug|friction|idea, summary (one sentence), detail? " +
+      "(what you tried, exact errors), toolName? (the tool involved)}. Goes straight to the " +
+      "platform's feedback wall and shapes the roadmap. Do NOT use it for questions or support.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        category: { type: "string", enum: ["limitation", "bug", "friction", "idea"] },
+        summary: { type: "string", description: "one sentence, <=300 chars" },
+        detail: { type: "string", description: "context: what you tried, exact errors (<=5000 chars)" },
+        toolName: { type: "string" },
+      },
+      required: ["category", "summary"],
       additionalProperties: false,
     },
   },
@@ -1578,6 +1602,27 @@ export async function callTool(
             );
       }
 
+      case "send_feedback": {
+        const a = rawArgs as { category?: string; summary?: string; detail?: string; toolName?: string };
+        if (!["limitation", "bug", "friction", "idea"].includes(a?.category ?? "")) {
+          return err("category must be limitation|bug|friction|idea", "E_VALIDATION");
+        }
+        if (typeof a?.summary !== "string" || a.summary.trim().length === 0) {
+          return err("summary (one sentence) is required", "E_VALIDATION");
+        }
+        // Feedback is a write into OUR platform surface — window it per project.
+        const rl = await rateLimit(`feedback:${projectId}`, { projectId, max: 10 });
+        if (!rl.allowed) return err("feedback window exceeded — try again in a minute", "E_RATE_LIMITED");
+        await controlDb.insert(platformFeedback).values({
+          projectId,
+          category: a.category!,
+          summary: a.summary.slice(0, 300),
+          detail: a.detail ? String(a.detail).slice(0, 5000) : null,
+          toolName: a.toolName ? String(a.toolName).slice(0, 100) : null,
+        });
+        return ok({ received: true, note: "thank you — this lands on the platform feedback wall" });
+      }
+
       case "define_plugin": {
         const a = rawArgs as { definition?: unknown };
         if (!a?.definition || typeof a.definition !== "object") {
@@ -1604,6 +1649,7 @@ export async function callTool(
             version: p.version,
             description: p.description,
             enabled: enabled.has(p.id),
+            price: p.priceCents ? `$${(p.priceCents / 100).toFixed(2)}/mo` : "included",
             ingredients: {
               structure: Boolean(p.structure),
               tools: p.tools ?? [],

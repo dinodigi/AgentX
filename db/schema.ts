@@ -514,6 +514,23 @@ export const platformSettings = pgTable("platform_settings", {
  * Effective catalog = in-code built-ins + global rows + the project's rows.
  * Uniqueness via expression index (id, COALESCE(project_id, zero-uuid)).
  */
+/**
+ * The feedback wall: agents working ANY project report platform limitations/
+ * friction via the always-available send_feedback MCP tool; the operator
+ * console reads it in one place. project_id survives project deletion as NULL
+ * (the signal outlives the tenant).
+ */
+export const platformFeedback = pgTable("platform_feedback", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  projectId: uuid("project_id"),
+  category: text("category").notNull(), // limitation | bug | friction | idea
+  summary: text("summary").notNull(),
+  detail: text("detail"),
+  toolName: text("tool_name"),
+  status: text("status").notNull().default("new"), // new | reviewed | planned | done | dismissed
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const pluginDefs = pgTable("plugin_defs", {
   id: text("id").notNull(),
   projectId: uuid("project_id"),

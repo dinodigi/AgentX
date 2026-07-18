@@ -16,6 +16,8 @@ import {
   Trash2,
   Users,
   X,
+  Puzzle,
+  MessageSquare,
 } from "lucide-react";
 import { useRail } from "./AdminShell";
 
@@ -80,6 +82,7 @@ export function WorkspaceSidebar({
       {item(`/admin/${currentId}`, "Overview", LayoutGrid)}
       {item(`/admin/${currentId}/assets`, "Media", ImageIcon)}
       {item(`/admin/${currentId}/trash`, "Trash", Trash2)}
+      {item(`/admin/${currentId}/plugins`, "Plugins", Puzzle)}
       {item(`/admin/${currentId}/appearance`, "Appearance", Palette)}
       {item(`/admin/${currentId}/connectors`, "Connectors", Plug)}
       {item(`/admin/${currentId}/api`, "API reference", Code2)}
@@ -95,6 +98,8 @@ export function WorkspaceSidebar({
         <>
           {group("Platform")}
           {item("/admin/console", "Console", Boxes)}
+          {item("/admin/console/feedback", "Feedback", MessageSquare)}
+          {item("/admin/console/plugins", "Plugins", Puzzle)}
         </>
       )}
     </>

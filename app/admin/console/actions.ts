@@ -118,3 +118,32 @@ export async function savePlatformSettingsAction(input: {
   revalidatePath("/admin/console");
   return { ok: true };
 }
+
+/** Feedback wall: move an item through new → reviewed/planned/done/dismissed. */
+export async function setFeedbackStatusAction(
+  id: string,
+  status: "new" | "reviewed" | "planned" | "done" | "dismissed",
+): Promise<{ error?: string; ok?: boolean }> {
+  const viewer = await getViewer();
+  if (!viewer?.isPlatformOperator) return { error: "Platform operators only" };
+  const { platformFeedback } = await import("@/db/schema");
+  await db.update(platformFeedback).set({ status }).where(eq(platformFeedback.id, id));
+  revalidatePath("/admin/console/feedback");
+  return { ok: true };
+}
+
+/** Plugin management: fleet-wide activate/deactivate + display price. */
+export async function savePluginOverrideAction(
+  id: string,
+  override: { active?: boolean; priceCents?: number | null },
+): Promise<{ error?: string; ok?: boolean }> {
+  const viewer = await getViewer();
+  if (!viewer?.isPlatformOperator) return { error: "Platform operators only" };
+  if (override.priceCents != null && (!Number.isFinite(override.priceCents) || override.priceCents < 0)) {
+    return { error: "Price must be a non-negative number of cents" };
+  }
+  const { savePluginOverride } = await import("@/lib/plugins");
+  await savePluginOverride(id, override);
+  revalidatePath("/admin/console/plugins");
+  return { ok: true };
+}
