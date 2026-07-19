@@ -682,12 +682,23 @@ describe("tightening warnings (A4) + null-unset (A6)", () => {
     assert.equal(got.value.data.title, "t2");
   });
 
-  it("create still rejects null (unset is an update concept)", async () => {
-    const bad = await mcp(p.mcpToken, "create_entry", {
+  it("create treats explicit null on an OPTIONAL field as unset (symmetry w/ update — feedback #18)", async () => {
+    // The natural JSON-client pattern {body: value || null} must not be rejected
+    // on create just because it isn't rejected on update.
+    const ok = await mcp(p.mcpToken, "create_entry", {
       collection: "notes",
       data: { title: "t3", body: null },
     });
-    assert.ok(!bad.ok && /body/.test(bad.errorText), bad.errorText);
+    assert.ok(ok.ok, ok.errorText);
+    const got = await mcp(p.mcpToken, "get_entry", { collection: "notes", id: ok.value.id });
+    assert.ok(!("body" in got.value.data), "null optional stored as absent, not null: " + JSON.stringify(got.value.data));
+
+    // A null on a REQUIRED field still fails — but as the clear 'required' error.
+    const bad = await mcp(p.mcpToken, "create_entry", {
+      collection: "notes",
+      data: { title: null, body: "x" },
+    });
+    assert.ok(!bad.ok && /title.*required|required.*title/i.test(bad.errorText), bad.errorText);
   });
 });
 

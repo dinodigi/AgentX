@@ -186,8 +186,17 @@ function validate(
   locales?: ProjectLocales | null,
 ): Record<string, unknown> {
   const { schema } = buildEntrySchema(fields, partial, mode, locales);
+  // #18 (feedback): on CREATE, treat an explicit top-level `null` as "not
+  // provided" — symmetric with update (null = unset) and with JSON clients that
+  // serialize absent optional values as null (`{notes: value || null}`). A null
+  // on a REQUIRED field then surfaces the clear "required" error instead of
+  // "expected string, received null". Updates keep null = explicit unset.
+  let input = data;
+  if (!partial && data && typeof data === "object" && !Array.isArray(data)) {
+    input = Object.fromEntries(Object.entries(data as Record<string, unknown>).filter(([, v]) => v !== null));
+  }
   try {
-    return schema.parse(data);
+    return schema.parse(input);
   } catch (e) {
     if (e instanceof z.ZodError) {
       throw new ValidationError(formatZodError(e), "E_VALIDATION", issuesFromZod(e, fields));

@@ -478,6 +478,8 @@ export interface SchemaDiff {
   renamed: { from: string; to: string }[];
   /** Entries whose stored data contains a removed/retyped key. */
   affectedEntries: number;
+  /** #11: a redefine that omits `workflow` removes the live state machine. */
+  workflowRemoved?: boolean;
   /** J8: localizing a populated field — non-destructive wrap under the default
    * locale, applied immediately (rename-backfill precedent). */
   localized?: { field: string; entriesToWrap: number }[];
@@ -1095,10 +1097,23 @@ export async function defineCollection(
   // Relation targets must resolve to a real collection in this project.
   const existing = await listCollections(projectId);
   const known = new Set(existing.map((c) => c.name).concat(name));
+  // #19 (feedback): the collections cache lags a just-created collection
+  // (revalidateTag is eventually consistent), so defining `leads` with a
+  // relation to a `ranches` created moments earlier would falsely fail. Confirm
+  // any "missing" target against a FRESH read before erroring — and surface it
+  // as E_VALIDATION (a fixable input error), not an opaque E_INTERNAL.
+  let freshNames: Set<string> | null = null;
   for (const f of fields) {
-    if (f.type === "relation" && !known.has(f.targetCollection)) {
-      throw new Error(
-        `relation field "${f.name}" targets unknown collection "${f.targetCollection}"`,
+    if (f.type !== "relation" || known.has(f.targetCollection)) continue;
+    if (!freshNames) {
+      const rows = await db.select({ name: collections.name }).from(collections).where(eq(collections.projectId, projectId));
+      freshNames = new Set(rows.map((r) => r.name));
+      freshNames.add(name);
+    }
+    if (!freshNames.has(f.targetCollection)) {
+      throw new ValidationError(
+        `relation field "${f.name}" targets unknown collection "${f.targetCollection}" — create that collection first, then define this one`,
+        "E_VALIDATION",
       );
     }
   }
@@ -1117,7 +1132,17 @@ export async function defineCollection(
   }
 
   // Destructive-change gate for existing collections.
-  const current = existing.find((c) => c.name === name);
+  // #11/#19 (feedback): `current` MUST be the TRUE stored state, read FRESH —
+  // a cached read that lags a recent create/update would return undefined and
+  // make this redefine look like a NEW collection, bypassing the whole gate and
+  // silently dropping the workflow (or fields). The gate's correctness can't
+  // depend on cache propagation.
+  const [freshCurrent] = await db
+    .select()
+    .from(collections)
+    .where(and(eq(collections.projectId, projectId), eq(collections.name, name)))
+    .limit(1);
+  const current = freshCurrent ? revive(freshCurrent as Collection) : undefined;
   if (!current) await assertCollectionCap(projectId); // B2 sandbox cap — new collections only
   const renames = input.renames ?? [];
   validateRenames(current, fields, renames);
@@ -1135,6 +1160,12 @@ export async function defineCollection(
       ...structural.retyped.map((r) => r.field),
     ];
     const affectedEntries = await countEntriesWithKeys(tdb, current.id, dangerousKeys);
+    // #11 (feedback): omitting `workflow` on a redefine REMOVES the state
+    // machine — silently dropping live status-transition enforcement. A redefine
+    // is full-replace, so any additive change that forgets to resend the
+    // workflow would destroy it. Treat removal as destructive: gate on confirm,
+    // exactly like a dropped field, so it can never happen by accident.
+    const workflowRemoved = Boolean(current.workflow) && !input.workflow;
     // J8: localized-flag toggles — wrap counts ride the diff for visibility;
     // a delocalize (variants dropped) joins the confirm gate like a removal.
     const toggles = await planLocalizedToggles(tdb, current, fields, renames, projectLocales?.default ?? null);
@@ -1143,20 +1174,23 @@ export async function defineCollection(
     diff = {
       ...structural,
       affectedEntries,
+      ...(workflowRemoved ? { workflowRemoved: true } : {}),
       ...(toggles.localized.length > 0 ? { localized: toggles.localized } : {}),
       ...(toggles.delocalized.length > 0 ? { delocalized: toggles.delocalized } : {}),
     };
     const destructiveDelocalize = toggles.delocalized.some(
       (d) => d.entriesAffected > 0 && (d.variantsLost.length > 0 || d.entriesLosingField > 0),
     );
-    if ((dangerousKeys.length > 0 || destructiveDelocalize) && !input.confirm) {
+    if ((dangerousKeys.length > 0 || destructiveDelocalize || workflowRemoved) && !input.confirm) {
       return {
         applied: false,
         requiresConfirmation: true,
         diff,
-        hint: destructiveDelocalize
-          ? "destructive change — delocalizing drops every non-default variant (entries without a default variant lose the field); re-run with confirm: true to apply"
-          : "destructive change — re-run with confirm: true to apply",
+        hint: workflowRemoved
+          ? "destructive change — this REMOVES the workflow state machine (status transitions stop being enforced). Re-send the `workflow` to keep it, or re-run with confirm: true to remove it."
+          : destructiveDelocalize
+            ? "destructive change — delocalizing drops every non-default variant (entries without a default variant lose the field); re-run with confirm: true to apply"
+            : "destructive change — re-run with confirm: true to apply",
       };
     }
   }
