@@ -6,7 +6,7 @@
  * which applies the full baseline (workflow + computed-unique) end to end.
  */
 import { neon } from "@neondatabase/serverless";
-import { COUNTRYSIDE_PLUGIN } from "./countryside-plugin-def.mjs";
+import { COUNTRYSIDE_PLUGIN } from "../plugins/countryside-crm.mjs";
 
 const sql = neon(process.env.DATABASE_URL);
 await sql`

@@ -54,6 +54,11 @@ export function evictTenantClient(connString: string): void {
 /** Conn strings this process has verified at the current schema version. */
 const verifiedConnStrings = new Set<string>();
 const MIGRATE_GATE_TIMEOUT_MS = 30_000;
+/** A managed Neon DB scales to zero; the first touch after idle can be slow or
+ * blip mid-wake. Wait this long, then retry ONCE before quarantining — so a
+ * healthy-but-cold DB is never flagged on a single transient (observed
+ * 2026-07-18: two live connectors flipped to `error` on cold starts). */
+const COLD_START_RETRY_BACKOFF_MS = 2_500;
 
 function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -81,23 +86,46 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
  */
 async function ensureTenantMigrated(projectId: string, conn: string): Promise<void> {
   if (verifiedConnStrings.has(conn)) return;
-  try {
-    await withTimeout(migrateTenantDb(conn), MIGRATE_GATE_TIMEOUT_MS, "tenant schema check");
-    verifiedConnStrings.add(conn);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    // Quarantine: flip the connector row so the admin card + health probe show
-    // it. Plain row update (no revalidateTag — this runs during renders too);
-    // the card's Test button re-probes and refreshes the cached view.
-    await controlDb
-      .update(projectConnectors)
-      .set({ status: "error", updatedAt: new Date() })
-      .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "neon")))
-      .catch(() => {});
-    throw new Error(
-      `tenant database for project ${projectId} is not usable (${msg}) — connector quarantined; fix the database or its connection string, then re-test the connector`,
-    );
+  let lastErr: unknown;
+  // Two attempts: a cold-start blip on attempt 1 gets a second chance after a
+  // short backoff. Only a connector that fails BOTH is genuinely unusable.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await withTimeout(migrateTenantDb(conn), MIGRATE_GATE_TIMEOUT_MS, "tenant schema check");
+      verifiedConnStrings.add(conn);
+      // SELF-HEAL: a real success clears a stale quarantine. The WHERE targets
+      // only status='error', so it's a no-op (0 rows) when already healthy —
+      // no churn on the hot path, and no manual Test needed after a transient.
+      await controlDb
+        .update(projectConnectors)
+        .set({ status: "connected", updatedAt: new Date() })
+        .where(
+          and(
+            eq(projectConnectors.projectId, projectId),
+            eq(projectConnectors.type, "neon"),
+            eq(projectConnectors.status, "error"),
+          ),
+        )
+        .catch(() => {});
+      return;
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 1) await new Promise((r) => setTimeout(r, COLD_START_RETRY_BACKOFF_MS));
+    }
   }
+  const msg = lastErr instanceof Error ? lastErr.message : String(lastErr);
+  // Both attempts failed → quarantine. Flip the connector row so the admin card
+  // + health probe show it. Plain row update (no revalidateTag — this runs
+  // during renders too); the connector cache TTL (60s) + a Test re-probe refresh
+  // the view.
+  await controlDb
+    .update(projectConnectors)
+    .set({ status: "error", updatedAt: new Date() })
+    .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, "neon")))
+    .catch(() => {});
+  throw new Error(
+    `tenant database for project ${projectId} is not usable (${msg}) — connector quarantined after a retry; fix the database or its connection string, then re-test the connector`,
+  );
 }
 
 /**

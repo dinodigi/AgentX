@@ -1,7 +1,7 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import { ensureServer, createEphemeralProject, mcp, delivery, sql } from "./helpers.mjs";
-import { COUNTRYSIDE_PLUGIN } from "../countryside-plugin-def.mjs";
+import { COUNTRYSIDE_PLUGIN } from "../../plugins/countryside-crm.mjs";
 
 // Track 6 (DB-backed catalog) + the Countryside client plugin, end to end:
 // project-scoped authoring isolation, global seeding, and the REAL proof —
