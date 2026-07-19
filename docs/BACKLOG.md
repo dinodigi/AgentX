@@ -116,7 +116,7 @@ payment-mode only — that's BILL-1.*
 
 | ID | Item | Status | Pri | Source |
 |---|---|---|---|---|
-| NOTIF-1 | In-app **notification center** (shape decided — see detail). Ready to spec/build. | 📥 Backlog | M | design |
+| NOTIF-1 | In-app **notification center** for the PLUGGIE ADMIN (shape decided — see detail). Ready to spec/build. *(The tenant-side story ✅ shipped separately as the `notification_kit` plugin 2026-07-19 — this item remains the platform bell + feed.)* | 📥 Backlog | M | design |
 | NOTIF-2 | Notification channels: Slack/Discord, then email | 🅿️ Parked | L | design |
 | OPS-1 | **Platform mailer** — shared dependency for NOTIF email + C5 ops alerting | 📥 Backlog | M | design |
 | PLUG-1 | **AI-registered tools** (self-extending agent, V1) + endpoint governance. Post-launch. (See detail.) | 🅿️ Parked | L | design |

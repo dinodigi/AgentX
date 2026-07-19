@@ -182,6 +182,13 @@ Cloudflare edge cache; public status page linked in the site footer).
   DB-enforced one-per-user+org, uuid-coded single-use invitations, and an
   `auth_events` security trail. Credentials (password hashes, sessions, MFA)
   stay on the tenant's own auth service — never in a collection.
+- **Notification Kit** (`notification_kit`, global DB def) — in-app
+  notifications for the tenant's app users (pairs with auth_kit): per-user feed
+  with unread tracking (`read_at exists:false` badge query), idempotent sends
+  via partial-unique `dedupe_key`, per-topic mute preferences (computed-unique
+  pref rows), and workflow-governed broadcast announcements (draft → published,
+  publish gated to mcp/admin). Realtime rides the changes feed/SSE — the
+  platform's own realtime surface is the push channel.
 - **Store**: per-project Plugins tab (enable/disable, price chips); operator
   console manages fleet activation + display pricing (`pluginOverrides`).
   Billing enforcement deliberately not wired yet.

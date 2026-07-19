@@ -12,6 +12,7 @@ Full type + system logic: [`lib/plugins.ts`](../lib/plugins.ts) (`PluginDef`, `e
 | `contact-forms.ts` | `contact_forms` | first-party, structure-only | **built-in** |
 | `countryside-crm.mjs` | `countryside_crm` — client CRM | first-party, client case study | **DB-seeded** — a data file loaded into `plugin_defs` via the seed script |
 | `auth-kit.mjs` | `auth_kit` — DIY user management | first-party, credential-free by design | **DB-seeded** — `node --env-file=.env scripts/seed-auth-kit-plugin.mjs` |
+| `notification-kit.mjs` | `notification_kit` — in-app notifications | first-party, pairs with auth_kit | **DB-seeded** — `node --env-file=.env scripts/seed-notification-kit-plugin.mjs` |
 
 ## Two delivery mechanisms
 
