@@ -597,7 +597,10 @@ export const auditLog = pgTable(
 
 /** Which surface performed a mutation, and as whom. */
 export type AuditActor =
-  | { type: "mcp" }
+  // explicitWorkflowState: the migration escape hatch was used on this create
+  // (feedback #12) — entries were loaded at explicit workflow states instead of
+  // `initial`. Stamped by the MCP tool layer so imports are audit-traceable.
+  | { type: "mcp"; explicitWorkflowState?: true }
   | { type: "admin"; userId?: string }
   | { type: "delivery"; userSub?: string }
   | { type: "inbound" } // 2b: an inbound-email → collection route (trusted, secret-gated)

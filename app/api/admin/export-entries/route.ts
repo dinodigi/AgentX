@@ -17,9 +17,35 @@ export async function GET(req: NextRequest) {
   const collection = await getCollection(projectId, name);
   if (!collection) return Response.json({ error: "not found" }, { status: 404 });
 
-  const result = await exportEntries(collection, format);
+  // #6: walk the keyset cursor so the download is the WHOLE collection, not the
+  // first 5000 rows. Hard stop at 100 pages (500k rows) as a runaway guard —
+  // beyond that, page the MCP tool instead.
+  const MAX_PAGES = 100;
+  let cursor: string | undefined;
+  let pages = 0;
+  const jsonRows: unknown[] = [];
+  const csvParts: string[] = [];
+  let clipped = false;
+  for (;;) {
+    const page = await exportEntries(collection, format, { cursor });
+    if (format === "csv") {
+      // Keep the header only on the first page.
+      csvParts.push(pages === 0 ? page.csv! : page.csv!.split("\r\n").slice(1).join("\r\n"));
+    } else {
+      jsonRows.push(...(page.rows ?? []));
+    }
+    pages += 1;
+    if (!page.nextCursor) break;
+    if (pages >= MAX_PAGES) {
+      clipped = true;
+      break;
+    }
+    cursor = page.nextCursor;
+  }
   const body =
-    format === "csv" ? result.csv! : JSON.stringify({ truncated: result.truncated, rows: result.rows }, null, 2);
+    format === "csv"
+      ? csvParts.filter((p) => p.length > 0).join("\r\n")
+      : JSON.stringify({ truncated: clipped, rows: jsonRows }, null, 2);
   return new Response(body, {
     headers: {
       "content-type": format === "csv" ? "text/csv; charset=utf-8" : "application/json",

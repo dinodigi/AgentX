@@ -519,7 +519,9 @@ export const TOOL_DEFS: ToolDef[] = [
             "declarative state machine over ONE enum field: {field, initial, transitions:[{from: " +
             "state|state[], to: state, actors?: (mcp|admin|delivery)[], actions?: [event action]}]}. " +
             "initial is enforced on EVERY create path (including bulk_create_entries and " +
-            "public/delivery writes — an explicit non-initial value is rejected). The field then " +
+            "public/delivery writes — an explicit non-initial value is rejected; for MIGRATIONS, " +
+            "create_entry/bulk_create_entries accept allowExplicitWorkflowState:true to load " +
+            "historical records at their real states, audit-stamped). The field then " +
             "moves ONLY via a declared transition; an illegal move is rejected with the allowed " +
             "targets, and a target no transition reaches from the current state conflicts. " +
             "Transitions are ACTOR-GATED — by default only mcp and admin may transition; add " +
@@ -677,13 +679,21 @@ export const TOOL_DEFS: ToolDef[] = [
       "Create one entry in a collection. `data` is validated strictly against the " +
       "collection's schema — unknown fields, wrong types, bad enum values, and dangling " +
       "relation/asset ids are rejected. Pass idempotencyKey to make retries safe: a " +
-      "repeated call with the same key returns the original entry instead of duplicating. CRUD only.",
+      "repeated call with the same key returns the original entry instead of duplicating. " +
+      "allowExplicitWorkflowState is the MIGRATION escape hatch: import historical records " +
+      "at their real workflow states (any declared enum option) instead of being forced to " +
+      "`initial`. Use it ONLY for imports/backfills — normal creates must start at initial. " +
+      "Its use is stamped into the audit log. CRUD only.",
     inputSchema: {
       type: "object",
       properties: {
         collection: { type: "string" },
         data: { type: "object" },
         idempotencyKey: { type: "string" },
+        allowExplicitWorkflowState: {
+          type: "boolean",
+          description: "migration/import only — accept an explicit workflow state (audit-stamped)",
+        },
       },
       required: ["collection", "data"],
       additionalProperties: false,
@@ -1076,12 +1086,18 @@ export const TOOL_DEFS: ToolDef[] = [
       "hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/" +
       "E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the " +
       "consults fit the host budget (ceil(n/5)×timeout), and an over-cap batch is refused with a " +
-      "'split the batch' hint.",
+      "'split the batch' hint. allowExplicitWorkflowState is the MIGRATION escape hatch: load " +
+      "historical records at their real workflow states instead of being forced to `initial` " +
+      "(imports/backfills only; audit-stamped).",
     inputSchema: {
       type: "object",
       properties: {
         collection: { type: "string" },
         entries: { type: "array", items: { type: "object" }, maxItems: 100 },
+        allowExplicitWorkflowState: {
+          type: "boolean",
+          description: "migration/import only — accept explicit workflow states (audit-stamped)",
+        },
       },
       required: ["collection", "entries"],
       additionalProperties: false,
@@ -1118,13 +1134,18 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "export_entries",
     description:
       "Export a collection's entry DATA (raw values — relations/assets stay ids so mappings " +
-      "survive re-import). json or csv, capped at 5000 rows with a truncated flag. Pairs with " +
+      "survive re-import). json or csv, up to 5000 rows per call in stable (createdAt, id) " +
+      "order. PAGED: when hasMore is true, pass nextCursor back as `cursor` and repeat until " +
+      "nextCursor is null — that walk is a complete, exact export (no row skipped or repeated). " +
+      "Each csv page carries its own header row — drop it when stitching pages. Pairs with " +
       "export_project (schema) for full portability/backup.",
     inputSchema: {
       type: "object",
       properties: {
         collection: { type: "string" },
         format: { type: "string", enum: ["json", "csv"] },
+        cursor: { type: "string", description: "nextCursor from the previous page" },
+        limit: { type: "number", description: "rows per page, 1-5000 (default 5000)" },
       },
       required: ["collection"],
       additionalProperties: false,
@@ -1478,6 +1499,7 @@ const createArgs = z.object({
   collection: z.string(),
   data: z.record(z.unknown()),
   idempotencyKey: z.string().min(1).optional(),
+  allowExplicitWorkflowState: z.boolean().optional(),
 });
 const updateArgs = z.object({
   collection: z.string(),
@@ -2020,7 +2042,10 @@ export async function callTool(
         const c = await mustCollection(projectId, a.collection);
         const e = await createEntry(projectId, c, a.data, {
           idempotencyKey: a.idempotencyKey,
-          actor: { type: "mcp" },
+          // #12: escape-hatch use is stamped into the audit actor so imports
+          // at explicit workflow states stay traceable.
+          actor: a.allowExplicitWorkflowState ? { type: "mcp", explicitWorkflowState: true } : { type: "mcp" },
+          allowExplicitWorkflowState: a.allowExplicitWorkflowState,
         });
         return ok({ id: e.id, data: e.data });
       }
@@ -2334,10 +2359,21 @@ export async function callTool(
 
       case "bulk_create_entries": {
         const a = z
-          .object({ collection: z.string(), entries: z.array(z.record(z.unknown())).max(100) })
+          .object({
+            collection: z.string(),
+            entries: z.array(z.record(z.unknown())).max(100),
+            allowExplicitWorkflowState: z.boolean().optional(),
+          })
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
-        const results = await bulkCreateEntries(projectId, c, a.entries, { type: "mcp" });
+        const results = await bulkCreateEntries(
+          projectId,
+          c,
+          a.entries,
+          // #12: audit-stamp the escape hatch (see create_entry).
+          a.allowExplicitWorkflowState ? { type: "mcp", explicitWorkflowState: true } : { type: "mcp" },
+          { allowExplicitWorkflowState: a.allowExplicitWorkflowState },
+        );
         const created = results.filter((r) => r.ok).length;
         return ok({ created, failed: results.length - created, results });
       }
@@ -2373,10 +2409,15 @@ export async function callTool(
 
       case "export_entries": {
         const a = z
-          .object({ collection: z.string(), format: z.enum(["json", "csv"]).optional() })
+          .object({
+            collection: z.string(),
+            format: z.enum(["json", "csv"]).optional(),
+            cursor: z.string().optional(),
+            limit: z.number().optional(),
+          })
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
-        return ok(await exportEntries(c, a.format ?? "json"));
+        return ok(await exportEntries(c, a.format ?? "json", { cursor: a.cursor, limit: a.limit }));
       }
 
       case "export_project":

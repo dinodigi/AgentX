@@ -345,6 +345,9 @@ async function runBeforeCreateHook(
   /** transact passes its same-batch create ids so a transform's re-verifyRefs
    *  doesn't reject a $ref to a sibling row not yet in the DB. */
   assumeExisting?: Set<string>,
+  /** #12: the caller's import escape hatch also governs the re-applied
+   *  initial-state rule on a transform's replacement. */
+  allowExplicitState = false,
 ): Promise<Record<string, unknown>> {
   const hook = collection.hooks?.beforeCreate;
   if (!hook || hook.disabled) return data;
@@ -371,7 +374,7 @@ async function runBeforeCreateHook(
     // verified identity, and refs re-checked — the hook has no more authority
     // than an honest client and cannot move ownership or dangle a relation.
     let out = validate(collection.fields, outcome.data, false, "input", await localesFor(projectId, collection));
-    applyWorkflowOnCreate(collection, out);
+    applyWorkflowOnCreate(collection, out, allowExplicitState);
     if (identity) out = stampIdentity(collection, identity.user, out);
     const { refChecks } = buildEntrySchema(collection.fields);
     await verifyRefs(projectId, out, refChecks, assumeExisting);
@@ -384,11 +387,19 @@ export async function createEntry(
   projectId: string,
   collection: Collection,
   data: unknown,
-  opts: { idempotencyKey?: string; actor?: AuditActor; identity?: WriteIdentity } = {},
+  opts: {
+    idempotencyKey?: string;
+    actor?: AuditActor;
+    identity?: WriteIdentity;
+    /** #12 migration escape hatch: accept an explicit (enum-valid) workflow
+     *  state instead of forcing `initial`. MCP authoring only — the tool layer
+     *  stamps its use into the audit actor. */
+    allowExplicitWorkflowState?: boolean;
+  } = {},
 ): Promise<Entry> {
   const locales = await localesFor(projectId, collection);
   const clean = validate(collection.fields, data, false, "input", locales);
-  applyWorkflowOnCreate(collection, clean); // default/enforce the initial state
+  applyWorkflowOnCreate(collection, clean, opts.allowExplicitWorkflowState); // default/enforce the initial state
   const { refChecks } = buildEntrySchema(collection.fields);
   await verifyRefs(projectId, clean, refChecks);
   await assertEntryCap(projectId); // B2 sandbox cap — before the hook's external call
@@ -397,7 +408,14 @@ export async function createEntry(
   // I1a/I1b: consult the before-create hook AFTER cheap local validation, BEFORE
   // the write. A rejection or fail-closed outage stops the insert; a transform
   // returns the (re-validated, re-stamped) data to write instead.
-  const finalData = await runBeforeCreateHook(projectId, collection, clean, opts.identity);
+  const finalData = await runBeforeCreateHook(
+    projectId,
+    collection,
+    clean,
+    opts.identity,
+    undefined,
+    opts.allowExplicitWorkflowState,
+  );
 
   // I3: stamp computed fields AFTER the candidate (+ any transform) is validated,
   // then re-validate in STORAGE mode so the derived output still obeys min/max
@@ -1786,6 +1804,11 @@ export async function bulkCreateEntries(
   collection: Collection,
   items: unknown[],
   actor: AuditActor = UNKNOWN_ACTOR,
+  opts: {
+    /** #12 migration escape hatch — see createEntry. The natural home for it:
+     *  a 3.1k-record import is exactly what bulk create is for. */
+    allowExplicitWorkflowState?: boolean;
+  } = {},
 ): Promise<BulkItemResult[]> {
   if (items.length > 100) throw new ValidationError("max 100 entries per bulk call");
   await assertEntryCap(projectId, items.length); // B2 sandbox cap — whole batch
@@ -1815,7 +1838,7 @@ export async function bulkCreateEntries(
     items.map(async (item, index) => {
       try {
         const clean = validate(collection.fields, item, false, "input", locales);
-        applyWorkflowOnCreate(collection, clean); // same initial-state rule as createEntry
+        applyWorkflowOnCreate(collection, clean, opts.allowExplicitWorkflowState); // same initial-state rule as createEntry
         await verifyRefs(projectId, clean, refChecks);
         validated.push({ index, clean });
       } catch (e) {
@@ -1832,7 +1855,10 @@ export async function bulkCreateEntries(
     hooked = [];
     await pooled(validated, BULK_HOOK_CONCURRENCY, async ({ index, clean }) => {
       try {
-        hooked.push({ index, clean: await runBeforeCreateHook(projectId, collection, clean) });
+        hooked.push({
+          index,
+          clean: await runBeforeCreateHook(projectId, collection, clean, undefined, undefined, opts.allowExplicitWorkflowState),
+        });
       } catch (e) {
         results.push(bulkItemError(index, e));
       }
@@ -1958,12 +1984,13 @@ export async function collectRelatedTargets(
 
 /** Opaque keyset cursor over the default (createdAt, id) ordering. `t` is a
  * MICROSECOND ISO string (JS Dates lose Postgres's micros) so a row sharing a
- * millisecond is never skipped or duplicated. Built inside queryEntriesPage. */
-function makeCursor(t: string, id: string): string {
+ * millisecond is never skipped or duplicated. Built by queryEntriesPage and
+ * exportEntries (#6 — the same contract on both paging surfaces). */
+export function makeCursor(t: string, id: string): string {
   return Buffer.from(JSON.stringify({ t, id })).toString("base64url");
 }
 
-export function decodeCursor(cursor: string): { createdAt: string; id: string } {
+export function decodeCursor(cursor: string, surface = "query_entries"): { createdAt: string; id: string } {
   try {
     const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString()) as { t?: unknown; id?: unknown };
     if (typeof parsed.t !== "string" || Number.isNaN(Date.parse(parsed.t)) || typeof parsed.id !== "string" || !parsed.id) {
@@ -1972,7 +1999,7 @@ export function decodeCursor(cursor: string): { createdAt: string; id: string } 
     return { createdAt: parsed.t, id: parsed.id };
   } catch {
     throw new ValidationError(
-      "invalid cursor — pass the nextCursor returned by a previous query_entries page",
+      `invalid cursor — pass the nextCursor returned by a previous ${surface} page`,
     );
   }
 }
