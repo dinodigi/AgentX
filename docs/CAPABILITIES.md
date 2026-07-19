@@ -175,6 +175,13 @@ Cloudflare edge cache; public status page linked in the site footer).
 - **SEO plugin**: enables `score_page`/`audit_site`/`fetch_page` advisors.
 - **Client case study**: `countryside_crm` (global DB def) — CRM baseline with
   workflow pipeline, owner relations, computed-unique slot keys.
+- **Auth Kit** (`auth_kit`, global DB def) — DIY user management, credential-free
+  by design: users with an account-lifecycle workflow (invited → active ↔
+  suspended → deactivated, suspension admin-gated), roles + permissions registry
+  (RBAC keys the tenant's token issuer embeds as claims), orgs/memberships with
+  DB-enforced one-per-user+org, uuid-coded single-use invitations, and an
+  `auth_events` security trail. Credentials (password hashes, sessions, MFA)
+  stay on the tenant's own auth service — never in a collection.
 - **Store**: per-project Plugins tab (enable/disable, price chips); operator
   console manages fleet activation + display pricing (`pluginOverrides`).
   Billing enforcement deliberately not wired yet.
