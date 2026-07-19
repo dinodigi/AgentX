@@ -95,9 +95,15 @@ export function Footer() {
         <span className="text-xs" style={{ color: C.fainter }}>
           © 2026 Pluggie. AgentX and Hostile Agent are products of Pluggie.
         </span>
-        <span className="font-mono text-[11px]" style={{ color: C.fainter }}>
-          status: all systems green
-        </span>
+        <a
+          href="https://stats.uptimerobot.com/YSeB4QyizR"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-mono text-[11px] transition-colors hover:opacity-80"
+          style={{ color: C.fainter }}
+        >
+          system status ↗
+        </a>
       </div>
     </footer>
   );
