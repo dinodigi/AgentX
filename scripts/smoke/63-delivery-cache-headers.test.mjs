@@ -2,7 +2,7 @@ import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import { ensureServer, createEphemeralProject, mcp, BASE } from "./helpers.mjs";
 
-// CDN edge-cache contract (docs/CDN-SETUP.md): PUBLIC delivery reads emit
+// CDN edge-cache contract (docs/runbooks/CDN-SETUP.md): PUBLIC delivery reads emit
 // s-maxage (+ Vary: authorization — same URL serves different tenants per
 // token) so a per-tenant-keyed shared cache may serve them; everything else
 // stays no-cache/uncached. Raw fetch — the delivery() helper hides headers.

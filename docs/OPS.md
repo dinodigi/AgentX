@@ -62,4 +62,4 @@ Render logs first. It does NOT block the launch gate; monitoring + backups do.
 (`CONNECTOR_MASTER_KEYS` + `CONNECTOR_MASTER_KEY_ACTIVE`, `needsReencrypt`
 sweep). `MARKETING_INTAKE_TOKEN` rotation = mint a new delivery token on the
 Pluggie Marketing project, swap it in Render, revoke the old one. See
-`docs/SECURITY-PASS.md` for the token model.
+`docs/reviews/SECURITY-PASS.md` for the token model.

@@ -1,81 +1,77 @@
-# AgentX — Schema-Driven Admin Layer
+# Pluggie (AgentX)
 
-An MCP layer: an AI defines a project's data structure over MCP, and gets back a
-**branded, client-facing admin dashboard** + a **read/write delivery API** for the
-live site — with zero admin UI hand-coded per project.
+An AI-native backend platform: an agent defines a project's data model over
+MCP and gets back a **branded client admin**, a **public delivery API**, and a
+**tenant-isolated data plane** — no per-project admin code. Live at
+[pluggie.app](https://pluggie.app) ([status](https://stats.uptimerobot.com/YSeB4QyizR)).
 
-v1 is dogfood-scoped (one operator, your own Neon + Clerk + R2). See
-[`build-brief.md`](build-brief.md) for the product brief.
-
-## Architecture
-
-One Next.js app, one Neon DB, scoped per-project by token:
+## Surfaces
 
 | Surface | Route | Auth | Purpose |
 | --- | --- | --- | --- |
-| MCP server | `POST /api/mcp` | project bearer token | the AI defines schema + manages content |
-| Delivery API | `GET/POST /v1/{collection}` | project bearer token | the live site reads content / accepts forms |
-| Admin dashboard | `/admin/**` | Clerk | branded UI handed to the client |
+| MCP server | `POST /api/mcp` | project MCP token | agents define schema, manage content, run tools |
+| Delivery API | `/api/v1/{collection}` | delivery token | live sites read content / accept writes (Cloudflare-cached) |
+| Admin dashboard | `/admin/**` | Clerk | branded UI for operators + client members |
+| Marketing site | `/` | public | pluggie.app pages, dogfooded on the platform itself |
+| Health | `/api/health` · `/api/v1/_health` | public | uptime probes (process+DB · delivery plane) |
 
-### The 8 field primitives
-`text · richtext · number · boolean · date · enum · asset · relation` — an AI
-composes schemas from these, never invents types. Defined once in
-[`lib/field-types.ts`](lib/field-types.ts).
-
-### Key modules
-- [`lib/validation.ts`](lib/validation.ts) — the "AI can't corrupt data" guard: a
-  meta-schema for field defs + a runtime Zod compiler for entries. Shared by all three surfaces.
-- [`lib/entries.ts`](lib/entries.ts) — entry CRUD, relation/asset existence checks, per-field public projection.
-- [`lib/mcp/tools.ts`](lib/mcp/tools.ts) — the terse MCP tool surface; descriptions state the boundaries out loud.
-- [`db/schema.ts`](db/schema.ts) — projects, tokens, collections, entries, assets.
-
-### Design decisions (from the brief)
-- **Public-read is per-field** (`publicRead` on each field). `GET /v1` returns only public fields.
-- **Public-write is per-collection** (`publicWrite`). A form = a public-write collection; submissions fire a webhook and land in the admin.
-- **Out of scope:** authorization/row-level rules (app layer), transactional actions, versioning, i18n, workflows, email, marketplace, auto-provisioning.
-
-## Setup
-
-1. `npm install`
-2. Copy `.env.example` → `.env` and fill in your **Neon**, **Clerk**, and **R2** values.
-   Set `ADMIN_EMAILS` to your email — platform operators see every project.
-3. `npm run db:push` — create the tables in Neon.
-4. `npm run dev`
-5. Sign in at `/admin` and click **New project** — it mints the MCP token (shown once).
-   (`npm run seed -- "Name" "#color"` still works as a CLI alternative.)
-6. Copy `.mcp.json.example` → `.mcp.json`, paste the token, and connect from Claude Code.
-
-## Before committing
+## Repo map
 
 ```
-npm run verify   # typecheck + smoke suite (needs the dev server running)
+app/                Next.js App Router
+  (marketing)/        public site (pages, pricing, products)
+  admin/              per-project admin + operator console (/admin/console)
+  api/mcp/            the MCP endpoint (tool dispatch)
+  api/v1/             delivery API (collections, assets, changes, checkout)
+  api/health/         liveness/readiness probe
+  api/{jobs,stripe,platform-stripe,inbound,admin}/  drains, webhooks, uploads
+components/         React components (admin/, marketing/)
+db/                 Drizzle schema — control DB + tenant tables (schema.ts)
+lib/                domain logic (the heart of the platform)
+  collections.ts      schema defs, destructive-change gate, workflows
+  entries.ts          entry CRUD, validation, queries, bulk, cursors
+  mcp/tools.ts        the MCP tool surface (defs + dispatch)
+  plugins.ts          plugin catalog (built-in + DB-backed defs)
+  data-plane.ts       tenant DB resolution (shared / managed Neon / BYO)
+  caps.ts, usage.ts   sandbox caps + metering
+plugins/            plugin definitions (seo, contact-forms, countryside-crm)
+scripts/            seeds, one-shot migrations, contract dump
+  smoke/              the smoke suite (~82 test files, run via npm run smoke)
+docs/               all documentation — see docs/README.md for the story
+infra/              deployed infrastructure code (cloudflare/ edge-cache worker)
+middleware.ts       Clerk gate for /admin (token-authed APIs excluded)
+render.yaml         Render blueprint: web service + job-drain cron (prod deploy)
+drizzle.config.ts   Drizzle Kit config (control DB)
 ```
 
-The smoke suite (`npm run smoke`) runs ~38 integration assertions against
-localhost:3000 using ephemeral projects — real data is never touched. See
-docs/runbooks/backup-restore.md for the backup story.
+## Development
 
-## Access model
+```
+npm install
+cp .env.example .env        # Neon, Clerk, R2, Stripe values
+npm run dev                 # http://localhost:3000 (sessions often use --port 3100)
+npm run verify              # tsc + smoke suite (needs the dev server running)
+```
 
-- **Platform operators** (`ADMIN_EMAILS`) open every project.
-- Everyone else needs a `project_members` row: `operator` (settings + content) or
-  `client` (content only) — added from the project's Settings page.
-- Unauthorized projects render as 404 to avoid leaking project ids.
+The smoke suite (`scripts/smoke/`) runs integration tests against a live dev
+server using ephemeral projects — real data is never touched.
 
-## Per-project screens
+## Deploying
 
-- **Collections** — auto-generated tables + entry forms, per-field visibility badges.
-- **API reference** — generated from the schema: endpoints, public fields, sample JSON.
-- **Settings** — branding (name/color/logo), MCP tokens (mint/revoke), per-form
-  webhooks, members.
+Pushing `master` auto-deploys to Render (`render.yaml`). Two hard rules:
 
-## Try it (definition of done)
+1. **Always `npm run build` before pushing** — tsc alone misses Next
+   route-file export rules.
+2. **Never `next build` while a dev server is running** — they share `.next`
+   and every request 500s until restart.
 
-From Claude Code, with the MCP server connected:
-1. `list_field_types`
-2. `define_collection` — e.g. a `posts` collection (with a `relation` to `authors`) and a
-   public-write `contact` collection (mix public/private fields, set `webhookUrl`).
-3. `create_entry` / `query_entries` — round-trip; try a bad enum value to see strict rejection.
-4. Log into `/admin/{projectId}` — manage content through the auto-generated forms; upload an asset.
-5. `GET /v1/posts` — only public fields, relations as `{id,label}`.
-6. `POST /v1/contact` — submission stored, webhook fired, visible in the admin.
+Schema changes: `npm run db:push` is broken against Neon PG18 — apply columns
+by hand (see memory/ops notes).
+
+## Where things are decided
+
+- What the platform does today → [docs/CAPABILITIES.md](docs/CAPABILITIES.md)
+- Why it's built this way → [docs/ARCHITECTURE-RATIONALE.md](docs/ARCHITECTURE-RATIONALE.md)
+- What's next → [docs/BACKLOG.md](docs/BACKLOG.md) + [docs/plans/](docs/plans/)
+- How to operate it → [docs/OPS.md](docs/OPS.md) + [docs/runbooks/](docs/runbooks/)
+- The full doc story → [docs/README.md](docs/README.md)

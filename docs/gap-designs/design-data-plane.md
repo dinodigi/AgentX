@@ -2,7 +2,7 @@
 
 > **Status:** A0 draft for review, 2026-07-10. No code. This is the design we
 > argue with before the A1 refactor. Supersedes the "evidence-gated Neon
-> connector" framing in ROADMAP Phase 19 — see [LAUNCH-PLAN.md](../LAUNCH-PLAN.md)
+> connector" framing in ROADMAP Phase 19 — see [LAUNCH-PLAN.md](../plans/LAUNCH-PLAN.md)
 > Track A.
 
 ## 1. What we're building and why

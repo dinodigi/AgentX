@@ -6,7 +6,7 @@
 - **2c email template management UI** — DEFERRED (nice-to-have; the send ENGINE + `html` templates work today via define_collection; a human template-builder is low-priority for an AI-authored product). Revisit on demand.
 - **Track 4 positioning (landing page)** — the "not-WordPress" thesis is captured in `docs/ARCHITECTURE-RATIONALE.md`; APPLYING it to the marketing landing page is a DESIGN pass, not a code task. Handed to design.
 - **Track 6 marketplace gallery + package-project-as-plugin** — DECISION-GATED: needs the catalog-storage call (in-code PLUGIN_CATALOG vs DB-backed) before the authoring tool + gallery UI. First-party-only direction is set; build once the storage decision is made.
-- **Track 7 infra** — status page = OPERATOR config (`docs/STATUS-PAGE-SETUP.md`, ~10 min external monitor); the rest (CDN purge-on-write, plane migration, tenant-migration fan-out, HA re-run, edge reader, Phase C) are TRIGGER-BASED — build when the specific pressure appears, not speculatively.
+- **Track 7 infra** — status page = OPERATOR config (`docs/runbooks/STATUS-PAGE-SETUP.md`, ~10 min external monitor); the rest (CDN purge-on-write, plane migration, tenant-migration fan-out, HA re-run, edge reader, Phase C) are TRIGGER-BASED — build when the specific pressure appears, not speculatively.
 
 Original plan + full track detail below.
 

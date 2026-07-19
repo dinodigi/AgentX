@@ -55,7 +55,7 @@ Guardrail: the spec must be a **precise contract with acceptance criteria** (exa
 
 **Rooted in what exists:**
 - **Structure spec** rides the **export/import manifest** — `lib/manifest.ts` (`exportProject`/`importProject`). A plugin's structure ingredient is essentially a manifest the AI applies.
-- **Tools** ride the **MCP tool surface** — `TOOL_DEFS` + `callTool` (`lib/mcp/tools.ts`). This is the deferred **Phase 21 / plugins** work (`ROADMAP.md` "ON HOLD"; V0/V1 in `docs/LAUNCH-PLAN.md`).
+- **Tools** ride the **MCP tool surface** — `TOOL_DEFS` + `callTool` (`lib/mcp/tools.ts`). This is the deferred **Phase 21 / plugins** work (`ROADMAP.md` "ON HOLD"; V0/V1 in `docs/plans/LAUNCH-PLAN.md`).
 - **Multi-plugin per project** — a project stacks many plugins; needs per-project **plugin enablement** (a new table + admin surface) and **namespacing** (a plugin's collections are prefixed / the AI reconciles) so two plugins don't collide.
 
 **Phasing:** (a) plugin format = {structure-spec, tools, guidance, acceptance-criteria}; (b) install = AI applies the spec (adaptive) with the manifest as the known-good baseline; (c) per-project enablement + the gallery; (d) authoring (the AI composes a plugin from a project — `exportProject` is the seed).
@@ -105,11 +105,11 @@ Depends on: block types (richer page structure) + the plugin system (Track 2).
 
 Separate from the product tracks but the same "safe-to-grow" gate:
 - ✅ **App tier:** autoscaling on, 2 instances (fixes single-instance saturation + SPOF).
-- 🟡 **CDN in front of delivery — CODE SHIPPED 2026-07-17; Cloudflare setup = operator step.** Full design + setup: **docs/CDN-SETUP.md**.
+- 🟡 **CDN in front of delivery — CODE SHIPPED 2026-07-17; Cloudflare setup = operator step.** Full design + setup: **docs/runbooks/CDN-SETUP.md**.
   - **Design correction found in code:** there are NO anonymous delivery reads — every read is Bearer-token-authenticated and the URL does *not* identify the project (the token does). Same URL serves different tenants ⇒ a URL-keyed CDN cache would leak across tenants. The earlier "cache anonymous reads / bypass on token" framing was wrong.
   - **Shipped origin contract** (`lib/delivery-http.ts cachedJson({share})`): public reads (no `x-user-token`, no owner row-clauses) emit `max-age=0, s-maxage=60, stale-while-revalidate=300` + `Vary: authorization, x-user-token` + existing ETag; user-scoped reads, changes feed, POSTs, errors stay `no-cache`/uncached. Kill switch: `DELIVERY_EDGE_TTL_SECONDS=0`. Test: `scripts/smoke/63-delivery-cache-headers.test.mjs`.
   - **Shipped edge worker** (`infra/cloudflare/delivery-cache-worker.js`): caches only s-maxage-marked 200s, key = URL + SHA-256(token) (per-tenant slots, raw token never stored), serves 304s at the edge, `x-edge-cache` debug header.
-  - **Operator TODO:** proxy pluggie.app through Cloudflare, deploy the worker, route `pluggie.app/api/v1/*` (steps + verification curls in docs/CDN-SETUP.md). Assets already edge-friendly (302 → R2 public URL, 1-year immutable).
+  - **Operator TODO:** proxy pluggie.app through Cloudflare, deploy the worker, route `pluggie.app/api/v1/*` (steps + verification curls in docs/runbooks/CDN-SETUP.md). Assets already edge-friendly (302 → R2 public URL, 1-year immutable).
   - **Metering gotcha stands (revenue-critical under usage billing):** edge HITs never reach origin → Track 4 meter must read Cloudflare analytics; origin counts keep covering un-cached work.
 - ⬜ **Data-plane hardening** — migration fan-out + version tracking across tenant DBs, content-migration between planes (currently greenfield-only), Neon project-limit strategy. See the data-plane analysis.
 
@@ -119,7 +119,7 @@ Separate from the product tracks but the same "safe-to-grow" gate:
 
 Everything code-side is shipped; these are the operator-side steps, in order of impact:
 
-1. **Cloudflare CDN (activates item #1)** — ~15 min, steps + verification curls in **docs/CDN-SETUP.md**: proxy pluggie.app (orange cloud, SSL Full strict) → paste `infra/cloudflare/delivery-cache-worker.js` into Workers → route `pluggie.app/api/v1/*` → curl-verify `x-edge-cache: MISS-STORED → HIT`. Until then the s-maxage headers are emitted but no edge caches them (harmless).
+1. **Cloudflare CDN (activates item #1)** — ~15 min, steps + verification curls in **docs/runbooks/CDN-SETUP.md**: proxy pluggie.app (orange cloud, SSL Full strict) → paste `infra/cloudflare/delivery-cache-worker.js` into Workers → route `pluggie.app/api/v1/*` → curl-verify `x-edge-cache: MISS-STORED → HIT`. Until then the s-maxage headers are emitted but no edge caches them (harmless).
 2. **Cap numbers sign-off (4a)** — `lib/caps.ts`: dataBytes sandbox **50 MB** / paid **5 GB** are my defaults marked `OPERATOR REVIEW` — confirm or change (one constant each).
 3. **METERED_RATES (activates 4d)** — set the env on Render when pricing is decided, e.g. `{"computeCentsPerCuHour":12,"storageCentsPerGbMonth":8}` (cents; ≥ Neon COGS). Until set, metered billing is INERT — flat subscriptions unchanged. After setting: verify in Stripe test mode that a managed project's subscription gains the two metered items + usage.
 4. **Neon org plan — NOT needed yet (corrected 2026-07-17).** Current Free plan: up to **100 projects**, each with its own **100 CU-h/month + 0.5 GB** allowance — at 14 projects (heaviest tenant ~10 CU-h MTD) there's large headroom. Free is **caps, not billing**: a project exhausting 100 CU-h is SUSPENDED until month reset — an outage for a paying tenant. **Upgrade trigger:** any project's console CU-h approaches ~80/month (turns suspension into overage billing), ~100 tenants, or >0.5 GB per tenant DB. (Paid also unlocks byte-hour storage accounting.)

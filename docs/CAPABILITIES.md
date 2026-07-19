@@ -1,8 +1,10 @@
 # AgentX — System Capabilities
 
 > Snapshot as of 2026-07-09 (post Phase 16). What the platform can do **today**,
-> grouped by surface. For what's next, see [ROADMAP.md](../ROADMAP.md); for
-> implementation specs, see [gap-designs/](gap-designs/README.md).
+> grouped by surface. For what's next, see [BACKLOG.md](BACKLOG.md) and
+> [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md); for
+> implementation specs, see [gap-designs/](gap-designs/README.md). (The original
+> phase roadmap lives in [archive/ROADMAP.md](archive/ROADMAP.md).)
 
 AgentX is an MCP-native backend platform: an agent defines a project's data
 model over MCP and gets back a branded client admin, a public delivery API, and

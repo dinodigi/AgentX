@@ -6,7 +6,7 @@ review; the design thinking behind the meaty ones is captured in the detail
 sections below so nothing has to be re-derived when we pick it up.*
 
 **This doc is not the launch gate.** Launch-execution items (C1 dogfood, ops,
-legal, Stripe/Clerk keys, the checklist) live in [LAUNCH-PLAN.md](LAUNCH-PLAN.md).
+legal, Stripe/Clerk keys, the checklist) live in [LAUNCH-PLAN.md](plans/LAUNCH-PLAN.md).
 This is the idea/feedback pipeline that feeds *future* work.
 
 ## Lifecycle

@@ -359,7 +359,7 @@ in the launch plan.
       per-project framing, keeping the hand-onboarded-beta CTA ("beta testers
       keep these prices"). The private-beta→full-launch copy flip (drop the
       beta framing, open self-serve) stays a launch-time toggle.
-- [x] C4 (M) **Security pass — ✅ COMPLETE 2026-07-11 (audit: docs/SECURITY-PASS.md).**
+- [x] C4 (M) **Security pass — ✅ COMPLETE 2026-07-11 (audit: docs/reviews/SECURITY-PASS.md).**
       37-action authz sweep + outbound-fetch review. Three findings fixed:
       (1) **SSRF** in tenant webhooks/hooks/actions/schedules — new
       `lib/net-guard.ts` refuses private/loopback/link-local/metadata targets

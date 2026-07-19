@@ -2,7 +2,7 @@
 
 Each subsystem is a feature with its own backlog. Numbering = work order.
 Sizes: S (≤half day) · M (1–2 days) · L (3+ days). Items marked **gated** wait
-for their trigger (evidence, user accounts, deploy, or tenants) per ROADMAP.md.
+for their trigger (evidence, user accounts, deploy, or tenants) per the original roadmap (now docs/archive/ROADMAP.md).
 
 | # | Subsystem | Grade | Why this position |
 |---|-----------|-------|-------------------|

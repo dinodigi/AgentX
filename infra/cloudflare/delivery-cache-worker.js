@@ -12,7 +12,7 @@
  *
  * Deploy: Cloudflare dashboard → Workers → create → paste this file.
  * Route:  <your-host>/api/v1/*   (delivery API ONLY — never /api/mcp or admin)
- * See docs/CDN-SETUP.md for the full setup + verification steps.
+ * See docs/runbooks/CDN-SETUP.md for the full setup + verification steps.
  */
 
 export default {
