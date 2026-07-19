@@ -1,5 +1,12 @@
 # Docs — how to read this folder
 
+> **Dateline convention:** every top-level doc opens with a class line —
+> `Living — last synced <date>` (kept current; updated as part of the ship
+> ritual in CLAUDE.md), `Durable`/`Contract` (ages slowly; updated on real
+> change), or it lives in `plans/`, `reviews/`, or `archive/` (dated records —
+> never edited after the fact beyond status marks). If a Living dateline looks
+> old, it probably is — say so and sync it.
+
 The story in one paragraph: the platform started as a scoped experiment (the
 brief and A/B protocol are in [archive/](archive/)), grew through a formal
 design phase ([gap-designs/](gap-designs/README.md)) and a subsystem build

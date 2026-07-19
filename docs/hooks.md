@@ -1,5 +1,8 @@
 # Before-write hooks
 
+> **Contract — stable since 2026-07-09.** Update only when the hook envelope
+> or signing scheme changes.
+
 A before-write hook is a **signed, synchronous POST** from AgentX to *your*
 endpoint that gates (and optionally rewrites) an entry write before it commits.
 AgentX never hosts or evaluates your code — it calls yours. Declare one per

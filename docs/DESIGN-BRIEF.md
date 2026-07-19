@@ -1,5 +1,8 @@
 # AgentX — Design Brief (platform UI pass + marketing site)
 
+> **Living direction — set 2026-07-10.** Futuristic/technical is the target;
+> the earlier paper-and-ink look is out. Update only when the direction changes.
+
 > For the design session. Self-contained: everything you need is in this file
 > or at the file paths it names. Two workstreams — **A: marketing pages**
 > (net-new) and **B: platform UI polish** (existing product). Deliver specs the

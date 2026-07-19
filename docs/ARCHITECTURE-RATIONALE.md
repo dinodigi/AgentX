@@ -1,5 +1,8 @@
 # Architecture Rationale — response to the developer review
 
+> **Durable — written 2026-07.** Reasoning ages slowly; verify cited code paths
+> before leaning on specifics.
+
 **What this is:** the reasoned, code-rooted response to [DEVELOPER-REVIEW-2026-07.md](reviews/DEVELOPER-REVIEW-2026-07.md). It doubles as the durable answer to "is our foundation correct?" so the question doesn't have to be re-litigated. Every claim below is checkable in the code (files cited).
 
 **Fair framing up front:** the reviewer is competent and his *tactical* feedback was genuinely valuable — the field report caught a real data-integrity bug (multi-instance cache staleness), the SEO 503, and the JSON-error gaps, all now fixed. It's specifically the *strategic* "rip out the layer / switch the DB" instinct that misses two constraints. This doc explains which, and why.

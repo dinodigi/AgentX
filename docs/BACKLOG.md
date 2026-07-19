@@ -1,9 +1,12 @@
 # Backlog — open ideas, feedback & parked decisions
 
+> **Living — last synced 2026-07-19.**
+
 *Single source of truth for everything raised but **not yet decided or scheduled**.
-Started 2026-07-12. Most items come from the dogfood build + the readiness
-review; the design thinking behind the meaty ones is captured in the detail
-sections below so nothing has to be re-derived when we pick it up.*
+Started 2026-07-12. Sources now include the agent feedback wall
+([reviews/FEEDBACK-TRIAGE-2026-07.md](reviews/FEEDBACK-TRIAGE-2026-07.md) —
+source `wall`); the design thinking behind the meaty ones is captured in the
+detail sections below so nothing has to be re-derived when we pick it up.*
 
 **This doc is not the launch gate.** Launch-execution items (C1 dogfood, ops,
 legal, Stripe/Clerk keys, the checklist) live in [LAUNCH-PLAN.md](plans/LAUNCH-PLAN.md).
@@ -35,15 +38,16 @@ delivery API — MCP and admin are full-trust. This is the highest-value cluster
 | MT-1 | Scoped MCP tokens (per-collection / read-only / per-org) — today one all-powerful `mcp` token bypasses all row isolation | 🅿️ Parked | H | audit #1, dogfood |
 | MT-2 | Org-scope the admin view, and/or fix the `get_project_info` "hand the admin URL to the client" copy (today that's a one-click cross-tenant exposure) | 📥 Backlog | H | audit #2 |
 | MT-3 | Per-org composite unique (`unique:[orgField, field]`); stop the violation error leaking that a hidden row exists | 📥 Backlog | M | audit #3 |
-| MT-4 | Project-level "require access rules on every collection" setting; require `confirm:true` when a redefine drops an existing `access`/`workflow` block | 📥 Backlog | M | audit #4 |
-| MT-5 | Claim-based workflow transition actors (roles beyond coarse `mcp\|admin\|delivery`; `admin` currently includes client-role members) | 📥 Backlog | M | audit #5 |
+| MT-4 | Project-level "require access rules on every collection" setting; require `confirm:true` when a redefine drops an existing `access` block. *(The **workflow**-drop half ✅ shipped `6256c51` — confirm-gated, fresh-read.)* | 📥 Backlog | M | audit #4 |
+| MT-5 | Claim-based workflow transition actors (roles beyond coarse `mcp\|admin\|delivery`; `admin` currently includes client-role members) | 📥 Backlog | M | audit #5, wall |
 | MT-6 | A way to **test** isolation from the build loop (mint/supply an end-user JWT, or an isolation harness) — today you can't verify it from MCP | 🅿️ Parked | M | dogfood |
 
 ## Write-path & delivery ergonomics
 
 | ID | Item | Status | Pri | Source |
 |---|---|---|---|---|
-| WP-7 | **Bulk write + delete on the delivery API.** Bulk ops are MCP-only, so a delivery-side client deleting/creating N loops N calls → 429. (See detail.) | 📥 Backlog | H | dogfood |
+| WP-7 | **Bulk write + delete on the delivery API.** Bulk ops are MCP-only, so a delivery-side client deleting/creating N loops N calls → 429. *(Batch **reads** ✅ shipped `POST /api/v1/batch` 2026-07-17; writes/deletes still loop. Related: MCP `bulk_create_entries` 100/call is chatty for big migrations — wall.)* (See detail.) | 📥 Backlog | H | dogfood, wall |
+| WP-8 | Delivery-**read** rate limiting — decide whether public GETs get a budget (writes/search/transforms/checkout are limited today; reads ride the CDN). Open decision from the security remediation. | 🅿️ Parked | L | audit |
 | WP-3 | Fix the hooks×bulk **contract contradiction**: `define_collection.hooks` says bulk is "refused"; the code runs the hook per item. One is a lie the agent will code against | 📥 Backlog | H | audit #8 |
 | WP-1 | `Idempotency-Key` on delivery `POST` (exists on MCP `create`/`transact`, not delivery — backwards for retry-prone clients) | 📥 Backlog | M | audit #6 |
 | WP-2 | `If-Match` (compare-and-set) on delivery `PATCH` (ETags are already served on reads; CAS is MCP-only today) | 📥 Backlog | M | audit #7 |
@@ -63,15 +67,19 @@ delivery API — MCP and admin are full-trust. This is the highest-value cluster
 | ID | Item | Status | Pri | Source |
 |---|---|---|---|---|
 | QRY-3 | **Publish the limits in the contract**: per-IP rate budget, `429` + `retry-after`, size caps. The mechanism exists (retry-after header) but isn't documented, so clients aren't rate-limit-aware. Ties to WP-7. | 📥 Backlog | H | audit #16, dogfood |
-| QRY-1 | Absence operators (`ne`, `exists`/is-null); `gt`/`lt` + keyset cursors on the delivery read surface (delivery is equality + offset only) | 📥 Backlog | M | audit #14 |
-| QRY-2 | Async full export (dump to R2) beyond the 5,000-row `export_entries` cap | 📥 Backlog | M | audit #15 |
+| QRY-1 | Absence operators (`ne`, `exists`/is-null); `gt`/`lt` + keyset cursors on the delivery read surface (delivery is equality + offset only). *(Both ops exist on MCP; wall asks for a first-class `neOrUnset` or a prominent docs callout for the `anyOf:[{ne},{exists:false}]` idiom → CONTRACT-1.)* | 📥 Backlog | M | audit #14, wall |
+| QRY-2 | Async full export (dump to R2) for very large sets. *(The 5,000-row cap itself ✅ resolved `748d7f9` — `export_entries` pages a keyset cursor to a complete export; this item is now only about one-shot R2 dumps.)* | 🅿️ Parked | L | audit #15 |
+| QRY-5 | **Reporting: date-bucketed aggregates (`granularity: day\|week\|month`) + a second `groupBy` dimension** — most CRM-style reports (pipeline by month, volume by rep by month) fall to client-side without it. Top of triage Track B. | 🗓️ Phased | H | wall |
 | QRY-4 | Environment story (staging↔prod) + entry-level import/seeding (`import_project` is schema-only) | 🅿️ Parked | M | audit #17 |
 
 ## Data model
 
 | ID | Item | Status | Pri | Source |
 |---|---|---|---|---|
-| DM-1 | **Nested `list`/`object`/repeater field type** (business hours, FAQ, tiers, bullet lists). Embed-first (fast, join-free), index-on-demand for queryability. (See detail.) | 🅿️ Parked | M | design, dogfood |
+| DM-1 | **Nested `list`/`object`/repeater field type** | ✅ Shipped 2026-07-15/17 | — | design, dogfood |
+| | *Shipped as structured fields (`group`/`array`, one-level, recursive validation/projection, repeater editor) + heterogeneous **block types** with a `define_block` library. Remaining tail (relations-in-blocks polish, block library v1.1) tracks in plans/POST-DEPLOYMENT-V2-PLAN.md.* | | | |
+| DM-2 | **Enum option renames with mapped backfill** (`optionRenames:[{field,from,to}]`) — today renaming a pipeline stage orphans stored values (`renames[]` is fields-only) | 📥 Backlog | M | wall |
+| DM-3 | Counting/capacity constraint — "max N rows per composite key" (tour-slot capacity) has no declarative form; needs an external hook today | 🅿️ Parked | L | wall |
 
 ## DX & docs
 
@@ -114,6 +122,11 @@ payment-mode only — that's BILL-1.*
 | PLUG-1 | **AI-registered tools** (self-extending agent, V1) + endpoint governance. Post-launch. (See detail.) | 🅿️ Parked | L | design |
 | BRAND-1 | Appearance **brand-kit → agent design tokens** (palette/type/tone the agent builds the site from) + live preview | 🅿️ Parked | L | design |
 | CONN-1 | **Provider registry / swappable integrations** — Email = Resend \| Elastic \| SES, Storage = R2 \| S3, etc. Needs a category↔provider split (today connector `type` IS the provider), a provider adapter per category, per-provider config/secret schemas, and one-active-provider-per-category (unique index moves to `(projectId, category)`). The connectors UI is already category-grouped, so this is purely the architecture piece. Circle back when wiring a 2nd provider. | 🅿️ Parked | L | design |
+| CONN-2 | **SMS connector** (Twilio-shaped) — `{type:'sms', to:'{{phone}}'}` event actions gated on consent flags; the countryside baseline ships `text_opt_in` with nothing to act on. First real second-provider case → do with CONN-1's category split. | 🅿️ Parked | M | wall |
+| AUTO-1 | **Declarative scheduled data mutations** — `define_schedule` is actions-only (webhook/email); a constrained bulk-transition rule (cron + where + transition + stamp field) would let flows like the CRM recycle sweep self-host instead of depending on an external agent being alive. Triage Track C. | 📥 Backlog | M | wall |
+| EMAIL-1 | **Email template management layer** — the styled HTML engine shipped (`8cbdf30`); the builder/library/admin form for managing templates did not. | 📥 Backlog | M | design |
+| FEED-1 | **Feedback issues layer** (canonical issues + auto-attach dedup + smart `send_feedback` replies + ranked board) — designed, board mockup agreed. **ON HOLD by decision 2026-07-19: run the wall manually first.** Revisit when the same item arrives from 3+ projects or manual triage becomes ritual. | 🅿️ Parked | M | design |
+| FEED-2 | **Client-facing feedback plugin** — a per-project feedback wall for a tenant's OWN end users (mirror of our internal loop). Explicitly requested as backlog, second priority. | 📥 Backlog | M | design |
 
 ---
 
@@ -226,6 +239,9 @@ is built for.
 ---
 
 ## Recently shipped from this pipeline
+- **DM-1 structured fields + blocks** (2026-07-15/17) — group/array primitives, repeater editor, heterogeneous block types + `define_block` library.
+- **Feedback wall first triage → 5 fixes + 1 security fix** (`6256c51`, `748d7f9`, `b1000e6`, 2026-07-18): workflow-drop confirm gate, relation stale-read → E_VALIDATION, create-null symmetry, workflow import escape hatch (audit-stamped), export keyset cursor, MCP-token-on-delivery scope enforcement. Full story: [reviews/FEEDBACK-TRIAGE-2026-07.md](reviews/FEEDBACK-TRIAGE-2026-07.md).
+- **Batch delivery reads** (`POST /api/v1/batch`, 2026-07-17) — the read half of WP-7.
 - **Platform billing customer portal** (`0bf5fb0`) — a subscriber can self-manage/cancel via the Stripe Billing Portal from project Settings → Billing. (Proves the portal pattern BILL-1 #3 reuses for tenant-commerce subscriptions.)
 - **SEC-2** — connector secret-shape guard (`e59d13e`).
-- (Contract dump tooling `scripts/dump-contract.ts` → `docs/ai-contract.md` exists as the DX-2 starter.)
+- (Contract dump tooling `scripts/dump-contract.ts` → `docs/ai-contract.md` exists as the DX-2 starter; the contract is now regenerated as part of the ship ritual — see CLAUDE.md.)

@@ -28,6 +28,276 @@
       }
     },
     {
+      "name": "configure_inbound",
+      "description": "Route inbound email into a collection (2b). A mail provider (Resend/SES/Postmark/Mailgun inbound parse) POSTs a normalized {from,to,subject,text,html?} to the returned postUrl with the returned SECRET as a bearer token; each message becomes an entry via fieldMap (inbound field → your collection field, e.g. {from:'email', subject:'subject', text:'message'}). The secret is shown ONCE — store it in your provider's webhook config. Trusted path: bypasses publicWrite, writes ONLY the mapped fields into the named collection. Re-run to rotate.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "collection": {
+            "type": "string"
+          },
+          "fieldMap": {
+            "type": "object",
+            "description": "inbound field → collection field; keys from: from|to|subject|text|html"
+          }
+        },
+        "required": [
+          "collection",
+          "fieldMap"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "disable_inbound",
+      "description": "Turn off inbound-email routing for this project (the secret stops working).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "define_block",
+      "description": "Create or update a NAMED block in the project's block library — 'declare a block as a template'. Define once, then reference by name from any collection: array:{blocks:[\"hero\", ...]} (define_collection materializes the full def). Editing a block that collections already use returns a plan naming them and requires confirm:true — the new shape is re-materialized into every using collection (existing entries keep their stored data; new writes validate against the new shape). Block fields follow the same rules as inline blocks (one-level, `_type` reserved, relation allowed).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "snake_case — the stored `_type` and the reference name"
+          },
+          "label": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "the block's FieldDefs"
+          },
+          "confirm": {
+            "type": "boolean",
+            "description": "apply an edit that re-materializes into using collections"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "fields"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_blocks",
+      "description": "The project's block library: each named block with its label, field count, and which collections use it. Check here before inlining a block shape a second time.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_block",
+      "description": "Remove a library block. Refused while any collection still uses it (the response lists them) — redefine those collections without it first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "send_feedback",
+      "description": "Report platform feedback to the Pluggie team — USE THIS whenever you hit a limitation, a missing capability, a confusing error, or friction while working this project (e.g. 'no way to express X', 'tool Y rejected something reasonable', 'docs unclear about Z'). One call per distinct issue: {category: limitation|bug|friction|idea, summary (one sentence), detail? (what you tried, exact errors), toolName? (the tool involved)}. Goes straight to the platform's feedback wall and shapes the roadmap. Do NOT use it for questions or support.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "limitation",
+              "bug",
+              "friction",
+              "idea"
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "description": "one sentence, <=300 chars"
+          },
+          "detail": {
+            "type": "string",
+            "description": "context: what you tried, exact errors (<=5000 chars)"
+          },
+          "toolName": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "summary"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "define_plugin",
+      "description": "Author or update a plugin IN THIS PROJECT'S private catalog (never visible to other projects — the platform-global catalog is operator-curated). A plugin = {id, version, name, description, structure?: {intent, baseline:[collection specs incl. workflow/publicFilter/access/events], reconcile}, guidance?, acceptance?}. Use it to package a proven domain model (a client CRM, a booking system) so it's installable via enable_plugin + get_plugin like any catalog plugin. Baseline fields are validated now; workflow/filters validate when applied.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "definition": {
+            "type": "object",
+            "description": "the full PluginDef"
+          }
+        },
+        "required": [
+          "definition"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "delete_plugin",
+      "description": "Remove a plugin from THIS project's private catalog (built-ins/global are operator-managed).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_plugins",
+      "description": "Plugins available to this project and whether each is enabled. A plugin is ONE installable unit declaring intent you realize: structure (a content model to reconcile into the project), tools (extra MCP verbs unlocked by enabling), and guidance (domain operating context). When the user asks for a capability (contact forms, SEO, booking…), check here FIRST before hand-rolling one — an enabled plugin is a capability the project already committed to.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_plugin",
+      "description": "Full spec of one plugin: structure.intent + structure.baseline (a known-good starting model) + structure.reconcile (composition rules), guidance, and acceptance criteria. To APPLY a plugin: enable it (enable_plugin), then RECONCILE its baseline with the project's existing collections using define_collection — adapt naming, merge overlapping models, add project-specific fields; do NOT blindly stamp the baseline. Finally verify every acceptance criterion holds and fix what doesn't.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "plugin id from list_plugins"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "enable_plugin",
+      "description": "Enable a plugin for this project (idempotent). Enabling unlocks the plugin's tools (if any) and records the capability so future sessions see it in list_plugins. Follow up by applying its structure per get_plugin.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "plugin id from list_plugins"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "disable_plugin",
+      "description": "Disable a plugin for this project. Its tools stop working; content/collections it created stay (removing content is a separate, deliberate act).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "plugin id from list_plugins"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "fetch_page",
+      "description": "SEO plugin tool (enable_plugin {id:'seo'} first): fetch ONE live page's <head> facts — title, meta description, canonical, og:*, h1 count, lang, viewport, JSON-LD presence, robots. SSRF-guarded like webhooks (public https targets only), bounded read. Use score_page instead when you want the graded scorecard.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "absolute URL of the live page"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "score_page",
+      "description": "SEO plugin tool (enable_plugin {id:'seo'} first): fetch a live page and grade it — returns {score: 0-100, findings:[{check, severity, found, fix}], head}. Each finding's `fix` names the seo.* entry field to write (update_entry), so the loop is: score → fix the entry → site re-renders → re-score to prove it moved.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "absolute URL of the live page"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "audit_site",
+      "description": "SEO plugin tool (enable_plugin {id:'seo'} first): score up to 10 live pages in one call — pass urls:[...] or a sitemapUrl (its first 10 <loc> entries). Returns per-page scorecards ({url, score, findings}) + a summary (averageScore, worst, failed). Operate the v2 loop: audit_site → write each page's fixes into its entry's seo group (update_entry; every finding's `fix` names the field) → after the site re-renders, audit_site again to PROVE the scores moved. Dead pages become per-page errors, never a failed audit.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10
+          },
+          "sitemapUrl": {
+            "type": "string",
+            "description": "absolute URL of sitemap.xml (used when urls is omitted)"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "set_locales",
       "description": "Set the project's locale registry: {default, supported:[tags]} — BCP-47-style tags like \"en\", \"de\", \"pt-br\", stored normalized lowercase (max 16). Project-wide config; `default` must be in `supported` and is the fallback target. This is the prerequisite for localized fields. Removing a supported locale that holds stored translations, or changing the default while translations exist, returns a counted plan with code E_CONFIRM_REQUIRED — re-run with confirm:true; a confirmed removal permanently PURGES the dropped locales' variants from stored entries (trash included).",
       "inputSchema": {
@@ -59,7 +329,7 @@
     },
     {
       "name": "define_collection",
-      "description": "Create or update a collection (a data model). `fields` is an array of field defs, each: {name, label, type, required?, publicRead?} plus constraints (unique? on text/number/date — DB-enforced, dates stored normalized to UTC ISO; min/max? = value bounds on number, LENGTH bounds on text/richtext, ISO-string instant bounds on date; integer? on number; pattern? = JS-regex source on text, requires max <= 10000, patternHint? = the failure message; requiredIf?: {field, equals} against a sibling enum) and type-specific config (enum:options[], relation:{targetCollection,labelField}). Instantly manageable in the admin; no per-project UI code. Public fields are served by the delivery API (see get_project_info). Set publicWrite:true + webhookUrl for a form. Redefining an existing collection with dropped/retyped fields returns a diff plan and requires confirm:true (affected entries are counted, not silently orphaned). Tightening a constraint on existing data applies immediately and returns constraintWarnings[] (violation counts) — old rows stay readable, new writes must comply. To RENAME a field, pass renames: [{from, to}] with the new name in fields — entry data is backfilled, no confirm needed; without renames a rename is a destructive drop+add. localized:true (text/richtext, needs set_locales) stores {locale: value} variant maps — not for unique/searchable/computed/labelField/email-template fields; see list_field_types. LOCALIZING a populated field wraps existing values under the default locale (immediate, non-destructive, reported in changes.localized); DE-localizing keeps only the default variant and requires confirm:true (entries without one lose the field). Boundaries: this system defines DATA STRUCTURE + CRUD (plus atomic batches via transact, recoverable deletes via trash/restore, delayed/scheduled actions, and declarative field-transition workflows — actor-gated state machines with webhook/email actions, no arbitrary code and no multi-entry orchestration). Custom validation runs on YOUR endpoint via collection before-write hooks (define hooks.beforeCreate) — AgentX signs and calls it, never hosts code. It does NOT do authorization/row-level rules beyond presets (those live in the app layer). i18n = per-field variant maps: set_locales, then localized:true on text/richtext fields (delivery serves the default locale flat). Public-read visibility is per-field (set publicRead on each field). Public-write is per-collection.",
+      "description": "Create or update a collection (a data model). `fields` is an array of field defs, each: {name, label, type, required?, publicRead?} plus constraints (unique? on text/number/date — DB-enforced, dates stored normalized to UTC ISO; min/max? = value bounds on number, LENGTH bounds on text/richtext, ISO-string instant bounds on date; integer? on number; pattern? = JS-regex source on text, requires max <= 10000, patternHint? = the failure message; requiredIf?: {field, equals} against a sibling enum) and type-specific config (enum:options[], relation:{targetCollection,labelField}, group:{fields:[...]} = a nested set of sub-fields, array:{item, maxItems?} = a repeater of scalars OR groups — use array-of-group for repeatable SAME-shape sections, or array:{blocks:[{name,label,fields},...]} = TYPED BLOCKS for page bodies of DIFFERENT sections (hero/features/cta…): each element stores its block name as `_type` (e.g. {\"_type\":\"hero\",\"heading\":\"…\"}); see list_field_types). Instantly manageable in the admin; no per-project UI code. Public fields are served by the delivery API (see get_project_info). Set publicWrite:true + webhookUrl for a form. Redefining an existing collection with dropped/retyped fields returns a diff plan and requires confirm:true (affected entries are counted, not silently orphaned). Tightening a constraint on existing data applies immediately and returns constraintWarnings[] (violation counts) — old rows stay readable, new writes must comply. To RENAME a field, pass renames: [{from, to}] with the new name in fields — entry data is backfilled, no confirm needed; without renames a rename is a destructive drop+add. localized:true (text/richtext, needs set_locales) stores {locale: value} variant maps — not for unique/searchable/computed/labelField/email-template fields; see list_field_types. LOCALIZING a populated field wraps existing values under the default locale (immediate, non-destructive, reported in changes.localized); DE-localizing keeps only the default variant and requires confirm:true (entries without one lose the field). Boundaries: this system defines DATA STRUCTURE + CRUD (plus atomic batches via transact, recoverable deletes via trash/restore, delayed/scheduled actions, and declarative field-transition workflows — actor-gated state machines with webhook/email actions, no arbitrary code and no multi-entry orchestration). Custom validation runs on YOUR endpoint via collection before-write hooks (define hooks.beforeCreate) — AgentX signs and calls it, never hosts code. It does NOT do authorization/row-level rules beyond presets (those live in the app layer). i18n = per-field variant maps: set_locales, then localized:true on text/richtext fields (delivery serves the default locale flat). Public-read visibility is per-field (set publicRead on each field). Public-write is per-collection.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -100,10 +370,12 @@
                       "type": "string",
                       "enum": [
                         "eq",
+                        "ne",
                         "contains",
                         "gt",
                         "lt",
-                        "in"
+                        "in",
+                        "exists"
                       ]
                     },
                     "value": {
@@ -133,10 +405,12 @@
                             "type": "string",
                             "enum": [
                               "eq",
+                              "ne",
                               "contains",
                               "gt",
                               "lt",
-                              "in"
+                              "in",
+                              "exists"
                             ]
                           },
                           "value": {
@@ -150,7 +424,8 @@
                         ],
                         "additionalProperties": false
                       },
-                      "minItems": 1
+                      "minItems": 1,
+                      "maxItems": 200
                     }
                   },
                   "required": [
@@ -196,7 +471,7 @@
           },
           "events": {
             "type": "object",
-            "description": "declarative actions on entry lifecycle: {created|updated|deleted: [{type:'webhook',url} | {type:'email',to,subject}]}. Email needs the Resend connector; to/subject support {{field}} interpolation from entry data. Any action takes when: [clauses] (same shape as query where, evaluated against the post-change entry — e.g. fire only when status='confirmed') and disabled: true (paused, kept in the schema). updated events carry {previous, changedFields}. Add after: '45m'|'12h'|'3d' (1m..365d) to DEFER the action: it is queued at emit time (timer starts at the FIRST matching event; later updates do not reset it or queue a second send while one is pending), and at send time the action is re-read from this config and `when` is re-evaluated against the CURRENT entry — so disabling, removing, or editing an action also cancels its pending delayed sends, and a deleted entry skips silently. Delayed sends omit previous/changedFields. Pending ones are visible via list_jobs. All outcomes land in the delivery log (get_deliveries); failed ones can be replayed with refire_delivery.",
+            "description": "declarative actions on entry lifecycle: {created|updated|deleted: [{type:'webhook',url} | {type:'email',to,subject,html?,from?,replyTo?,cc?,bcc?}]}. Email needs the Resend connector; to/subject/html support {{field}} interpolation from entry data. from is a CUSTOM SENDER — static (never interpolated) and must be an APPROVED sender: the connector's fromEmail, any address on its verified domain, or the connector's approvedSenders list (rejected at define otherwise). replyTo MAY interpolate {{field}} — set replyTo:'{{email}}' on an inbox notification so replying answers the submitter. cc/bcc are static lists (max 10 each). html is an OPTIONAL styled HTML body for a professional-looking email (interpolated values are HTML-escaped; a plain-text fallback is derived automatically) — omit it for a plain notification. Any action takes when: [clauses] (same shape as query where, evaluated against the post-change entry — e.g. fire only when status='confirmed') and disabled: true (paused, kept in the schema). updated events carry {previous, changedFields}. Add after: '45m'|'12h'|'3d' (1m..365d) to DEFER the action: it is queued at emit time (timer starts at the FIRST matching event; later updates do not reset it or queue a second send while one is pending), and at send time the action is re-read from this config and `when` is re-evaluated against the CURRENT entry — so disabling, removing, or editing an action also cancels its pending delayed sends, and a deleted entry skips silently. Delayed sends omit previous/changedFields. Pending ones are visible via list_jobs. All outcomes land in the delivery log (get_deliveries); failed ones can be replayed with refire_delivery.",
             "properties": {
               "created": {
                 "type": "array",
@@ -221,7 +496,7 @@
           },
           "workflow": {
             "type": "object",
-            "description": "declarative state machine over ONE enum field: {field, initial, transitions:[{from: state|state[], to: state, actors?: (mcp|admin|delivery)[], actions?: [event action]}]}. initial is enforced on EVERY create path (including bulk_create_entries and public/delivery writes — an explicit non-initial value is rejected). The field then moves ONLY via a declared transition; an illegal move is rejected with the allowed targets, and a target no transition reaches from the current state conflicts. Transitions are ACTOR-GATED — by default only mcp and admin may transition; add 'delivery' to a transition's actors to let end users drive it (e.g. an owner cancelling their own request). NOTE: 'admin' includes client-role members in v1. Overlapping (from,to) pairs are rejected at define time so every move resolves one transition. A matched transition fires its actions as an entry.transitioned event (webhook/email, immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
+            "description": "declarative state machine over ONE enum field: {field, initial, transitions:[{from: state|state[], to: state, actors?: (mcp|admin|delivery)[], actions?: [event action]}]}. initial is enforced on EVERY create path (including bulk_create_entries and public/delivery writes — an explicit non-initial value is rejected; for MIGRATIONS, create_entry/bulk_create_entries accept allowExplicitWorkflowState:true to load historical records at their real states, audit-stamped). The field then moves ONLY via a declared transition; an illegal move is rejected with the allowed targets, and a target no transition reaches from the current state conflicts. Transitions are ACTOR-GATED — by default only mcp and admin may transition; add 'delivery' to a transition's actors to let end users drive it (e.g. an owner cancelling their own request). NOTE: 'admin' includes client-role members in v1. Overlapping (from,to) pairs are rejected at define time so every move resolves one transition. A matched transition fires its actions as an entry.transitioned event (webhook/email, immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
             "properties": {
               "field": {
                 "type": "string",
@@ -510,7 +785,7 @@
     },
     {
       "name": "create_entry",
-      "description": "Create one entry in a collection. `data` is validated strictly against the collection's schema — unknown fields, wrong types, bad enum values, and dangling relation/asset ids are rejected. Pass idempotencyKey to make retries safe: a repeated call with the same key returns the original entry instead of duplicating. CRUD only.",
+      "description": "Create one entry in a collection. `data` is validated strictly against the collection's schema — unknown fields, wrong types, bad enum values, and dangling relation/asset ids are rejected. Pass idempotencyKey to make retries safe: a repeated call with the same key returns the original entry instead of duplicating. allowExplicitWorkflowState is the MIGRATION escape hatch: import historical records at their real workflow states (any declared enum option) instead of being forced to `initial`. Use it ONLY for imports/backfills — normal creates must start at initial. Its use is stamped into the audit log. CRUD only.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -522,6 +797,10 @@
           },
           "idempotencyKey": {
             "type": "string"
+          },
+          "allowExplicitWorkflowState": {
+            "type": "boolean",
+            "description": "migration/import only — accept an explicit workflow state (audit-stamped)"
           }
         },
         "required": [
@@ -582,10 +861,12 @@
                       "type": "string",
                       "enum": [
                         "eq",
+                        "ne",
                         "contains",
                         "gt",
                         "lt",
-                        "in"
+                        "in",
+                        "exists"
                       ]
                     },
                     "value": {
@@ -615,10 +896,12 @@
                             "type": "string",
                             "enum": [
                               "eq",
+                              "ne",
                               "contains",
                               "gt",
                               "lt",
-                              "in"
+                              "in",
+                              "exists"
                             ]
                           },
                           "value": {
@@ -632,7 +915,8 @@
                         ],
                         "additionalProperties": false
                       },
-                      "minItems": 1
+                      "minItems": 1,
+                      "maxItems": 200
                     }
                   },
                   "required": [
@@ -880,10 +1164,12 @@
                             "type": "string",
                             "enum": [
                               "eq",
+                              "ne",
                               "contains",
                               "gt",
                               "lt",
-                              "in"
+                              "in",
+                              "exists"
                             ]
                           },
                           "value": {
@@ -913,10 +1199,12 @@
                                   "type": "string",
                                   "enum": [
                                     "eq",
+                                    "ne",
                                     "contains",
                                     "gt",
                                     "lt",
-                                    "in"
+                                    "in",
+                                    "exists"
                                   ]
                                 },
                                 "value": {
@@ -930,7 +1218,8 @@
                               ],
                               "additionalProperties": false
                             },
-                            "minItems": 1
+                            "minItems": 1,
+                            "maxItems": 200
                           }
                         },
                         "required": [
@@ -976,7 +1265,7 @@
     },
     {
       "name": "query_entries",
-      "description": "List entries in a collection (relations resolved to {id,label}). Supports limit/offset (default 100, max 500), where filters [{field, op: eq|contains|gt|lt|in, value}] and orderBy {field, dir: asc|desc}. Ops are type-checked: contains=text/richtext, gt/lt=number/date, in=text/enum/relation with value: string[]. Where items AND together; an item may be an OR group {anyOf: [clauses]} (one level, no nesting). select: [fields] trims each entry's data to those fields (id always included). expand: [relationField] replaces those relation values with {id, label, data} — the full target record (depth 1), killing the N+1 round-trip. Returns {entries, limit, offset, hasMore, nextOffset, nextCursor} — page with offset: nextOffset, or (preferred for deep/chronological paging) pass cursor: nextCursor, which uses the stable default ordering and stays exact past thousands of rows. cursor excludes offset/orderBy. No full-text search service.",
+      "description": "List entries in a collection (relations resolved to {id,label}). Supports limit/offset (default 100, max 500), where filters [{field, op: eq|ne|contains|gt|lt|in|exists, value}] and orderBy {field, dir: asc|desc}. ne = SET-and-different (an unset field never matches); exists takes true|false (presence) — 'published OR unset' = {anyOf:[{field:'published',op:'eq',value:true},{field:'published',op:'exists',value:false}]}. Ops are type-checked: contains=text/richtext, gt/lt=number/date,in=text/enum/relation with value: string[]. Where items AND together; an item may be an OR group {anyOf: [clauses]} (one level, no nesting). select: [fields] trims each entry's data to those fields (id always included). expand: [relationField] replaces those relation values with {id, label, data} — the full target record (depth 1), killing the N+1 round-trip. Returns {entries, limit, offset, hasMore, nextOffset, nextCursor} — page with offset: nextOffset, or (preferred for deep/chronological paging) pass cursor: nextCursor, which uses the stable default ordering and stays exact past thousands of rows. cursor excludes offset/orderBy. For keyword/full-text queries use search_entries instead (over searchable:true fields).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1008,10 +1297,12 @@
                       "type": "string",
                       "enum": [
                         "eq",
+                        "ne",
                         "contains",
                         "gt",
                         "lt",
-                        "in"
+                        "in",
+                        "exists"
                       ]
                     },
                     "value": {
@@ -1041,10 +1332,12 @@
                             "type": "string",
                             "enum": [
                               "eq",
+                              "ne",
                               "contains",
                               "gt",
                               "lt",
-                              "in"
+                              "in",
+                              "exists"
                             ]
                           },
                           "value": {
@@ -1058,7 +1351,8 @@
                         ],
                         "additionalProperties": false
                       },
-                      "minItems": 1
+                      "minItems": 1,
+                      "maxItems": 200
                     }
                   },
                   "required": [
@@ -1188,10 +1482,12 @@
                       "type": "string",
                       "enum": [
                         "eq",
+                        "ne",
                         "contains",
                         "gt",
                         "lt",
-                        "in"
+                        "in",
+                        "exists"
                       ]
                     },
                     "value": {
@@ -1221,10 +1517,12 @@
                             "type": "string",
                             "enum": [
                               "eq",
+                              "ne",
                               "contains",
                               "gt",
                               "lt",
-                              "in"
+                              "in",
+                              "exists"
                             ]
                           },
                           "value": {
@@ -1238,7 +1536,8 @@
                         ],
                         "additionalProperties": false
                       },
-                      "minItems": 1
+                      "minItems": 1,
+                      "maxItems": 200
                     }
                   },
                   "required": [
@@ -1294,10 +1593,12 @@
                       "type": "string",
                       "enum": [
                         "eq",
+                        "ne",
                         "contains",
                         "gt",
                         "lt",
-                        "in"
+                        "in",
+                        "exists"
                       ]
                     },
                     "value": {
@@ -1327,10 +1628,12 @@
                             "type": "string",
                             "enum": [
                               "eq",
+                              "ne",
                               "contains",
                               "gt",
                               "lt",
-                              "in"
+                              "in",
+                              "exists"
                             ]
                           },
                           "value": {
@@ -1344,7 +1647,8 @@
                         ],
                         "additionalProperties": false
                       },
-                      "minItems": 1
+                      "minItems": 1,
+                      "maxItems": 200
                     }
                   },
                   "required": [
@@ -1364,7 +1668,7 @@
     },
     {
       "name": "aggregate_entries",
-      "description": "Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggregates: [{fn: count|sum|avg|min|max, field?}] (count takes no field; the rest need a number field). Optional groupBy on an enum or relation field (relation groups include the target's label). Same where vocabulary as query_entries (eq/contains/gt/lt/in + anyOf). Groups are capped at 500, largest first, with truncatedGroups: true when cut. Example: revenue by trip = {aggregates:[{fn:'sum',field:'price'}], groupBy:'trip'}.",
+      "description": "Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggregates: [{fn: count|sum|avg|min|max, field?}] (count takes no field; the rest need a number field). Optional groupBy on an enum or relation field (relation groups include the target's label). Same where vocabulary as query_entries (eq/ne/contains/gt/lt/in/exists + anyOf). Groups are capped at 500, largest first, with truncatedGroups: true when cut. Example: revenue by trip = {aggregates:[{fn:'sum',field:'price'}], groupBy:'trip'}.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1418,10 +1722,12 @@
                       "type": "string",
                       "enum": [
                         "eq",
+                        "ne",
                         "contains",
                         "gt",
                         "lt",
-                        "in"
+                        "in",
+                        "exists"
                       ]
                     },
                     "value": {
@@ -1451,10 +1757,12 @@
                             "type": "string",
                             "enum": [
                               "eq",
+                              "ne",
                               "contains",
                               "gt",
                               "lt",
-                              "in"
+                              "in",
+                              "exists"
                             ]
                           },
                           "value": {
@@ -1468,7 +1776,8 @@
                         ],
                         "additionalProperties": false
                       },
-                      "minItems": 1
+                      "minItems": 1,
+                      "maxItems": 200
                     }
                   },
                   "required": [
@@ -1489,7 +1798,7 @@
     },
     {
       "name": "bulk_create_entries",
-      "description": "Create up to 100 entries in one call (use for seeding). Each item is validated like create_entry; returns per-item results so you can fix only the failures. A beforeCreate hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the consults fit the host budget (ceil(n/5)×timeout), and an over-cap batch is refused with a 'split the batch' hint.",
+      "description": "Create up to 100 entries in one call (use for seeding). Each item is validated like create_entry; returns per-item results so you can fix only the failures. A beforeCreate hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the consults fit the host budget (ceil(n/5)×timeout), and an over-cap batch is refused with a 'split the batch' hint. allowExplicitWorkflowState is the MIGRATION escape hatch: load historical records at their real workflow states instead of being forced to `initial` (imports/backfills only; audit-stamped).",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1502,6 +1811,10 @@
               "type": "object"
             },
             "maxItems": 100
+          },
+          "allowExplicitWorkflowState": {
+            "type": "boolean",
+            "description": "migration/import only — accept explicit workflow states (audit-stamped)"
           }
         },
         "required": [
@@ -1545,7 +1858,7 @@
     },
     {
       "name": "export_entries",
-      "description": "Export a collection's entry DATA (raw values — relations/assets stay ids so mappings survive re-import). json or csv, capped at 5000 rows with a truncated flag. Pairs with export_project (schema) for full portability/backup.",
+      "description": "Export a collection's entry DATA (raw values — relations/assets stay ids so mappings survive re-import). json or csv, up to 5000 rows per call in stable (createdAt, id) order. PAGED: when hasMore is true, pass nextCursor back as `cursor` and repeat until nextCursor is null — that walk is a complete, exact export (no row skipped or repeated). Each csv page carries its own header row — drop it when stitching pages. Pairs with export_project (schema) for full portability/backup.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1558,6 +1871,14 @@
               "json",
               "csv"
             ]
+          },
+          "cursor": {
+            "type": "string",
+            "description": "nextCursor from the previous page"
+          },
+          "limit": {
+            "type": "number",
+            "description": "rows per page, 1-5000 (default 5000)"
           }
         },
         "required": [
@@ -1785,7 +2106,7 @@
     },
     {
       "name": "define_schedule",
-      "description": "Create or update (upsert by name) a recurring schedule that fires a webhook or email — presets only, no cron strings. recurrence: {frequency: hourly|daily|weekly|monthly, at: 'HH:MM' (24h UTC; not for hourly — hourly fires at the top of each hour), weekday (weekly), dayOfMonth 1-28 (monthly; capped so every month has the day)}. UTC-only for now. action: {type:'webhook',url} | {type:'email',to,subject} — the same vocabulary as events but WITHOUT when/after (the recurrence is the timing; email supports {{name}}/{{scheduledFor}}). Fires are at-least-once (receivers must dedupe) and may run up to a minute late; a missed window fires once, never backfills. enabled:false pauses the schedule AND skips its already-queued fires. Outcomes land in get_deliveries as schedule.fired; pending fires show in list_jobs.",
+      "description": "Create or update (upsert by name) a recurring schedule that fires a webhook or email — presets only, no cron strings. recurrence: {frequency: hourly|daily|weekly|monthly, at: 'HH:MM' (24h UTC; not for hourly — hourly fires at the top of each hour), weekday (weekly), dayOfMonth 1-28 (monthly; capped so every month has the day)}. UTC-only for now. action: {type:'webhook',url} | {type:'email',to,subject,html?} — the same vocabulary as events but WITHOUT when/after (the recurrence is the timing; email supports {{name}}/{{scheduledFor}}). Fires are at-least-once (receivers must dedupe) and may run up to a minute late; a missed window fires once, never backfills. enabled:false pauses the schedule AND skips its already-queued fires. Outcomes land in get_deliveries as schedule.fired; pending fires show in list_jobs.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -1837,7 +2158,7 @@
           },
           "action": {
             "type": "object",
-            "description": "{type:'webhook',url} | {type:'email',to,subject}"
+            "description": "{type:'webhook',url} | {type:'email',to,subject,html?}"
           },
           "enabled": {
             "type": "boolean",

@@ -1,5 +1,7 @@
 # Ops runbook (C5)
 
+> **Living — last synced 2026-07-19.**
+
 What's wired in code vs. what the operator sets up in a console. Launch gate
 C5 = the operator items below are done; the code items already shipped.
 
@@ -7,6 +9,8 @@ C5 = the operator items below are done; the code items already shipped.
 
 - `GET /api/health` → 200 `{status:"ok",db:"up"}` when the control DB answers,
   503 `{status:"degraded"}` otherwise. `?deep` also counts a table.
+- `GET /api/v1/_health` → 200 `{status:"ok",surface:"delivery"}` — public
+  delivery-plane liveness probe (collision-proof path; folder is `%5Fhealth`).
 - `render.yaml` sets `healthCheckPath: /api/health` on the web service — Render
   restarts / de-rotates an instance whose DB dependency is down instead of
   letting it serve 500s.
@@ -36,8 +40,12 @@ C5 = the operator items below are done; the code items already shipped.
   failing, instance restarted) → email/Slack.
 - Add an alert on the `agentx-jobs-drain` cron failing — a silently dead drain
   means webhooks/schedules/usage-rollup stop, and nothing else surfaces it.
-- Optional external uptime ping on `https://<host>/api/health` (e.g.
-  UptimeRobot) for outside-in coverage when Render itself is the thing down.
+- ✅ **External uptime — DONE 2026-07-19** (UptimeRobot free plan): 3 keyword
+  monitors — `/api/health` ("ok"), `/api/v1/_health` ("ok"), `/` ("Pluggie") —
+  alerting partners@dinodigi.com on down+up; public status page
+  https://stats.uptimerobot.com/YSeB4QyizR, linked in the site footer.
+  Setup + free-plan gotchas (keyword monitors only — the HTTP-method field is
+  paid): [runbooks/STATUS-PAGE-SETUP.md](runbooks/STATUS-PAGE-SETUP.md).
 
 ## Error tracking — ⚑ operator (choose a service)
 
