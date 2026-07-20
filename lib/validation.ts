@@ -728,6 +728,14 @@ export function validateFieldDefs(fields: unknown): FieldDef[] {
 }
 
 /** Build the per-primitive Zod validator for one field's stored value. */
+/** A read-resolved reference ({id, url|label, ...}) coerces back to its id on
+ * write — see the asset/relation cases below. Non-objects pass through. */
+function coerceResolvedRef(v: unknown): unknown {
+  return v && typeof v === "object" && !Array.isArray(v) && typeof (v as { id?: unknown }).id === "string"
+    ? (v as { id: string }).id
+    : v;
+}
+
 function valueSchemaFor(field: FieldDef): z.ZodTypeAny {
   switch (field.type) {
     case "text":
@@ -793,10 +801,17 @@ function valueSchemaFor(field: FieldDef): z.ZodTypeAny {
       return z.enum(field.options as [string, ...string[]]);
     case "asset":
       // Value is an asset id (uuid). Existence checked at the DB layer.
-      return z.string().uuid();
+      // Wall (Stallion): reads resolve assets to {id,url,contentType} objects
+      // (recursively since structured fields), so a read→modify→write
+      // round-trip used to fail "Expected string, received object". Accept the
+      // resolved object back and coerce it to its id — write symmetry with
+      // what reads return. Anything else still fails the uuid check.
+      return z.preprocess(coerceResolvedRef, z.string().uuid());
     case "relation":
       // Value is a target entry id (uuid). Existence checked at the DB layer.
-      return z.string().uuid();
+      // Same round-trip symmetry as asset: an expanded {id,label,...} object
+      // coerces back to its id.
+      return z.preprocess(coerceResolvedRef, z.string().uuid());
     case "group":
       return groupValueSchema(field.fields);
     case "array": {

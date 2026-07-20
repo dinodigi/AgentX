@@ -74,6 +74,9 @@ Cloudflare edge cache; public status page linked in the site footer).
   `transact([ops])` = interactive multi-op transaction with cross-op `$ref`s,
   `dryRun`, idempotency receipts.
 - **Idempotency keys** on writes; replays return original ids.
+- **Read→write symmetry**: reads resolve asset/relation values to
+  `{id, url|label, …}` objects — writes accept those objects back (coerced to
+  the id), so loading an entry and saving it unchanged always round-trips.
 - **Migration escape hatch**: `create_entry`/`bulk_create_entries` accept
   `allowExplicitWorkflowState: true` — historical records import at their real
   workflow states (any declared enum option); use is stamped into the audit

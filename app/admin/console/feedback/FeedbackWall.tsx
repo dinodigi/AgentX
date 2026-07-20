@@ -24,12 +24,24 @@ const catColor: Record<string, string> = {
   idea: "var(--color-ok, #0e7c5f)",
 };
 
-function Stat({ n, label, accent }: { n: number; label: string; accent?: boolean }) {
+// Status pipeline colors — one hue per stage, used identically in the summary
+// bar and on every card so the board reads at a glance:
+// new = needs eyes · reviewed = triaged · planned = tracked in BACKLOG/plans ·
+// done = shipped · dismissed = won't do.
+const statusColor: Record<string, string> = {
+  new: "var(--color-warn, #d9a514)",
+  reviewed: "#5aa9e6",
+  planned: "#a78bfa",
+  done: "var(--color-ok, #43de83)",
+  dismissed: "#8a8f98",
+};
+
+function Stat({ n, label, color, dimZero = true }: { n: number; label: string; color: string; dimZero?: boolean }) {
   return (
     <span className="flex items-baseline gap-1.5">
       <span
         className="font-mono text-lg font-semibold tabular-nums"
-        style={accent && n > 0 ? { color: "var(--color-accent, #0f766e)" } : undefined}
+        style={{ color: n > 0 || !dimZero ? color : undefined, opacity: n === 0 && dimZero ? 0.35 : 1 }}
       >
         {n}
       </span>
@@ -55,11 +67,18 @@ export function FeedbackWall({ items: initial }: { items: Item[] }) {
   );
 
   const OPEN = new Set(["new", "reviewed", "planned"]);
+  const byStatus = (s: string) => items.filter((i) => i.status === s).length;
   const counts = {
     total: items.length,
     open: items.filter((i) => OPEN.has(i.status)).length,
-    done: items.filter((i) => i.status === "done").length,
-    dismissed: items.filter((i) => i.status === "dismissed").length,
+    // The INBOX number — what actually needs a human. `planned` is deliberately
+    // NOT in it: planned = triaged into BACKLOG/plans, waiting on scheduling.
+    inbox: byStatus("new") + byStatus("reviewed"),
+    new: byStatus("new"),
+    reviewed: byStatus("reviewed"),
+    planned: byStatus("planned"),
+    done: byStatus("done"),
+    dismissed: byStatus("dismissed"),
   };
 
   async function setStatus(id: string, status: (typeof STATUSES)[number]) {
@@ -118,6 +137,11 @@ export function FeedbackWall({ items: initial }: { items: Item[] }) {
                     className={`rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.06em] ${
                       i.status === s ? "bg-paper font-semibold" : "text-ink-mute hover:text-ink"
                     }`}
+                    style={
+                      i.status === s
+                        ? { color: statusColor[s], border: "1px solid currentColor" }
+                        : { border: "1px solid transparent" }
+                    }
                   >
                     {s}
                   </button>
@@ -128,11 +152,14 @@ export function FeedbackWall({ items: initial }: { items: Item[] }) {
 
   return (
     <div className="max-w-3xl">
-      {/* Summary bar — what's left vs done at a glance + bulk resolve */}
+      {/* Summary bar — the full status pipeline at a glance + bulk resolve.
+          "new" is the only number that means "a human needs to look". */}
       <div className="mb-4 flex flex-wrap items-center gap-4 rounded-xl border border-line bg-card px-5 py-3">
-        <Stat n={counts.open} label="open" accent />
-        <Stat n={counts.done} label="done" />
-        <Stat n={counts.dismissed} label="dismissed" />
+        <Stat n={counts.new} label="new" color={statusColor.new} />
+        <Stat n={counts.reviewed} label="reviewed" color={statusColor.reviewed} />
+        <Stat n={counts.planned} label="planned" color={statusColor.planned} />
+        <Stat n={counts.done} label="done" color={statusColor.done} dimZero={false} />
+        <Stat n={counts.dismissed} label="dismissed" color={statusColor.dismissed} />
         <span className="ml-auto flex items-center gap-2">
           <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-line-strong">
             bulk {cat === "all" ? "(all)" : `(${cat})`}
