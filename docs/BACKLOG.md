@@ -66,7 +66,7 @@ delivery API — MCP and admin are full-trust. This is the highest-value cluster
 
 | ID | Item | Status | Pri | Source |
 |---|---|---|---|---|
-| QRY-3 | **Publish the limits in the contract**: per-IP rate budget, `429` + `retry-after`, size caps. The mechanism exists (retry-after header) but isn't documented, so clients aren't rate-limit-aware. Ties to WP-7. | 📥 Backlog | H | audit #16, dogfood |
+| QRY-3 | **Publish the limits in the contract**: per-IP rate budget, `429` + `retry-after`, size caps. The mechanism exists (retry-after header) but isn't documented, so clients aren't rate-limit-aware. Ties to WP-7. *(The MCP throttle response itself is now structured — E_RATE_LIMITED + retryAfterSec + Retry-After header, wall 2026-07-20; surfacing the budgets in the agent contract/get_project_info is what remains → CONTRACT-1.)* | 📥 Backlog | H | audit #16, dogfood, wall |
 | QRY-1 | Absence operators (`ne`, `exists`/is-null); `gt`/`lt` + keyset cursors on the delivery read surface (delivery is equality + offset only). *(Both ops exist on MCP; wall asks for a first-class `neOrUnset` or a prominent docs callout for the `anyOf:[{ne},{exists:false}]` idiom → CONTRACT-1.)* | 📥 Backlog | M | audit #14, wall |
 | QRY-2 | Async full export (dump to R2) for very large sets. *(The 5,000-row cap itself ✅ resolved `748d7f9` — `export_entries` pages a keyset cursor to a complete export; this item is now only about one-shot R2 dumps.)* | 🅿️ Parked | L | audit #15 |
 | QRY-5 | **Reporting: date-bucketed aggregates (`granularity: day\|week\|month`) + a second `groupBy` dimension** — most CRM-style reports (pipeline by month, volume by rep by month) fall to client-side without it. Top of triage Track B. | 🗓️ Phased | H | wall |

@@ -64,6 +64,17 @@ describe("get_client_code: generated client compiles and runs", () => {
       name: "secrets",
       fields: [{ name: "note", label: "Note", type: "text" }],
     });
+    // Hatchly bug repro: owner-only collection with ZERO publicRead fields —
+    // the read interface is (correctly) skipped, but update() must not
+    // reference it (generated TS previously failed tsc: "Cannot find name").
+    await mcp(p.mcpToken, "define_collection", {
+      name: "artifacts",
+      fields: [
+        { name: "content", label: "Content", type: "text" },
+        { name: "owner_sub", label: "Owner", type: "text" },
+      ],
+      access: { read: "owner", write: "owner", ownerField: "owner_sub" },
+    });
     await mcp(p.mcpToken, "bulk_create_entries", {
       collection: "posts",
       entries: [
@@ -82,8 +93,13 @@ describe("get_client_code: generated client compiles and runs", () => {
   it("generates, typechecks under --strict, and compiles", async () => {
     const r = await mcp(p.mcpToken, "get_client_code", {});
     assert.ok(r.ok, r.errorText);
-    assert.deepEqual(r.value.collections.sort(), ["messages", "posts"]);
+    assert.deepEqual(r.value.collections.sort(), ["artifacts", "messages", "posts"]);
     assert.deepEqual(r.value.skipped, ["secrets"]);
+    // Owner-only, no public fields: write shapes exist, the read interface
+    // does NOT, and update() returns the truthful { id: string } public view.
+    assert.match(r.value.code, /export interface ArtifactsCreate \{/);
+    assert.doesNotMatch(r.value.code, /export interface Artifacts \{/);
+    assert.match(r.value.code, /update\(id: string, patch: ArtifactsUpdate\): Promise<\{ id: string \}>/);
     assert.equal(r.value.filename, "agentx.ts");
     assert.match(r.value.code, /export interface Posts \{/);
     assert.match(r.value.code, /"draft" \| "live"/);
@@ -117,6 +133,11 @@ export async function main(): Promise<void> {
   const kinds: ChangeEvent["kind"][] = feed.changes.map((c) => c.kind);
   const stop: () => void = ax.changes.stream((c: ChangeEvent) => { void c.id; }, { since: feed.cursor });
   stop();
+  // Owner-only collection (no public fields): create + update compile; update
+  // returns only the public view ({ id }).
+  const art: { id: string } = await ax.artifacts.create({ content: "draft" });
+  const artUp: { id: string } = await ax.artifacts.update(art.id, { content: "v2" });
+  void artUp;
   if (!(one.title.length > 0 && created.id && up.id && feed.cursor !== undefined && kinds)) {
     throw new AgentXError(500, "unreachable");
   }

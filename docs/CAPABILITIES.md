@@ -99,7 +99,10 @@ Cloudflare edge cache; public status page linked in the site footer).
   304s at the edge. `x-edge-cache: MISS-STORED → HIT` verified in prod.
 - Every error is `{error, code}` from an append-only `E_*` registry; scope
   enforcement is mutual (MCP token on delivery = 401, and vice versa); rate
-  limiting on public write/search/transform/checkout paths.
+  limiting on public write/search/transform/checkout paths. The MCP surface
+  caps at 300 tool calls/min/project — the throttle answers structured
+  (`E_RATE_LIMITED` + `retryAfterSec` in `error.data` + a `Retry-After`
+  header), never bare prose.
 - `get_client_code` generates a typed, dependency-free TS client from the live
   schema (compile-verified under `--strict`).
 

@@ -44,8 +44,16 @@ interface JsonRpcRequest {
 function result(id: JsonRpcRequest["id"], value: unknown) {
   return Response.json({ jsonrpc: "2.0", id, result: value });
 }
-function rpcError(id: JsonRpcRequest["id"], code: number, message: string) {
-  return Response.json({ jsonrpc: "2.0", id, error: { code, message } });
+function rpcError(
+  id: JsonRpcRequest["id"],
+  code: number,
+  message: string,
+  opts: { data?: Record<string, unknown>; headers?: Record<string, string> } = {},
+) {
+  return Response.json(
+    { jsonrpc: "2.0", id, error: { code, message, ...(opts.data ? { data: opts.data } : {}) } },
+    opts.headers ? { headers: opts.headers } : undefined,
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -96,7 +104,19 @@ export async function POST(req: NextRequest) {
   // before the body read so a flood can't force the max-size buffering.
   const mcpLimit = await rateLimit(`mcp:${projectId}`, { projectId, max: 300 });
   if (!mcpLimit.allowed) {
-    return rpcError(null, -32000, "rate limit exceeded — slow down and retry");
+    // Hatchly feedback: the throttle must be as parseable as every other error —
+    // a stable E_ code + machine-readable retry hint, never prose a client has
+    // to regex. Message keeps the "[E_CODE]:" convention tool errors use;
+    // error.data + the Retry-After header carry it structurally.
+    return rpcError(
+      null,
+      -32000,
+      `Error [E_RATE_LIMITED]: rate limit exceeded (MCP surface: 300 tool calls/min per project) — retry after ${mcpLimit.retryAfterSec}s`,
+      {
+        data: { code: "E_RATE_LIMITED", retryAfterSec: mcpLimit.retryAfterSec, limit: 300, windowSec: 60 },
+        headers: { "retry-after": String(mcpLimit.retryAfterSec) },
+      },
+    );
   }
 
   const raw = await readBounded(req, MAX_MCP_BODY_BYTES);

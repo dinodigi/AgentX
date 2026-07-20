@@ -190,9 +190,15 @@ function accessorBlock(p: CollectionPlan): string {
     );
   }
   if (p.canMutate) {
+    // With no publicRead fields the ${typeName} read interface is never emitted
+    // (Hatchly bug: update() referenced it anyway → generated TS didn't
+    // compile). The PATCH response is the PUBLIC VIEW, which for such a
+    // collection carries only {id} — so type the return by what actually
+    // comes back.
+    const updRet = p.canRead ? p.typeName : `{ id: string }`;
     methods.push(
-      `      async update(id: string, patch: ${p.typeName}Update): Promise<${p.typeName}> {
-        return (await request<{ data: ${p.typeName} }>("PATCH", "/${p.slug}/" + encodeURIComponent(id), undefined, patch)).data;
+      `      async update(id: string, patch: ${p.typeName}Update): Promise<${updRet}> {
+        return (await request<{ data: ${updRet} }>("PATCH", "/${p.slug}/" + encodeURIComponent(id), undefined, patch)).data;
       },`,
       `      async remove(id: string): Promise<void> {
         await request<void>("DELETE", "/${p.slug}/" + encodeURIComponent(id));
