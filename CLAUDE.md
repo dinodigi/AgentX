@@ -41,3 +41,10 @@ docs/README.md.
   revalidateTag alone is per-instance).
 - When hitting a platform limitation while building on Pluggie, call the
   `send_feedback` MCP tool — the feedback wall is the operator's triage queue.
+- **Wall items: reproduce before fixing.** A failing test or live repro is the
+  source of truth for any feedback fix — never fix from the report's narrative
+  alone (reporters can hallucinate; verified twice in the field). Bug reports
+  carry receipts (`evidence`, tool-enforced) and ingest stamps deterministic
+  verification badges (claimed codes vs the E_* registry, tool existence,
+  platform commit, plugin versions) — badges make a claim checkable, the
+  repro decides it.

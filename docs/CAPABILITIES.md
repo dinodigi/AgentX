@@ -221,8 +221,15 @@ Cloudflare edge cache; public status page linked in the site footer).
   export (console download walks it server-side); full project manifest
   round-trip; workflow-state import via the audit-stamped escape hatch.
 - **Feedback wall**: `send_feedback` (always-on core tool) → operator console
-  wall with status pipeline, filters, bulk-resolve. First triage produced 5
-  shipped fixes + 1 security fix (see reviews/FEEDBACK-TRIAGE-2026-07.md).
+  wall with status pipeline, filters, bulk-resolve. **Guarded ingest**: bug
+  reports require receipts (`evidence` {request, verbatim response} — refused
+  with a fix-forward hint otherwise), and every report is stamped with
+  deterministic verification (claimed `E_*` codes checked against the
+  registry, toolName against the tool surface, platform commit +
+  enabled-plugin versions) rendered as badges on the wall — invented claims
+  are visible on sight; the reproduction still decides what's true. First
+  triage produced 5 shipped fixes + 1 security fix (see
+  reviews/FEEDBACK-TRIAGE-2026-07.md); the wall has since driven 8 more.
 
 ## 12. Admin & console
 

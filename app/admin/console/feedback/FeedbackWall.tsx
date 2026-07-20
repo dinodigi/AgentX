@@ -10,6 +10,14 @@ type Item = {
   summary: string;
   detail: string | null;
   toolName: string | null;
+  evidence: { request: string; response: string; reproduction?: string } | null;
+  verification: {
+    claimedCodes: string[];
+    unknownCodes: string[];
+    toolKnown: boolean | null;
+    platform: string;
+    plugins: string[];
+  } | null;
   status: string;
   when: string;
 };
@@ -127,6 +135,47 @@ export function FeedbackWall({ items: initial }: { items: Item[] }) {
               </div>
               <p className="text-sm font-medium">{i.summary}</p>
               {i.detail && <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-ink-soft">{i.detail}</p>}
+              {i.evidence && (
+                <div className="mt-2 rounded-lg border border-line bg-paper p-2.5 font-mono text-[11px] leading-relaxed">
+                  <div className="text-ink-mute">request</div>
+                  <div className="whitespace-pre-wrap break-all">{i.evidence.request}</div>
+                  <div className="mt-1.5 text-ink-mute">response</div>
+                  <div className="whitespace-pre-wrap break-all">{i.evidence.response}</div>
+                  {i.evidence.reproduction && (
+                    <>
+                      <div className="mt-1.5 text-ink-mute">reproduction</div>
+                      <div className="whitespace-pre-wrap">{i.evidence.reproduction}</div>
+                    </>
+                  )}
+                </div>
+              )}
+              {i.verification && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[10px] uppercase tracking-[0.06em]">
+                  {i.category === "bug" && !i.evidence && (
+                    <span style={{ color: statusColor.new }}>⚠ no receipts</span>
+                  )}
+                  {i.verification.unknownCodes.length > 0 ? (
+                    <span style={{ color: "var(--color-err, #e24b4a)" }}>
+                      ✗ unknown code{i.verification.unknownCodes.length > 1 ? "s" : ""}: {i.verification.unknownCodes.join(", ")}
+                    </span>
+                  ) : (
+                    i.verification.claimedCodes.length > 0 && (
+                      <span style={{ color: statusColor.done }}>✓ codes real</span>
+                    )
+                  )}
+                  {i.verification.toolKnown !== null && (
+                    <span style={{ color: i.verification.toolKnown ? statusColor.done : "var(--color-err, #e24b4a)" }}>
+                      {i.verification.toolKnown ? "✓ tool real" : "✗ unknown tool"}
+                    </span>
+                  )}
+                  <span className="text-ink-mute">platform {i.verification.platform}</span>
+                  {i.verification.plugins.length > 0 && (
+                    <span className="text-ink-mute" title={i.verification.plugins.join(", ")}>
+                      {i.verification.plugins.length} plugin{i.verification.plugins.length > 1 ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+              )}
               <div className="mt-3 flex flex-wrap items-center gap-1.5">
                 {STATUSES.map((s) => (
                   <button

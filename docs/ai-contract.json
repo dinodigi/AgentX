@@ -117,7 +117,7 @@
     },
     {
       "name": "send_feedback",
-      "description": "Report platform feedback to the Pluggie team — USE THIS whenever you hit a limitation, a missing capability, a confusing error, or friction while working this project (e.g. 'no way to express X', 'tool Y rejected something reasonable', 'docs unclear about Z'). One call per distinct issue: {category: limitation|bug|friction|idea, summary (one sentence), detail? (what you tried, exact errors), toolName? (the tool involved)}. Goes straight to the platform's feedback wall and shapes the roadmap. Do NOT use it for questions or support.",
+      "description": "Report platform feedback to the Pluggie team — USE THIS whenever you hit a limitation, a missing capability, a confusing error, or friction while working this project. RULES (the wall is a triage queue, not a chat): report only what YOU directly observed THIS session — no speculation, no secondhand claims. One distinct issue per call. Retry once before reporting anything that might be transient. Quote errors VERBATIM (paraphrased errors are worthless for triage). NEVER include tokens, secrets, or user PII. For category 'bug', `evidence` is REQUIRED: the exact request you made (tool + args, or the HTTP request) and the verbatim response/error — a bug report without receipts is refused. Can't reproduce it? File it as 'friction' with what you saw. Fields: {category: limitation|bug|friction|idea, summary (one sentence), detail? (context), toolName? (the tool involved), evidence? {request, response, reproduction?} — required for bug}. Goes to the platform feedback wall and shapes the roadmap. Do NOT use it for questions or support.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -136,10 +136,34 @@
           },
           "detail": {
             "type": "string",
-            "description": "context: what you tried, exact errors (<=5000 chars)"
+            "description": "context: what you tried, expected vs observed (<=5000 chars)"
           },
           "toolName": {
-            "type": "string"
+            "type": "string",
+            "description": "the tool/endpoint involved"
+          },
+          "evidence": {
+            "type": "object",
+            "description": "receipts — REQUIRED for category 'bug'",
+            "properties": {
+              "request": {
+                "type": "string",
+                "description": "the exact call you made (tool + args, or HTTP request), <=2000 chars"
+              },
+              "response": {
+                "type": "string",
+                "description": "the VERBATIM response/error you received, <=2000 chars"
+              },
+              "reproduction": {
+                "type": "string",
+                "description": "minimal steps to reproduce, <=1500 chars"
+              }
+            },
+            "required": [
+              "request",
+              "response"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

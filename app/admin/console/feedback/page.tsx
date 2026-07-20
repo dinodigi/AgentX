@@ -26,6 +26,8 @@ export default async function FeedbackPage() {
       summary: platformFeedback.summary,
       detail: platformFeedback.detail,
       toolName: platformFeedback.toolName,
+      evidence: platformFeedback.evidence,
+      verification: platformFeedback.verification,
       status: platformFeedback.status,
       createdAt: platformFeedback.createdAt,
     })
@@ -57,6 +59,8 @@ export default async function FeedbackPage() {
             summary: r.summary,
             detail: r.detail,
             toolName: r.toolName,
+            evidence: r.evidence,
+            verification: r.verification,
             status: r.status,
             when: r.createdAt.toISOString(),
           }))}

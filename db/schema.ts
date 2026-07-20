@@ -527,6 +527,19 @@ export const platformFeedback = pgTable("platform_feedback", {
   summary: text("summary").notNull(),
   detail: text("detail"),
   toolName: text("tool_name"),
+  /** Receipts (guard): the exact request + verbatim response the reporter
+   * observed. REQUIRED for category "bug" — enforced at the tool. */
+  evidence: jsonb("evidence").$type<{ request: string; response: string; reproduction?: string }>(),
+  /** Deterministic ingest checks: claimed E_* codes vs the registry, toolName
+   * vs TOOL_DEFS, platform commit + enabled-plugin versions at filing time.
+   * Badges make a report CHECKABLE — the repro still decides what's true. */
+  verification: jsonb("verification").$type<{
+    claimedCodes: string[];
+    unknownCodes: string[];
+    toolKnown: boolean | null;
+    platform: string;
+    plugins: string[];
+  }>(),
   status: text("status").notNull().default("new"), // new | reviewed | planned | done | dismissed
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

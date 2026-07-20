@@ -66,7 +66,7 @@ import { platformFeedback } from "@/db/schema";
 import { WHERE_OPS } from "@/lib/query";
 import { exportEntries } from "@/lib/export";
 import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
-import type { ErrorCode } from "@/lib/error-codes";
+import { ERROR_CODES, type ErrorCode } from "@/lib/error-codes";
 
 /**
  * The MCP tool surface. Terse on purpose — the brief values terseness over
@@ -236,18 +236,35 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "send_feedback",
     description:
       "Report platform feedback to the Pluggie team — USE THIS whenever you hit a limitation, a " +
-      "missing capability, a confusing error, or friction while working this project (e.g. 'no way " +
-      "to express X', 'tool Y rejected something reasonable', 'docs unclear about Z'). One call per " +
-      "distinct issue: {category: limitation|bug|friction|idea, summary (one sentence), detail? " +
-      "(what you tried, exact errors), toolName? (the tool involved)}. Goes straight to the " +
-      "platform's feedback wall and shapes the roadmap. Do NOT use it for questions or support.",
+      "missing capability, a confusing error, or friction while working this project. RULES (the " +
+      "wall is a triage queue, not a chat): report only what YOU directly observed THIS session — " +
+      "no speculation, no secondhand claims. One distinct issue per call. Retry once before " +
+      "reporting anything that might be transient. Quote errors VERBATIM (paraphrased errors are " +
+      "worthless for triage). NEVER include tokens, secrets, or user PII. For category 'bug', " +
+      "`evidence` is REQUIRED: the exact request you made (tool + args, or the HTTP request) and " +
+      "the verbatim response/error — a bug report without receipts is refused. Can't reproduce it? " +
+      "File it as 'friction' with what you saw. Fields: {category: limitation|bug|friction|idea, " +
+      "summary (one sentence), detail? (context), toolName? (the tool involved), evidence? " +
+      "{request, response, reproduction?} — required for bug}. Goes to the platform feedback wall " +
+      "and shapes the roadmap. Do NOT use it for questions or support.",
     inputSchema: {
       type: "object",
       properties: {
         category: { type: "string", enum: ["limitation", "bug", "friction", "idea"] },
         summary: { type: "string", description: "one sentence, <=300 chars" },
-        detail: { type: "string", description: "context: what you tried, exact errors (<=5000 chars)" },
-        toolName: { type: "string" },
+        detail: { type: "string", description: "context: what you tried, expected vs observed (<=5000 chars)" },
+        toolName: { type: "string", description: "the tool/endpoint involved" },
+        evidence: {
+          type: "object",
+          description: "receipts — REQUIRED for category 'bug'",
+          properties: {
+            request: { type: "string", description: "the exact call you made (tool + args, or HTTP request), <=2000 chars" },
+            response: { type: "string", description: "the VERBATIM response/error you received, <=2000 chars" },
+            reproduction: { type: "string", description: "minimal steps to reproduce, <=1500 chars" },
+          },
+          required: ["request", "response"],
+          additionalProperties: false,
+        },
       },
       required: ["category", "summary"],
       additionalProperties: false,
@@ -1647,24 +1664,79 @@ export async function callTool(
       }
 
       case "send_feedback": {
-        const a = rawArgs as { category?: string; summary?: string; detail?: string; toolName?: string };
+        const a = rawArgs as {
+          category?: string;
+          summary?: string;
+          detail?: string;
+          toolName?: string;
+          evidence?: { request?: string; response?: string; reproduction?: string };
+        };
         if (!["limitation", "bug", "friction", "idea"].includes(a?.category ?? "")) {
           return err("category must be limitation|bug|friction|idea", "E_VALIDATION");
         }
         if (typeof a?.summary !== "string" || a.summary.trim().length === 0) {
           return err("summary (one sentence) is required", "E_VALIDATION");
         }
+        // GUARD half 1 — receipts at the door: a bug claim without the exact
+        // request + verbatim response is refused with the fix (the same
+        // self-correcting idiom every tool uses). Operator decision: the wall
+        // is a triage queue; evidence-less bug narratives cost real
+        // verification time and are where hallucinated reports live.
+        const ev = a.evidence;
+        const hasEvidence =
+          ev && typeof ev.request === "string" && ev.request.trim() && typeof ev.response === "string" && ev.response.trim();
+        if (a.category === "bug" && !hasEvidence) {
+          return err(
+            "bug reports need receipts — include evidence: {request: the exact call you made (tool + args or HTTP request), " +
+              "response: the VERBATIM error/response you received}. Paraphrases don't count. " +
+              "Can't reproduce it? File it as category 'friction' with what you observed.",
+            "E_VALIDATION",
+          );
+        }
         // Feedback is a write into OUR platform surface — window it per project.
         const rl = await rateLimit(`feedback:${projectId}`, { projectId, max: 10 });
         if (!rl.allowed) return err("feedback window exceeded — try again in a minute", "E_RATE_LIMITED");
+
+        // GUARD half 2 — deterministic ingest checks (code, not an LLM judge):
+        // validate the checkable claims and stamp the filing context so stale
+        // or invented claims are visible on the wall at a glance. Badges make
+        // a report checkable; the reproduction still decides what's true.
+        const claimText = [a.summary, a.detail, ev?.request, ev?.response].filter(Boolean).join("\n");
+        const claimedCodes = [...new Set(claimText.match(/\bE_[A-Z][A-Z0-9_]*\b/g) ?? [])];
+        const unknownCodes = claimedCodes.filter((c) => !(c in ERROR_CODES));
+        const [enabledIds, catalog] = await Promise.all([enabledPlugins(projectId), effectiveCatalog(projectId)]);
+        const verification = {
+          claimedCodes,
+          unknownCodes,
+          toolKnown: a.toolName ? TOOL_DEFS.some((t) => t.name === String(a.toolName)) : null,
+          platform: (process.env.RENDER_GIT_COMMIT ?? "dev").slice(0, 7),
+          plugins: catalog.filter((p) => enabledIds.has(p.id)).map((p) => `${p.id}@${p.version}`),
+        };
+
         await controlDb.insert(platformFeedback).values({
           projectId,
           category: a.category!,
           summary: a.summary.slice(0, 300),
           detail: a.detail ? String(a.detail).slice(0, 5000) : null,
           toolName: a.toolName ? String(a.toolName).slice(0, 100) : null,
+          evidence: hasEvidence
+            ? {
+                request: String(ev!.request).slice(0, 2000),
+                response: String(ev!.response).slice(0, 2000),
+                ...(ev!.reproduction ? { reproduction: String(ev.reproduction).slice(0, 1500) } : {}),
+              }
+            : null,
+          verification,
         });
-        return ok({ received: true, note: "thank you — this lands on the platform feedback wall" });
+        return ok({
+          received: true,
+          note: "thank you — this lands on the platform feedback wall",
+          ...(unknownCodes.length > 0
+            ? {
+                warning: `these error codes don't exist on this platform: ${unknownCodes.join(", ")} — if you paraphrased, resend with the verbatim error`,
+              }
+            : {}),
+        });
       }
 
       case "define_plugin": {
