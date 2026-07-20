@@ -439,4 +439,74 @@ describe("authz: Phase-12 review regressions", () => {
         (await delivery(p.deliveryToken, `/tickets/${id}`, { method: "PATCH", body: { subject: `e${i}` }, userToken: acme, ip })).status,
     );
   });
+
+  // Wall report (Fatsoz 26aff3bc): "adding any access block silently disables
+  // publicWrite". The contract: access.read COEXISTS with anonymous submissions;
+  // only a non-none access.write replaces the anonymous path — and saying so is
+  // the define response's job, not a 401's.
+  it("publicWrite + access.read only: anonymous POST keeps working (gated reads, open submissions)", async () => {
+    const d = await mcp(p.mcpToken, "define_collection", {
+      name: "inbox",
+      publicWrite: true,
+      fields: [{ name: "message", label: "M", type: "text", required: true }],
+      access: { read: "authenticated" },
+    });
+    assert.ok(d.ok, d.errorText);
+    assert.ok(!d.value.accessNote, "read-only access must not warn about anonymous writes");
+    const anon = await delivery(p.deliveryToken, "/inbox", { method: "POST", body: { message: "hello" } });
+    assert.equal(anon.status, 201, JSON.stringify(anon.json));
+  });
+
+  it("publicWrite + non-none access.write: define says so out loud (accessNote) and POST requires identity", async () => {
+    const d = await mcp(p.mcpToken, "define_collection", {
+      name: "inbox_gated",
+      publicWrite: true,
+      fields: [
+        { name: "message", label: "M", type: "text", required: true },
+        { name: "owner", label: "O", type: "text" },
+      ],
+      access: { read: "authenticated", write: "authenticated", ownerField: "owner" },
+    });
+    assert.ok(d.ok, d.errorText);
+    assert.match(d.value.accessNote ?? "", /REPLACE the anonymous/i, "define must surface the interaction");
+    const anon = await delivery(p.deliveryToken, "/inbox_gated", { method: "POST", body: { message: "x" } });
+    assert.equal(anon.status, 401);
+  });
+});
+
+// Wall report (Fatsoz fdc2ed4e): connector connected → delivery still answered
+// E_CONNECTOR_REQUIRED for ~2 min (stale cache) while list_connectors said
+// connected. The unconfigured DENY must confirm against a fresh read.
+describe("connector fresh-on-miss (gate rule)", () => {
+  let p2;
+  before(async () => {
+    await ensureServer();
+    p2 = await createEphemeralProject("authz-fresh");
+    const d = await mcp(p2.mcpToken, "define_collection", {
+      name: "notes",
+      fields: [{ name: "t", label: "T", type: "text", required: true, publicRead: true }],
+      access: { read: "authenticated" },
+    });
+    assert.ok(d.ok, d.errorText);
+  });
+  after(() => p2.destroy());
+
+  it("a just-connected issuer is honored immediately — no E_CONNECTOR_REQUIRED window", async () => {
+    // 1. Probe BEFORE connecting: proves the 503 AND primes the server's
+    //    connector cache with the null row.
+    const before = await delivery(p2.deliveryToken, "/notes", { userToken: "x.y.z" });
+    assert.equal(before.json.code, "E_CONNECTOR_REQUIRED", JSON.stringify(before.json));
+
+    // 2. Connect via raw SQL — no cache invalidation reaches the server,
+    //    exactly like the operator connecting from another instance.
+    await connectClerk(p2.id, "https://fresh-window-test.example.com");
+
+    // 3. IMMEDIATE retry: the gate must confirm fresh instead of denying off
+    //    the cached null — it now proceeds to token verification (malformed
+    //    token → 401), not E_CONNECTOR_REQUIRED.
+    const after = await delivery(p2.deliveryToken, "/notes", { userToken: "x.y.z" });
+    assert.notEqual(after.json.code, "E_CONNECTOR_REQUIRED", JSON.stringify(after.json));
+    assert.equal(after.status, 401);
+    assert.match(after.json.error, /invalid user token/i);
+  });
 });

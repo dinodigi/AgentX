@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { bearerFrom, resolveProjectId } from "@/lib/tokens";
+import { bearerFrom, resolveDeliveryToken } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
 import {
   getEntry,
@@ -30,9 +30,9 @@ import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
  */
 
 async function resolve(req: NextRequest, name: string) {
-  const token = bearerFrom(req.headers.get("authorization"));
-  const projectId = token ? await resolveProjectId(token) : null;
-  if (!projectId) return { error: err(401, "invalid or missing project token") };
+  const auth = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
+  if (!auth.ok) return { error: deliveryError(401, auth.error, undefined, undefined, auth.code) };
+  const projectId = auth.projectId;
   const collection = await getCollection(projectId, name);
   if (!collection) return { error: err(404, "not found") };
   return { projectId, collection };

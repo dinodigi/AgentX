@@ -67,6 +67,25 @@ export async function getCollection(
   return rows[0] ? revive(rows[0]) : null;
 }
 
+/**
+ * Uncached fetch — the fresh-on-deny half of the gate rule ("a correctness
+ * gate must never deny on a cached read"). Wall report (Fatsoz): an operator
+ * RELAXED access rules and the delivery gate kept refusing anonymous
+ * submissions off the stale cached collection for up to a TTL. Deny paths
+ * re-check against this before answering; hot allow paths stay cached.
+ */
+export async function getCollectionFresh(
+  projectId: string,
+  name: string,
+): Promise<Collection | null> {
+  const rows = await db
+    .select()
+    .from(collections)
+    .where(and(eq(collections.projectId, projectId), eq(collections.name, name)))
+    .limit(1);
+  return rows[0] ? revive(rows[0]) : null;
+}
+
 export interface DefineCollectionInput {
   name: string;
   displayName?: string;
@@ -773,7 +792,7 @@ export interface ConstraintWarning {
 }
 
 export type DefineResult =
-  | { applied: true; collection: Collection; diff?: SchemaDiff; constraintWarnings?: ConstraintWarning[] }
+  | { applied: true; collection: Collection; diff?: SchemaDiff; constraintWarnings?: ConstraintWarning[]; accessNote?: string }
   | { applied: false; requiresConfirmation: true; diff: SchemaDiff; hint: string };
 
 const TIGHTEN_HINT =
@@ -1314,11 +1333,26 @@ export async function defineCollection(
   }
 
   revalidateTag(collectionsTag(projectId));
+  // Wall report (Fatsoz): publicWrite + a non-none access.write is a legal but
+  // easily-misread combo — the write RULES replace the anonymous path, so the
+  // "public" in publicWrite silently stops meaning anonymous. Say it out loud
+  // in the response instead of letting the integrator discover it via 401s.
+  const writeRules = input.access?.write;
+  const writeList = writeRules === undefined ? ["none"] : Array.isArray(writeRules) ? writeRules : [writeRules];
+  const anonymousDisabled = (input.publicWrite ?? false) && !(writeList.length === 1 && writeList[0] === "none");
   return {
     applied: true,
     collection: row,
     diff,
     ...(constraintWarnings.length > 0 ? { constraintWarnings } : {}),
+    ...(anonymousDisabled
+      ? {
+          accessNote:
+            "publicWrite + access.write: identity-gated write rules REPLACE the anonymous submission path — " +
+            "POST now requires X-User-Token. For anonymous forms, drop access.write (access.read alone keeps " +
+            "anonymous submissions working).",
+        }
+      : {}),
   };
 }
 

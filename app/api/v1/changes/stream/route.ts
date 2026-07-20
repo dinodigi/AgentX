@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { bearerFrom, resolveProjectId } from "@/lib/tokens";
+import { bearerFrom, resolveDeliveryToken } from "@/lib/tokens";
 import { listCollections } from "@/lib/collections";
 import { verifyEndUser } from "@/lib/user-auth";
 import { gateRead } from "@/lib/access-rules";
@@ -33,9 +33,9 @@ const MAX_STREAMS_PER_PROJECT = 5;
 const active = new Map<string, number>();
 
 export async function GET(req: NextRequest) {
-  const token = bearerFrom(req.headers.get("authorization"));
-  const projectId = token ? await resolveProjectId(token) : null;
-  if (!projectId) return deliveryError(401, "invalid or missing project token");
+  const tok = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
+  if (!tok.ok) return deliveryError(401, tok.error, undefined, undefined, tok.code);
+  const projectId = tok.projectId;
 
   const userToken = req.headers.get("x-user-token");
   const auth = await verifyEndUser(projectId, userToken);

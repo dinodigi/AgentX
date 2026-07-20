@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { bearerFrom, resolveProjectId } from "@/lib/tokens";
+import { bearerFrom, resolveDeliveryToken } from "@/lib/tokens";
 import { rateLimit } from "@/lib/ratelimit";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError } from "@/lib/delivery-http";
@@ -27,9 +27,9 @@ import { GET as listGET } from "../[collection]/route";
 const MAX_BATCH_QUERIES = 10;
 
 export async function POST(req: NextRequest) {
-  const token = bearerFrom(req.headers.get("authorization"));
-  const projectId = token ? await resolveProjectId(token) : null;
-  if (!projectId) return deliveryError(401, "invalid or missing project token");
+  const auth = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
+  if (!auth.ok) return deliveryError(401, auth.error, undefined, undefined, auth.code);
+  const projectId = auth.projectId;
 
   // Same per-IP window as the other limited surfaces; one batch = one hit
   // (bounded at MAX_BATCH_QUERIES sub-queries), attributed for metering.

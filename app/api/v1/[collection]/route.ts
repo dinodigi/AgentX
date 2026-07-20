@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { bearerFrom, resolveProjectId } from "@/lib/tokens";
-import { getCollection } from "@/lib/collections";
+import { bearerFrom, resolveDeliveryToken } from "@/lib/tokens";
+import { getCollection, getCollectionFresh } from "@/lib/collections";
 import { rateLimit } from "@/lib/ratelimit";
 import { searchEntriesPage, publicSearchableFields } from "@/lib/search";
 import { preflight } from "@/lib/cors";
@@ -34,9 +34,9 @@ import type { WhereClause, WhereItem, OrderByClause } from "@/lib/query";
  */
 
 async function resolve(req: NextRequest, name: string) {
-  const token = bearerFrom(req.headers.get("authorization"));
-  const projectId = token ? await resolveProjectId(token) : null;
-  if (!projectId) return { error: unauthorized() };
+  const auth = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
+  if (!auth.ok) return { error: deliveryError(401, auth.error, undefined, undefined, auth.code) };
+  const projectId = auth.projectId;
   const collection = await getCollection(projectId, name);
   if (!collection) return { error: notFound() };
   return { projectId, collection };
@@ -312,11 +312,26 @@ export async function POST(
   const { collection: name } = await params;
   const r = await resolve(req, name);
   if ("error" in r) return r.error;
-  const { projectId, collection } = r;
+  const { projectId } = r;
+  let collection = r.collection;
 
   // Identity gate: anonymous forms (publicWrite) or authenticated/owner creates.
-  const gate = await gateCreate(projectId, collection, req.headers.get("x-user-token"));
-  if (!gate.ok) return deliveryError(gate.status, gate.error);
+  let gate = await gateCreate(projectId, collection, req.headers.get("x-user-token"));
+  if (!gate.ok) {
+    // Fresh-on-deny (wall: Fatsoz): the cached collection can lag an operator
+    // who just RELAXED access/publicWrite, refusing submissions that current
+    // config allows. Same gate rule as the schema layer — never DENY on a
+    // stale read. Cost: one uncached fetch on the (rare, rate-limited) deny
+    // path only; the hot allow path stays cached.
+    const fresh = await getCollectionFresh(projectId, name);
+    const freshGate = fresh ? await gateCreate(projectId, fresh, req.headers.get("x-user-token")) : null;
+    if (fresh && freshGate?.ok) {
+      collection = fresh;
+      gate = freshGate;
+    } else {
+      return deliveryError(gate.status, gate.error);
+    }
+  }
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
   const limit = await rateLimit(`${projectId}:${ip}`, { projectId });

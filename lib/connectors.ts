@@ -145,6 +145,21 @@ export async function listConnectors(projectId: string): Promise<ProjectConnecto
   return db.select().from(projectConnectors).where(eq(projectConnectors.projectId, projectId));
 }
 
+/** Uncached fetch — the fresh-on-miss half of the gate rule (see getAuthConfig). */
+async function getConnectorFresh(
+  projectId: string,
+  type: ConnectorType,
+): Promise<ProjectConnector | null> {
+  const rows = await db
+    .select()
+    .from(projectConnectors)
+    .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, type)))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return { ...row, createdAt: new Date(row.createdAt), updatedAt: new Date(row.updatedAt) };
+}
+
 export async function upsertConnector(
   projectId: string,
   type: ConnectorType,
@@ -229,7 +244,17 @@ export interface AuthConfig {
 
 /** End-user auth config: the Clerk connector is the source of truth. */
 export async function getAuthConfig(projectId: string): Promise<AuthConfig | null> {
-  const c = await getConnector(projectId, "clerk");
+  let c = await getConnector(projectId, "clerk");
+  if (!c?.config.issuer) {
+    // Fresh-on-miss (wall report, Fatsoz): the cached connector lags a
+    // JUST-connected issuer by up to a TTL, so the delivery gate answered
+    // E_CONNECTOR_REQUIRED while list_connectors (fresh) already said
+    // connected. A deny-shaped conclusion ("unconfigured") must never come
+    // from cache alone — confirm against the DB first. Projects WITH a
+    // connector never pay this read; projects without pay it only on
+    // requests that present identity (rare, rate-limited).
+    c = await getConnectorFresh(projectId, "clerk");
+  }
   const primary = c?.config.issuer?.replace(/\/$/, "");
   if (!primary) return null;
   const additional = (c?.config.additionalIssuers ?? "")

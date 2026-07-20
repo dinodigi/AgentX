@@ -25,7 +25,7 @@
  */
 export const AUTH_KIT_PLUGIN = {
   id: "auth_kit",
-  version: "1.0.0",
+  version: "1.0.1",
   name: "Auth Kit — DIY user management",
   description:
     "Build-your-own-auth scaffold: users with an account-lifecycle workflow, roles + a permissions " +
@@ -200,7 +200,13 @@ export const AUTH_KIT_PLUGIN = {
     "for end-user-scoped reads/writes. WIRING IDENTITY: have the issuer put the users row's " +
     "external_id as the JWT sub, plus role name and permission keys as claims; register the " +
     "issuer via the project's auth connector (JWKS) so access presets ({claim:'role',equals:'admin'}, " +
-    "owner, access.org) enforce natively on delivery. RBAC: permissions registry keys are " +
+    "owner, access.org) enforce natively on delivery. CLERK SPECIFICS (field-tested, v1.0.1): " +
+    "configure claims under Clerk Dashboard → Sessions → 'Customize session token' — THAT is what " +
+    "populates the default token from getToken(), i.e. what you forward as X-User-Token (e.g. " +
+    '{"role":"{{user.public_metadata.role}}"}). Clerk\'s separately-named "JWT Templates" feature ' +
+    "does NOT apply to the default token — templates only activate when code explicitly calls " +
+    "getToken({template:'name'}); configuring one and expecting default-token claims silently " +
+    "ships no claims and locks users out. RBAC: permissions registry keys are " +
     "resource:action; roles carry a key array — validate every key against the registry before " +
     "writing (the array is by-convention, not an FK). Changing a role's permissions changes what " +
     "NEW tokens carry — sessions refresh on the issuer's schedule, so revocation latency = token " +

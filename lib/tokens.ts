@@ -92,16 +92,45 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
  * only (B2): a setup-state project has no public surface yet, so its tokens
  * read as unknown here (the MCP route gives agents the precise message).
  */
-export async function resolveProjectId(rawToken: string): Promise<string | null> {
+export type DeliveryTokenResult =
+  | { ok: true; projectId: string }
+  | { ok: false; code: "E_AUTH" | "E_SCOPE"; error: string };
+
+/**
+ * Delivery-surface token resolution with a DISTINGUISHABLE wrong-scope answer.
+ * Stallion field report: when scope enforcement landed, an MCP token on
+ * /api/v1/* read as "invalid or missing project token" — indistinguishable from
+ * a typo'd credential, so a live site's operator had no path to the fix. A
+ * valid-but-mcp-scoped token now names the problem and the remedy (E_SCOPE),
+ * exactly like the MCP endpoint does for the mirror case. Unknown/inactive
+ * tokens still answer a generic E_AUTH (no token-probing oracle).
+ */
+export async function resolveDeliveryToken(rawToken: string | null): Promise<DeliveryTokenResult> {
+  const invalid = { ok: false as const, code: "E_AUTH" as const, error: "invalid or missing project token" };
+  if (!rawToken) return invalid;
   const info = await resolveToken(rawToken);
+  if (!info) return invalid;
   // SCOPE ENFORCEMENT (security — reported via the feedback wall): the delivery
   // surface accepts ONLY delivery-scoped tokens. Previously any active token
   // passed, so the MCP master credential worked on /v1/* — meaning an MCP token
-  // leaked into a client context granted public writes PLUS full authoring. The
-  // MCP endpoint already rejects delivery tokens with E_SCOPE; this makes the
-  // separation symmetric, matching the documented contract.
-  if (!info || info.scope !== "delivery") return null;
-  return info.projectStatus === "active" && info.billing === "ok" ? info.projectId : null;
+  // leaked into a client context granted public writes PLUS full authoring.
+  if (info.scope !== "delivery") {
+    return {
+      ok: false,
+      code: "E_SCOPE",
+      error:
+        "this token is mcp-scoped (authoring) — the delivery API needs a delivery-scoped token; " +
+        "mint one in project Settings → Tokens (or ask the agent to use its own delivery token) and " +
+        "never embed the MCP token in a site or client",
+    };
+  }
+  if (info.projectStatus !== "active" || info.billing !== "ok") return invalid;
+  return { ok: true, projectId: info.projectId };
+}
+
+export async function resolveProjectId(rawToken: string): Promise<string | null> {
+  const r = await resolveDeliveryToken(rawToken);
+  return r.ok ? r.projectId : null;
 }
 
 /** Extract a bearer token from an Authorization header value. */

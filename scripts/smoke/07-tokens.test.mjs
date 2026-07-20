@@ -29,6 +29,16 @@ describe("token scopes", () => {
     assert.equal(r.status, 200);
   });
 
+  it("mcp token on the delivery API answers E_SCOPE with the mint hint (Stallion report)", async () => {
+    // A valid-but-wrong-scope token must NOT read like a typo'd credential —
+    // the operator of a broken live site needs the remedy named.
+    const r = await delivery(p.mcpToken, "/notes");
+    assert.equal(r.status, 401);
+    assert.equal(r.json.code, "E_SCOPE");
+    assert.match(r.json.error, /Settings → Tokens/, r.json.error);
+    assert.match(r.json.error, /mcp-scoped/, r.json.error);
+  });
+
   it("bogus token is 401 everywhere", async () => {
     const r = await delivery("agx_totally_bogus_token_000000", "/notes");
     assert.equal(r.status, 401);

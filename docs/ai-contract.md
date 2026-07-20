@@ -603,7 +603,7 @@ Create or update a collection (a data model). `fields` is an array of field defs
     },
     "access": {
       "type": "object",
-      "description": "identity rule presets for the delivery API (parameterized, not an expression language). read: public|authenticated|owner|{claim,equals}. write: none|authenticated|owner|{claim,equals}. Each may also be an ARRAY meaning any-of (e.g. write:[\"owner\", {claim:\"role\",equals:\"editor\"}]). A {claim,equals:\"x\"|[\"x\",\"y\"]} rule matches when the verified JWT custom claim equals a value (fail-closed: absent/non-string never matches). owner/authenticated need ownerField (a text field, auto-stamped from the JWT sub — never client-set); claim rules don't. write:\"owner\" enables PATCH/DELETE of OWN rows; a matching claim-write is staff write (mutate ANY row). org:{claim,field} scopes EVERY read/write to the user's org: field (a text field) is stamped from the JWT claim on create and stripped from PATCH bodies; rows are invisible to other orgs and to tokens lacking the claim (fail-closed 403). org can't combine with read:'public' or anonymous writes. Requires the project's Clerk connector.",
+      "description": "identity rule presets for the delivery API (parameterized, not an expression language). read: public|authenticated|owner|{claim,equals}. write: none|authenticated|owner|{claim,equals}. Each may also be an ARRAY meaning any-of (e.g. write:[\"owner\", {claim:\"role\",equals:\"editor\"}]). A {claim,equals:\"x\"|[\"x\",\"y\"]} rule matches when the verified JWT custom claim equals a value (fail-closed: absent/non-string never matches). owner/authenticated need ownerField (a text field, auto-stamped from the JWT sub — never client-set); claim rules don't. write:\"owner\" enables PATCH/DELETE of OWN rows; a matching claim-write is staff write (mutate ANY row). INTERACTION with publicWrite: access.read coexists with publicWrite (anonymous POST keeps working; reads become gated) — but a non-none access.write REPLACES the anonymous path (POST then requires X-User-Token; the response carries an accessNote saying so). For an \"anyone submits, only staff read\" inbox: publicWrite:true + access.read only. org:{claim,field} scopes EVERY read/write to the user's org: field (a text field) is stamped from the JWT claim on create and stripped from PATCH bodies; rows are invisible to other orgs and to tokens lacking the claim (fail-closed 403). org can't combine with read:'public' or anonymous writes. Requires the project's Clerk connector.",
       "properties": {
         "read": {
           "description": "public|authenticated|owner|{claim,equals} or an array of those"
@@ -2546,7 +2546,7 @@ Delete a schedule by name. Returns the full deleted spec so it can be re-created
 
 ## `upload_asset`
 
-Upload a file and get back an asset id to store in an `asset` field. Provide bytes as base64. Stored in object storage; a URL is returned for preview.
+Upload a file and get back an asset id to store in an `asset` field. Provide EITHER dataBase64 (inline bytes) OR url — a public https source fetched server-side. Prefer url for images: inline base64 costs ~70k tokens per web-sized image, while url costs none (bulk seeding = one call per image, bytes never enter your context). Same 10MB cap and type rules either way; private/internal hosts are refused. Stored in object storage; a URL is returned for preview.
 
 **Input schema:**
 
@@ -2558,17 +2558,20 @@ Upload a file and get back an asset id to store in an `asset` field. Provide byt
       "type": "string"
     },
     "contentType": {
-      "type": "string"
+      "type": "string",
+      "description": "required with dataBase64; for url it's inferred from the response when omitted"
     },
     "dataBase64": {
       "type": "string",
       "description": "file bytes, base64-encoded"
+    },
+    "url": {
+      "type": "string",
+      "description": "public https source to fetch server-side (≤10MB)"
     }
   },
   "required": [
-    "filename",
-    "contentType",
-    "dataBase64"
+    "filename"
   ],
   "additionalProperties": false
 }

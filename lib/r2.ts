@@ -134,6 +134,116 @@ function looksLikeSvg(bytes: Buffer): boolean {
   return head.startsWith("<svg") || (head.startsWith("<?xml") && head.includes("<svg"));
 }
 
+/**
+ * Server-side fetch of asset bytes from a URL (wall report, Fatsoz): inline
+ * base64 costs ~70k TOKENS per web-sized image, so agent-driven media seeding
+ * was effectively impossible — the bytes should ride HTTP, not the context
+ * window. SSRF-hardened: https only (loopback exempt, the write-hook
+ * precedent), every hostname resolved and checked against private/link-local/
+ * metadata ranges, redirects re-validated hop by hop (max 3), bounded read at
+ * the upload cap, strict timeout. uploadAsset re-validates type/SVG/caps after.
+ */
+const FETCH_TIMEOUT_MS = 15_000;
+const MAX_REDIRECTS = 3;
+
+function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === "localhost" || h === "::1" || h === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(h);
+}
+
+/** Private/reserved ranges an outbound asset fetch must never touch (cloud
+ * metadata 169.254.* is the crown jewel). Loopback is handled separately. */
+function ipBlocked(ip: string): boolean {
+  if (ip.includes(":")) {
+    const v6 = ip.toLowerCase();
+    if (v6 === "::1") return false; // loopback — allowed via the exemption
+    return v6.startsWith("fe80") || v6.startsWith("fc") || v6.startsWith("fd") || v6 === "::";
+  }
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n))) return true;
+  const [a, b] = parts;
+  if (a === 127) return false; // loopback — allowed via the exemption
+  return (
+    a === 0 ||
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254) || // link-local + cloud metadata
+    (a === 100 && b >= 64 && b <= 127) // CGNAT (Render-internal space)
+  );
+}
+
+async function assertFetchableHost(hostname: string): Promise<void> {
+  if (isLoopbackHost(hostname)) return;
+  const bare = hostname.replace(/^\[|\]$/g, "");
+  const { lookup } = await import("node:dns/promises");
+  let addrs: { address: string }[];
+  try {
+    addrs = await lookup(bare, { all: true, verbatim: true });
+  } catch {
+    throw new ValidationError(`could not resolve host "${hostname}"`);
+  }
+  for (const { address } of addrs) {
+    if (ipBlocked(address)) {
+      throw new ValidationError(
+        `url host "${hostname}" resolves to a private/reserved address — only public hosts can be fetched`,
+      );
+    }
+  }
+}
+
+export async function fetchAssetFromUrl(
+  rawUrl: string,
+): Promise<{ bytes: Buffer; contentType: string | null }> {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new ValidationError(`invalid url "${rawUrl}"`);
+  }
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHost(url.hostname))) {
+      throw new ValidationError("asset urls must be https (http is allowed for loopback only)");
+    }
+    await assertFetchableHost(url.hostname);
+    const res = await fetch(url, {
+      redirect: "manual",
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      headers: { accept: "*/*" },
+    }).catch((e) => {
+      throw new ValidationError(`could not fetch url: ${e instanceof Error ? e.message : String(e)}`);
+    });
+    if (res.status >= 300 && res.status < 400) {
+      const loc = res.headers.get("location");
+      if (!loc) throw new ValidationError(`url redirected (${res.status}) without a location`);
+      url = new URL(loc, url); // each hop re-validated at the top of the loop
+      continue;
+    }
+    if (!res.ok) throw new ValidationError(`url answered ${res.status} — the source must return the file with 200`);
+    const declared = Number(res.headers.get("content-length") ?? 0);
+    if (declared > MAX_UPLOAD_BYTES) {
+      throw new ValidationError(`file too large: ${declared} bytes (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)`);
+    }
+    const chunks: Buffer[] = [];
+    let total = 0;
+    const reader = res.body?.getReader();
+    if (!reader) throw new ValidationError("url returned no body");
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_UPLOAD_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new ValidationError(`file too large (max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+    const contentType = res.headers.get("content-type")?.split(";")[0]?.trim() || null;
+    return { bytes: Buffer.concat(chunks), contentType };
+  }
+  throw new ValidationError(`too many redirects (max ${MAX_REDIRECTS})`);
+}
+
 export async function uploadAsset(input: UploadInput): Promise<Asset> {
   if (input.bytes.length > MAX_UPLOAD_BYTES) {
     throw new ValidationError(

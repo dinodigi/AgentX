@@ -1,6 +1,6 @@
 # Backlog — open ideas, feedback & parked decisions
 
-> **Living — last synced 2026-07-19.**
+> **Living — last synced 2026-07-20.**
 
 *Single source of truth for everything raised but **not yet decided or scheduled**.
 Started 2026-07-12. Sources now include the agent feedback wall
@@ -80,12 +80,16 @@ delivery API — MCP and admin are full-trust. This is the highest-value cluster
 | | *Shipped as structured fields (`group`/`array`, one-level, recursive validation/projection, repeater editor) + heterogeneous **block types** with a `define_block` library. Remaining tail (relations-in-blocks polish, block library v1.1) tracks in plans/POST-DEPLOYMENT-V2-PLAN.md.* | | | |
 | DM-2 | **Enum option renames with mapped backfill** (`optionRenames:[{field,from,to}]`) — today renaming a pipeline stage orphans stored values (`renames[]` is fields-only) | 📥 Backlog | M | wall |
 | DM-3 | Counting/capacity constraint — "max N rows per composite key" (tour-slot capacity) has no declarative form; needs an external hook today | 🅿️ Parked | L | wall |
+| DM-4 | **`indexed` on date fields** — the natural sort/filter dimension for events/inboxes runs unindexed (the `::timestamptz` expression index isn't IMMUTABLE). Needs a design (shadow column or epoch storage); workaround today: a number field holding the epoch, `indexed:true`. Rejection message already teaches the tradeoff. | 🅿️ Parked | M | wall (Fatsoz) |
 
 ## DX & docs
 
 | ID | Item | Status | Pri | Source |
 |---|---|---|---|---|
 | DX-2 | Serve the contract + hook docs over HTTP (`/api/contract`, a public `hooks.md`) — today the contract references repo files an API consumer can't reach. Starter exists: `scripts/dump-contract.ts` → `docs/ai-contract.md` | 📥 Backlog | M | audit #19 |
+| DX-5 | **Document stateless MCP-over-HTTP as a supported server-side pattern** (bare JSON-RPC POST, no handshake/session — Hatchly + Fatsoz both discovered it by probing and built dashboards on it). Fold into CONTRACT-1 / get_project_info orientation. | 📥 Backlog | M | wall ×2 |
+| TOK-1 | **Mint/rotate delivery tokens over MCP** — when a deployment breaks (e.g. scope enforcement), the agent can self-heal without dashboard access. Privilege-downward (MCP is already master), so safe in principle; audit-stamp mints. | 📥 Backlog | M | wall (Stallion) |
+| OPS-2 | **Breaking-change comms**: platform behavior changes shipped under live sites with zero notice (token-scope enforcement took a production site down). Need a changelog + advance notice channel — strongest concrete driver for NOTIF-1's platform bell + email. | 📥 Backlog | H | wall (Stallion) |
 | DX-1 | Add search + idempotency to the generated TS client (uploads/checkout/changes already covered) | 📥 Backlog | M | audit #18 |
 | DX-3 | Public compliance page (encryption-at-rest / residency / SOC2 / GDPR posture); optional authenticated image-variant URLs | 🅿️ Parked | M | audit #20 |
 | DX-4 | Timezone-aware schedules with DST (today UTC-only) | 🅿️ Parked | L | audit #21 |

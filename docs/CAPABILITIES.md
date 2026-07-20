@@ -1,6 +1,6 @@
 # Pluggie (AgentX) — System Capabilities
 
-> **Living — last synced 2026-07-19.** What the platform can do **today**,
+> **Living — last synced 2026-07-20.** What the platform can do **today**,
 > grouped by surface. Sync this doc whenever a batch changes the tool surface
 > or platform behavior (see CLAUDE.md ship ritual). For what's next, see
 > [BACKLOG.md](BACKLOG.md) and [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md);
@@ -98,8 +98,16 @@ Cloudflare edge cache; public status page linked in the site footer).
   only origin-marked shareable responses (`s-maxage` on public reads), serves
   304s at the edge. `x-edge-cache: MISS-STORED → HIT` verified in prod.
 - Every error is `{error, code}` from an append-only `E_*` registry; scope
-  enforcement is mutual (MCP token on delivery = 401, and vice versa); rate
-  limiting on public write/search/transform/checkout paths. The MCP surface
+  enforcement is mutual — an MCP token on delivery answers `E_SCOPE` with a
+  mint-a-delivery-token hint (never a generic 401); rate limiting on public
+  write/search/transform/checkout paths.
+- **Gate freshness**: deny-shaped answers never come from cache alone — the
+  create gate re-checks a fresh collection on deny (a just-relaxed
+  access/publicWrite works immediately) and the auth gate re-checks a fresh
+  connector before `E_CONNECTOR_REQUIRED` (a just-connected issuer works
+  immediately). `publicWrite` coexists with `access.read` (anonymous
+  submissions + gated reads); a non-none `access.write` replaces the anonymous
+  path and `define_collection` says so (`accessNote`). The MCP surface
   caps at 300 tool calls/min/project — the throttle answers structured
   (`E_RATE_LIMITED` + `retryAfterSec` in `error.data` + a `Retry-After`
   header), never bare prose.
@@ -155,6 +163,10 @@ Cloudflare edge cache; public status page linked in the site footer).
 ## 8. Media
 
 - R2-backed assets, MCP upload + public multipart intake, media admin page.
+- `upload_asset` takes inline base64 **or a `url` fetched server-side**
+  (SSRF-hardened: https-only, private/metadata ranges refused, redirect hops
+  re-validated, 10MB bound) — image seeding without burning ~70k tokens per
+  image on inline bytes.
 - On-demand image transforms: sharp + R2-cached derivatives, size ladder,
   magic-byte sniff, derivative budget + rate limits.
 

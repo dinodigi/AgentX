@@ -3,7 +3,7 @@ import { z } from "zod";
 import { and, eq, inArray } from "drizzle-orm";
 import { tenantDb } from "@/lib/data-plane";
 import { entries } from "@/db/schema";
-import { bearerFrom, resolveProjectId } from "@/lib/tokens";
+import { bearerFrom, resolveDeliveryToken } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
 import { connectorSecret } from "@/lib/connectors";
 import { createCheckoutSession, StripeError, type CheckoutLineItem } from "@/lib/stripe";
@@ -49,9 +49,9 @@ function resolveUrl(override: string | undefined, configured: string): string | 
 }
 
 export async function POST(req: NextRequest) {
-  const token = bearerFrom(req.headers.get("authorization"));
-  const projectId = token ? await resolveProjectId(token) : null;
-  if (!projectId) return deliveryError(401, "invalid or missing project token");
+  const auth = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
+  if (!auth.ok) return deliveryError(401, auth.error, undefined, undefined, auth.code);
+  const projectId = auth.projectId;
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
   const rl = await rateLimit(`${projectId}:${ip}`, { projectId });

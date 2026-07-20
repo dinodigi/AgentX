@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { bearerFrom, resolveProjectId } from "@/lib/tokens";
+import { bearerFrom, resolveDeliveryToken } from "@/lib/tokens";
 import { getCollection } from "@/lib/collections";
 import { gateCreate } from "@/lib/access-rules";
 import { rateLimit } from "@/lib/ratelimit";
@@ -21,9 +21,9 @@ export async function POST(
   { params }: { params: Promise<{ collection: string }> },
 ) {
   const { collection: name } = await params;
-  const token = bearerFrom(req.headers.get("authorization"));
-  const projectId = token ? await resolveProjectId(token) : null;
-  if (!projectId) return deliveryError(401, "invalid or missing project token");
+  const auth = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
+  if (!auth.ok) return deliveryError(401, auth.error, undefined, undefined, auth.code);
+  const projectId = auth.projectId;
   const collection = await getCollection(projectId, name);
   if (!collection) return deliveryError(404, "not found");
 

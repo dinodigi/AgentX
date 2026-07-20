@@ -44,7 +44,7 @@ import { listChanges, encodeChangeCursor, decodeChangeCursor } from "@/lib/chang
 import { defineSchedule, listSchedules, deleteSchedule } from "@/lib/schedules";
 import { generateClientCode } from "@/lib/mcp/client-code";
 import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
-import { uploadAsset } from "@/lib/r2";
+import { uploadAsset, fetchAssetFromUrl } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
 import { setLocales } from "@/lib/locales";
 import {
@@ -461,6 +461,10 @@ export const TOOL_DEFS: ToolDef[] = [
             "owner/authenticated need ownerField (a text field, auto-stamped from the JWT sub — never " +
             'client-set); claim rules don\'t. write:"owner" enables PATCH/DELETE of OWN rows; a matching ' +
             "claim-write is staff write (mutate ANY row). " +
+            "INTERACTION with publicWrite: access.read coexists with publicWrite (anonymous POST keeps " +
+            "working; reads become gated) — but a non-none access.write REPLACES the anonymous path " +
+            "(POST then requires X-User-Token; the response carries an accessNote saying so). For an " +
+            '"anyone submits, only staff read" inbox: publicWrite:true + access.read only. ' +
             "org:{claim,field} scopes EVERY read/write to the user's org: field (a text field) is " +
             "stamped from the JWT claim on create and stripped from PATCH bodies; rows are invisible " +
             "to other orgs and to tokens lacking the claim (fail-closed 403). org can't combine with " +
@@ -1374,16 +1378,24 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "upload_asset",
     description:
-      "Upload a file and get back an asset id to store in an `asset` field. Provide bytes " +
-      "as base64. Stored in object storage; a URL is returned for preview.",
+      "Upload a file and get back an asset id to store in an `asset` field. Provide EITHER " +
+      "dataBase64 (inline bytes) OR url — a public https source fetched server-side. Prefer " +
+      "url for images: inline base64 costs ~70k tokens per web-sized image, while url costs " +
+      "none (bulk seeding = one call per image, bytes never enter your context). Same 10MB " +
+      "cap and type rules either way; private/internal hosts are refused. Stored in object " +
+      "storage; a URL is returned for preview.",
     inputSchema: {
       type: "object",
       properties: {
         filename: { type: "string" },
-        contentType: { type: "string" },
+        contentType: {
+          type: "string",
+          description: "required with dataBase64; for url it's inferred from the response when omitted",
+        },
         dataBase64: { type: "string", description: "file bytes, base64-encoded" },
+        url: { type: "string", description: "public https source to fetch server-side (≤10MB)" },
       },
-      required: ["filename", "contentType", "dataBase64"],
+      required: ["filename"],
       additionalProperties: false,
     },
   },
@@ -1522,11 +1534,21 @@ const queryArgs = z.object({
     .object({ field: z.string(), dir: z.enum(["asc", "desc"]) })
     .optional(),
 });
-const uploadArgs = z.object({
-  filename: z.string(),
-  contentType: z.string(),
-  dataBase64: z.string(),
-});
+const uploadArgs = z
+  .object({
+    filename: z.string(),
+    contentType: z.string().optional(),
+    dataBase64: z.string().optional(),
+    url: z.string().optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (!v.dataBase64 === !v.url) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "provide exactly one of dataBase64 or url" });
+    }
+    if (v.dataBase64 && !v.contentType) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "contentType is required with dataBase64" });
+    }
+  });
 const localesArgs = z.object({
   default: z.string(),
   supported: z.array(z.string()).min(1),
@@ -1972,6 +1994,7 @@ export async function callTool(
           fields: result.collection.fields.length,
           ...(result.diff ? { changes: result.diff } : {}),
           ...(result.constraintWarnings ? { constraintWarnings: result.constraintWarnings } : {}),
+          ...(result.accessNote ? { accessNote: result.accessNote } : {}),
         });
       }
 
@@ -2573,11 +2596,20 @@ export async function callTool(
 
       case "upload_asset": {
         const a = uploadArgs.parse(rawArgs);
+        let bytes: Buffer;
+        let contentType = a.contentType;
+        if (a.url) {
+          const fetched = await fetchAssetFromUrl(a.url);
+          bytes = fetched.bytes;
+          contentType = contentType ?? fetched.contentType ?? "application/octet-stream";
+        } else {
+          bytes = Buffer.from(a.dataBase64!, "base64");
+        }
         const asset = await uploadAsset({
           projectId,
           filename: a.filename,
-          contentType: a.contentType,
-          bytes: Buffer.from(a.dataBase64, "base64"),
+          contentType: contentType!,
+          bytes,
         });
         return ok({ id: asset.id, url: asset.url });
       }
