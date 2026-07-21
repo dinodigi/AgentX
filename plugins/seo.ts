@@ -8,6 +8,7 @@ import type { PluginDef } from "@/lib/plugins";
  */
 export const SEO_PLUGIN: PluginDef = {
   id: "seo",
+  provides: "seo_advisor",
   version: "1.1.0",
   name: "SEO agent",
   description:

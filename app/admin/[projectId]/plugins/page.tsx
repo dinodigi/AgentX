@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { getProjectRole } from "@/lib/access";
-import { effectiveCatalog, enabledPlugins } from "@/lib/plugins";
+import { effectiveCatalog, enabledPlugins, providesOf } from "@/lib/plugins";
 import { PluginStore } from "./PluginStore";
 
 /**
@@ -35,6 +35,8 @@ export default async function PluginsPage({ params }: { params: Promise<{ projec
           priceCents: p.priceCents ?? null,
           hasStructure: Boolean(p.structure),
           tools: p.tools ?? [],
+          provides: providesOf(p),
+          requires: p.requires ?? [],
         }))}
       />
     </>

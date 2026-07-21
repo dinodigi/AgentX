@@ -286,7 +286,7 @@ Report platform feedback to the Pluggie team — USE THIS whenever you hit a lim
 
 ## `define_plugin`
 
-Author or update a plugin IN THIS PROJECT'S private catalog (never visible to other projects — the platform-global catalog is operator-curated). A plugin = {id, version, name, description, structure?: {intent, baseline:[collection specs incl. workflow/publicFilter/access/events], reconcile}, guidance?, acceptance?}. Use it to package a proven domain model (a client CRM, a booking system) so it's installable via enable_plugin + get_plugin like any catalog plugin. Baseline fields are validated now; workflow/filters validate when applied.
+Author or update a plugin IN THIS PROJECT'S private catalog (never visible to other projects — the platform-global catalog is operator-curated). A plugin = {id, version, name, description, provides? (the ONE capability this plugin owns, snake_case — enables the one-provider rule), requires? (capabilities it depends on — auto-resolved at enable), structure?: {intent, baseline:[collection specs incl. workflow/publicFilter/access/events], reconcile}, guidance?, acceptance?}. Use it to package a proven domain model (a client CRM, a booking system) so it's installable via enable_plugin + get_plugin like any catalog plugin. Baseline fields are validated now; workflow/filters validate when applied.
 
 **Input schema:**
 
@@ -365,7 +365,7 @@ Full spec of one plugin: structure.intent + structure.baseline (a known-good sta
 
 ## `enable_plugin`
 
-Enable a plugin for this project (idempotent). Enabling unlocks the plugin's tools (if any) and records the capability so future sessions see it in list_plugins. Follow up by applying its structure per get_plugin.
+Enable a plugin for this project (idempotent). COMPOSITION RULES: each plugin may declare `provides` (the capability it owns) and `requires` (capabilities it depends on). One ACTIVE provider per capability — enabling a second provider is refused with E_CONFLICT naming the current one; re-run with swap:true to switch providers (content/collections stay). Unmet `requires` auto-enable the provider when the catalog has exactly one (noted in the response); ambiguity asks you to choose first. Plugins without `provides` compose freely. Enabling unlocks the plugin's tools (if any). Follow up by applying its structure per get_plugin.
 
 **Input schema:**
 
@@ -376,6 +376,10 @@ Enable a plugin for this project (idempotent). Enabling unlocks the plugin's too
     "id": {
       "type": "string",
       "description": "plugin id from list_plugins"
+    },
+    "swap": {
+      "type": "boolean",
+      "description": "disable the current provider(s) of a conflicting capability and enable this one"
     }
   },
   "required": [

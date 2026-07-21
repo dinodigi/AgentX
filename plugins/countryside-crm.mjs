@@ -13,7 +13,11 @@
  */
 export const COUNTRYSIDE_PLUGIN = {
   id: "countryside_crm",
-  version: "1.1.0",
+  version: "1.2.0",
+  // Interim monolith honesty (pre-blueprint): it genuinely owns all three
+  // capabilities today, so NEW projects get the contact_forms-vs-CRM tiebreaker
+  // the wall asked for. The Phase 2 blueprint dissolves this into includes.
+  provides: ["crm", "lead_capture", "booking"],
   name: "Countryside Land-Tour CRM",
   description:
     "Land-tour sales machine replacing a Salesforce org: ranch-scoped leads with a protection/recycle lifecycle, KIT cadence, appointment board with no-double-book, opportunities, and live report recipes. Lean first cut per the reference architecture (§10).",

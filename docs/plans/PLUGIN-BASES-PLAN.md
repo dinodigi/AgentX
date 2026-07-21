@@ -32,7 +32,7 @@ a second expendable poke surface.
 
 ## Phase 1 — bases that compose, self-maintain, and get poked (NOW)
 
-### Track A — composition core (bases only) — ⬜
+### Track A — composition core (bases only) — ✅ shipped 2026-07-21
 - `provides: string` + `requires: string[]` on PluginDef (optional — existing
   defs stay valid).
 - Enable-time enforcement: one ACTIVE provider per capability; enabling a

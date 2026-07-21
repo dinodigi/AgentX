@@ -25,7 +25,8 @@
  */
 export const AUTH_KIT_PLUGIN = {
   id: "auth_kit",
-  version: "1.0.1",
+  version: "1.1.0",
+  provides: "identity", // monolith for now — identity/teams split lands with the composition refactor
   name: "Auth Kit — DIY user management",
   description:
     "Build-your-own-auth scaffold: users with an account-lifecycle workflow, roles + a permissions " +

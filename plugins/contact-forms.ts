@@ -7,6 +7,7 @@ import type { PluginDef } from "@/lib/plugins";
  */
 export const CONTACT_FORMS_PLUGIN: PluginDef = {
   id: "contact_forms",
+  provides: "lead_capture",
   version: "1.0.0",
   name: "Contact forms",
   description:

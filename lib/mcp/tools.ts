@@ -54,8 +54,9 @@ import {
   deletePluginDef,
   enabledPlugins,
   pluginEnabled,
-  enablePlugin,
-  disablePlugin,
+  enablePluginChecked,
+  disablePluginChecked,
+  providesOf,
 } from "@/lib/plugins";
 import { fetchPageHead, scoreHead, auditSite } from "@/lib/seo";
 import { defineBlock, deleteBlock, listBlocks } from "@/lib/blocks";
@@ -275,7 +276,9 @@ export const TOOL_DEFS: ToolDef[] = [
     description:
       "Author or update a plugin IN THIS PROJECT'S private catalog (never visible to other " +
       "projects — the platform-global catalog is operator-curated). A plugin = {id, version, name, " +
-      "description, structure?: {intent, baseline:[collection specs incl. workflow/publicFilter/" +
+      "description, provides? (the ONE capability this plugin owns, snake_case — enables the " +
+      "one-provider rule), requires? (capabilities it depends on — auto-resolved at enable), " +
+      "structure?: {intent, baseline:[collection specs incl. workflow/publicFilter/" +
       "access/events], reconcile}, guidance?, acceptance?}. Use it to package a proven domain model " +
       "(a client CRM, a booking system) so it's installable via enable_plugin + get_plugin like any " +
       "catalog plugin. Baseline fields are validated now; workflow/filters validate when applied.",
@@ -326,12 +329,19 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "enable_plugin",
     description:
-      "Enable a plugin for this project (idempotent). Enabling unlocks the plugin's tools (if " +
-      "any) and records the capability so future sessions see it in list_plugins. Follow up by " +
-      "applying its structure per get_plugin.",
+      "Enable a plugin for this project (idempotent). COMPOSITION RULES: each plugin may declare " +
+      "`provides` (the capability it owns) and `requires` (capabilities it depends on). One ACTIVE " +
+      "provider per capability — enabling a second provider is refused with E_CONFLICT naming the " +
+      "current one; re-run with swap:true to switch providers (content/collections stay). Unmet " +
+      "`requires` auto-enable the provider when the catalog has exactly one (noted in the " +
+      "response); ambiguity asks you to choose first. Plugins without `provides` compose freely. " +
+      "Enabling unlocks the plugin's tools (if any). Follow up by applying its structure per get_plugin.",
     inputSchema: {
       type: "object",
-      properties: { id: { type: "string", description: "plugin id from list_plugins" } },
+      properties: {
+        id: { type: "string", description: "plugin id from list_plugins" },
+        swap: { type: "boolean", description: "disable the current provider(s) of a conflicting capability and enable this one" },
+      },
       required: ["id"],
       additionalProperties: false,
     },
@@ -1765,6 +1775,8 @@ export async function callTool(
             version: p.version,
             description: p.description,
             enabled: enabled.has(p.id),
+            ...(providesOf(p).length > 0 ? { provides: providesOf(p) } : {}),
+            ...(p.requires?.length ? { requires: p.requires } : {}),
             price: p.priceCents ? `$${(p.priceCents / 100).toFixed(2)}/mo` : "included",
             ingredients: {
               structure: Boolean(p.structure),
@@ -1788,17 +1800,17 @@ export async function callTool(
       }
 
       case "enable_plugin": {
-        const a = rawArgs as { id?: string };
-        const def = typeof a?.id === "string" ? await getPluginDef(projectId, a.id) : null;
-        if (!def) {
-          return err(
-            `unknown plugin "${a?.id ?? ""}" — list_plugins shows what's available`,
-            "E_NOT_FOUND",
-          );
-        }
-        await enablePlugin(projectId, def.id);
+        const a = rawArgs as { id?: string; swap?: boolean };
+        if (typeof a?.id !== "string") return err("id is required", "E_VALIDATION");
+        // Composition core (Track A): one active provider per capability,
+        // requires auto-resolution, explicit swaps. Grandfathered projects
+        // (pre-existing overlaps) are untouched — enforcement lives here only.
+        const plan = await enablePluginChecked(projectId, a.id, { swap: a.swap === true });
         return ok({
-          enabled: def.id,
+          enabled: a.id,
+          ...(plan.enabled.length > 1 ? { alsoEnabled: plan.enabled.filter((x) => x !== a.id) } : {}),
+          ...(plan.disabled.length > 0 ? { swappedOut: plan.disabled } : {}),
+          ...(plan.notes.length > 0 ? { notes: plan.notes } : {}),
           next:
             "apply the plugin now: get_plugin for the spec, reconcile its baseline into the " +
             "project's collections, then verify its acceptance criteria",
@@ -1814,8 +1826,12 @@ export async function callTool(
             "E_NOT_FOUND",
           );
         }
-        await disablePlugin(projectId, def.id);
-        return ok({ disabled: def.id, note: "its collections/content remain — removal is a separate act" });
+        const result = await disablePluginChecked(projectId, def.id);
+        return ok({
+          disabled: def.id,
+          note: "its collections/content remain — removal is a separate act",
+          ...(result.warning ? { warning: result.warning } : {}),
+        });
       }
 
       case "audit_site": {

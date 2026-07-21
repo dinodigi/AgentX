@@ -24,7 +24,8 @@
  */
 export const NOTIFICATION_KIT_PLUGIN = {
   id: "notification_kit",
-  version: "1.0.0",
+  version: "1.1.0",
+  provides: "notifications", // requires:["identity"] arrives WITH the auth_kit split (until then it ships its minimal users fallback)
   name: "Notification Kit — in-app notifications",
   description:
     "In-app notification system for the app you build on Pluggie: per-user notification feed with " +

@@ -13,6 +13,8 @@ type Card = {
   priceCents: number | null;
   hasStructure: boolean;
   tools: string[];
+  provides: string[];
+  requires: string[];
 };
 
 export function PluginStore({
@@ -72,6 +74,16 @@ export function PluginStore({
               {p.tools.length > 0 && (
                 <span className="inline-flex items-center gap-1 rounded bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.06em] text-ink-mute">
                   <Wrench className="h-2.5 w-2.5" /> {p.tools.length} tool{p.tools.length > 1 ? "s" : ""}
+                </span>
+              )}
+              {p.provides.map((cap) => (
+                <span key={cap} className="rounded bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.06em]" style={{ color: "var(--color-accent, #0f766e)" }}>
+                  provides {cap}
+                </span>
+              ))}
+              {p.requires.length > 0 && (
+                <span className="rounded bg-paper px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-[0.06em] text-ink-mute">
+                  needs {p.requires.join(", ")}
                 </span>
               )}
             </div>

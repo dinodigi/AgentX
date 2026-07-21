@@ -1,6 +1,6 @@
 # Pluggie (AgentX) — System Capabilities
 
-> **Living — last synced 2026-07-20.** What the platform can do **today**,
+> **Living — last synced 2026-07-21.** What the platform can do **today**,
 > grouped by surface. Sync this doc whenever a batch changes the tool surface
 > or platform behavior (see CLAUDE.md ship ritual). For what's next, see
 > [BACKLOG.md](BACKLOG.md) and [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md);
@@ -186,6 +186,13 @@ Cloudflare edge cache; public status page linked in the site footer).
 
 - A **PluginDef** = structure (baseline content model the agent reconciles via
   `define_collection`) + tools (MCP verbs it unlocks) + guidance + acceptance.
+- **Composition core** (Plugin Bases Plan, Track A): defs declare `provides`
+  (the capability they own) and `requires` (dependencies). ONE active provider
+  per capability, enforced on NEW enables only (grandfathered projects keep
+  pre-existing overlaps); conflicting enables answer `E_CONFLICT` with an
+  explicit `swap:true` path; unmet `requires` auto-enable the sole catalog
+  provider (ambiguity asks you to choose); disabling a provider warns which
+  enabled plugins lose their dependency. Store + `list_plugins` surface it all.
 - **Two delivery mechanisms**: built-in (compiled: `seo`, `contact_forms`) and
   **DB-backed** (`plugin_defs` — global first-party defs seeded by the
   operator, or project-private defs authored at runtime via `define_plugin`).

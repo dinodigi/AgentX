@@ -39,6 +39,15 @@ export interface PluginDef {
   name: string;
   /** One-liner for list_plugins. */
   description: string;
+  /** Composition core (Plugin Bases Plan, Track A): the capability(ies) this
+   * plugin OWNS. Bases declare exactly one; interim monoliths (countryside,
+   * pre-blueprint) may declare several honestly. Enable rule: one ACTIVE
+   * provider per capability — enforced on NEW enables only (grandfather rule:
+   * pre-existing enablements are never touched). */
+  provides?: string | string[];
+  /** Capabilities this plugin depends on. Enabling auto-enables the provider
+   * when the catalog has exactly ONE; ambiguity or absence is a clear error. */
+  requires?: string[];
   structure?: {
     /** What the target model achieves (the intent the AI realizes). */
     intent: string;
@@ -167,6 +176,143 @@ export async function disablePlugin(projectId: string, pluginId: string): Promis
     .where(and(eq(projectPlugins.projectId, projectId), eq(projectPlugins.pluginId, pluginId)));
 }
 
+/* ── Composition core (Plugin Bases Plan, Track A) ─────────────────────── */
+
+/** Normalized capability list a def provides. */
+export function providesOf(def: PluginDef): string[] {
+  return def.provides === undefined ? [] : Array.isArray(def.provides) ? def.provides : [def.provides];
+}
+
+export interface EnablePlan {
+  /** Plugins enabled by this call (target first, then auto-enabled requires). */
+  enabled: string[];
+  /** Providers disabled by an explicit swap. */
+  disabled: string[];
+  /** Human/agent-readable notes about what composition did and why. */
+  notes: string[];
+}
+
+const REQUIRES_DEPTH = 5;
+
+/**
+ * Composition-aware enable. Enforces ONE ACTIVE PROVIDER PER CAPABILITY on
+ * new enables (grandfather rule: pre-existing enablements are never touched
+ * by this — enforcement lives only here, in the enable path), resolves
+ * `requires` (auto-enables a capability's provider when the catalog has
+ * exactly one), and performs explicit swaps when asked. Legacy defs without
+ * `provides` compose freely, exactly as before.
+ */
+export async function enablePluginChecked(
+  projectId: string,
+  pluginId: string,
+  opts: { swap?: boolean } = {},
+): Promise<EnablePlan> {
+  const catalog = await effectiveCatalog(projectId);
+  const target = catalog.find((p) => p.id === pluginId);
+  if (!target) throw new ValidationError(`unknown plugin "${pluginId}" — list_plugins shows what's available`, "E_NOT_FOUND");
+
+  const active = await enabledPlugins(projectId);
+  if (active.has(pluginId)) return { enabled: [], disabled: [], notes: [`"${pluginId}" was already enabled`] };
+
+  const byId = new Map(catalog.map((p) => [p.id, p]));
+  const capsProvidedBy = (ids: Iterable<string>) => {
+    const m = new Map<string, string[]>(); // capability -> provider ids
+    for (const id of ids) {
+      const def = byId.get(id);
+      if (!def) continue; // enabled row whose def vanished — tolerate
+      for (const c of providesOf(def)) m.set(c, [...(m.get(c) ?? []), id]);
+    }
+    return m;
+  };
+
+  // Resolve the full to-enable set (target + transitive requires).
+  const toEnable: string[] = [];
+  const notes: string[] = [];
+  const visit = (id: string, depth: number) => {
+    if (toEnable.includes(id) || active.has(id)) return;
+    if (depth > REQUIRES_DEPTH) throw new ValidationError(`requires chain deeper than ${REQUIRES_DEPTH} — simplify the defs`);
+    const def = byId.get(id);
+    if (!def) throw new ValidationError(`required plugin "${id}" is not in this project's catalog`);
+    toEnable.push(id);
+    for (const cap of def.requires ?? []) {
+      const activeCaps = capsProvidedBy(active);
+      const pendingCaps = capsProvidedBy(toEnable);
+      if (activeCaps.has(cap) || pendingCaps.has(cap)) continue; // satisfied
+      const providers = catalog.filter((p) => providesOf(p).includes(cap));
+      if (providers.length === 0) {
+        throw new ValidationError(
+          `"${def.id}" requires capability "${cap}" but no plugin in the catalog provides it`,
+        );
+      }
+      if (providers.length > 1) {
+        throw new ValidationError(
+          `"${def.id}" requires "${cap}", provided by several plugins (${providers.map((p) => p.id).join(", ")}) — enable ONE of them first, then retry`,
+        );
+      }
+      notes.push(`auto-enabled "${providers[0].id}" — "${def.id}" requires "${cap}"`);
+      visit(providers[0].id, depth + 1);
+    }
+  };
+  visit(pluginId, 0);
+
+  // One-provider rule: capabilities the new set brings vs currently active.
+  const activeCaps = capsProvidedBy(active);
+  const conflicts = new Map<string, string[]>(); // capability -> active provider ids
+  for (const id of toEnable) {
+    for (const cap of providesOf(byId.get(id)!)) {
+      const holders = activeCaps.get(cap);
+      if (holders?.length) conflicts.set(cap, holders);
+    }
+  }
+  // A capability provided twice WITHIN the new set is a def bug — refuse.
+  const pendingCaps = capsProvidedBy(toEnable);
+  for (const [cap, ids] of pendingCaps) {
+    if (ids.length > 1) throw new ValidationError(`capability "${cap}" is provided by two plugins in this enable (${ids.join(", ")}) — resolve the defs`);
+  }
+
+  const toDisable = [...new Set([...conflicts.values()].flat())];
+  if (conflicts.size > 0 && !opts.swap) {
+    const lines = [...conflicts.entries()]
+      .map(([cap, ids]) => `"${cap}" is already provided by enabled plugin ${ids.map((i) => `"${i}"`).join(" + ")}`)
+      .join("; ");
+    throw new ValidationError(
+      `${lines} — one active provider per capability. Keep the current provider, or re-run with swap:true to disable ${toDisable.map((i) => `"${i}"`).join(", ")} and enable "${pluginId}" (content/collections stay either way).`,
+      "E_CONFLICT",
+    );
+  }
+  for (const id of toDisable) {
+    await disablePlugin(projectId, id);
+    notes.push(`swap: disabled "${id}" (its collections/content remain)`);
+  }
+  for (const id of toEnable) await enablePlugin(projectId, id);
+  return { enabled: toEnable, disabled: toDisable, notes };
+}
+
+/**
+ * Composition-aware disable: never blocks (operator freedom), but names the
+ * still-enabled plugins whose `requires` lose their provider by this.
+ */
+export async function disablePluginChecked(projectId: string, pluginId: string): Promise<{ warning?: string }> {
+  const catalog = await effectiveCatalog(projectId);
+  const byId = new Map(catalog.map((p) => [p.id, p]));
+  const active = await enabledPlugins(projectId);
+  await disablePlugin(projectId, pluginId);
+  const gone = byId.get(pluginId);
+  if (!gone) return {};
+  const lostCaps = providesOf(gone).filter(
+    (cap) =>
+      ![...active].some((id) => id !== pluginId && byId.get(id) && providesOf(byId.get(id)!).includes(cap)),
+  );
+  if (lostCaps.length === 0) return {};
+  const orphans = [...active].filter(
+    (id) => id !== pluginId && (byId.get(id)?.requires ?? []).some((cap) => lostCaps.includes(cap)),
+  );
+  if (orphans.length === 0) return {};
+  return {
+    warning: `still-enabled ${orphans.map((i) => `"${i}"`).join(", ")} require ${lostCaps.map((c) => `"${c}"`).join(", ")}, which no enabled plugin now provides — re-enable a provider or expect degraded behavior`,
+  };
+}
+
 /* ── DB-backed authoring (Track 6) ─────────────────────────────────────── */
 
 const NAME_RE = /^[a-z][a-z0-9_]*$/;
@@ -183,12 +329,18 @@ const baselineCollectionSchema = z
     events: z.unknown().optional(),
   })
   .strict();
+const capabilityToken = z
+  .string()
+  .regex(NAME_RE, "capabilities are snake_case tokens, e.g. lead_capture")
+  .max(40);
 const pluginDefSchema = z
   .object({
     id: z.string().regex(NAME_RE, "plugin id must be snake_case"),
     version: z.string().min(1),
     name: z.string().min(1),
     description: z.string().min(1),
+    provides: z.union([capabilityToken, z.array(capabilityToken).min(1).max(8)]).optional(),
+    requires: z.array(capabilityToken).max(8).optional(),
     structure: z
       .object({ intent: z.string().min(1), baseline: z.array(baselineCollectionSchema), reconcile: z.string().min(1) })
       .strict()
