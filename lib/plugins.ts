@@ -165,9 +165,27 @@ export async function pluginEnabled(projectId: string, pluginId: string): Promis
   return rows.length > 0;
 }
 
-/** Idempotent enable — enabling twice is a no-op, never an error. */
-export async function enablePlugin(projectId: string, pluginId: string): Promise<void> {
-  await controlDb.insert(projectPlugins).values({ projectId, pluginId }).onConflictDoNothing();
+/** Idempotent enable — enabling twice re-stamps the acknowledged version
+ * (Track C): after adopting an update via reconcile, the agent calls
+ * enable_plugin again and the drift offer clears. */
+export async function enablePlugin(projectId: string, pluginId: string, version?: string | null): Promise<void> {
+  await controlDb
+    .insert(projectPlugins)
+    .values({ projectId, pluginId, version: version ?? null })
+    .onConflictDoUpdate({
+      target: [projectPlugins.projectId, projectPlugins.pluginId],
+      set: { version: version ?? null },
+    });
+}
+
+/** Enabled plugin ids with the version acknowledged at enable time (null =
+ * enabled before version tracking — shows as an adopt-current offer). */
+export async function enabledPluginVersions(projectId: string): Promise<Map<string, string | null>> {
+  const rows = await controlDb
+    .select({ pluginId: projectPlugins.pluginId, version: projectPlugins.version })
+    .from(projectPlugins)
+    .where(eq(projectPlugins.projectId, projectId));
+  return new Map(rows.map((r) => [r.pluginId, r.version]));
 }
 
 export async function disablePlugin(projectId: string, pluginId: string): Promise<void> {
@@ -212,7 +230,16 @@ export async function enablePluginChecked(
   if (!target) throw new ValidationError(`unknown plugin "${pluginId}" — list_plugins shows what's available`, "E_NOT_FOUND");
 
   const active = await enabledPlugins(projectId);
-  if (active.has(pluginId)) return { enabled: [], disabled: [], notes: [`"${pluginId}" was already enabled`] };
+  if (active.has(pluginId)) {
+    // Idempotent re-enable = version acknowledgment (Track C): re-stamp to the
+    // current catalog version so the briefing's update offer clears.
+    await enablePlugin(projectId, pluginId, target.version);
+    return {
+      enabled: [],
+      disabled: [],
+      notes: [`"${pluginId}" was already enabled — acknowledged version ${target.version}`],
+    };
+  }
 
   const byId = new Map(catalog.map((p) => [p.id, p]));
   const capsProvidedBy = (ids: Iterable<string>) => {
@@ -284,7 +311,7 @@ export async function enablePluginChecked(
     await disablePlugin(projectId, id);
     notes.push(`swap: disabled "${id}" (its collections/content remain)`);
   }
-  for (const id of toEnable) await enablePlugin(projectId, id);
+  for (const id of toEnable) await enablePlugin(projectId, id, byId.get(id)?.version ?? null);
   return { enabled: toEnable, disabled: toDisable, notes };
 }
 

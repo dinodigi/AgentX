@@ -156,6 +156,9 @@ export const projects = pgTable("projects", {
   branding: jsonb("branding").$type<Branding>().notNull().default({}),
   /** i18n locale registry {default, supported}; null = localized fields unavailable (J3). */
   locales: jsonb("locales").$type<ProjectLocales>(),
+  /** Track C session briefing: platform notices created after this stamp are
+   * "new" for the project; get_project_info advances it. */
+  briefingSeenAt: timestamp("briefing_seen_at", { withTimezone: true }),
   /** v2 Track 1b: project-level block library — named BlockDefs materialized
    * into collections at define time ({ [name]: {label, fields} }). */
   blockLibrary: jsonb("block_library").$type<Record<string, { label: string; fields: FieldDef[] }>>(),
@@ -520,6 +523,16 @@ export const platformSettings = pgTable("platform_settings", {
  * console reads it in one place. project_id survives project deletion as NULL
  * (the signal outlives the tenant).
  */
+/** Track C: operator-authored platform notices ("delivery tokens now required
+ * on /api/v1") surfaced ONCE per project via the get_project_info briefing —
+ * the "first agent to connect gets told" channel. */
+export const platformNotices = pgTable("platform_notices", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  message: text("message").notNull(),
+  severity: text("severity").notNull().default("info"), // info | attention
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const platformFeedback = pgTable("platform_feedback", {
   id: uuid("id").primaryKey().defaultRandom(),
   projectId: uuid("project_id"),
@@ -565,6 +578,10 @@ export const projectPlugins = pgTable(
       .references(() => projects.id, { onDelete: "cascade" }),
     pluginId: text("plugin_id").notNull(),
     enabledAt: timestamp("enabled_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Catalog version at enable/acknowledge time (Track C) — null = enabled
+     * before version tracking. Drift vs the catalog powers briefing offers;
+     * re-running enable_plugin after adopting an update re-stamps it. */
+    version: text("version"),
   },
   (t) => [primaryKey({ columns: [t.projectId, t.pluginId] })],
 );

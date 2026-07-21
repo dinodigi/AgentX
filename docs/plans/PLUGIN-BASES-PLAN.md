@@ -65,7 +65,9 @@ a second expendable poke surface.
 - Tests: sweep transitions stale rows exactly once under concurrent drains;
   guards refuse; audit attribution.
 
-### Track C — updates surface: drift + session briefing — ⬜
+### Track C — updates surface: drift + session briefing — ✅ shipped 2026-07-21
+> (caps-nearing trimmed from health v1 — connectors + failed deliveries only;
+> add caps once the stats surface is wired in cheaply)
 - Record applied plugin version at enable/apply time (today unrecorded —
   the CSLP drift was only detectable by hand).
 - `get_project_info` gains `briefing`: plugin update offers (from/to/type),

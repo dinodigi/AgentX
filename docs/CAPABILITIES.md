@@ -186,6 +186,12 @@ Cloudflare edge cache; public status page linked in the site footer).
 
 - A **PluginDef** = structure (baseline content model the agent reconciles via
   `define_collection`) + tools (MCP verbs it unlocks) + guidance + acceptance.
+- **Session briefing** (Track C): `get_project_info` opens every session with
+  `briefing` — plugin update OFFERS (acknowledged-at-enable version vs the
+  catalog; adopting = reconcile through the gates, then `enable_plugin` again
+  to acknowledge; nothing auto-applies), platform notices shown once per
+  project, connector/delivery health, and an `attention` do-first list
+  (major bumps, attention notices, erroring connectors).
 - **Composition core** (Plugin Bases Plan, Track A): defs declare `provides`
   (the capability they own) and `requires` (dependencies). ONE active provider
   per capability, enforced on NEW enables only (grandfathered projects keep

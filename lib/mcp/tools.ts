@@ -58,6 +58,7 @@ import {
   disablePluginChecked,
   providesOf,
 } from "@/lib/plugins";
+import { buildBriefing } from "@/lib/briefing";
 import { fetchPageHead, scoreHead, auditSite } from "@/lib/seo";
 import { defineBlock, deleteBlock, listBlocks } from "@/lib/blocks";
 import { configureInbound, disableInbound } from "@/lib/inbound";
@@ -142,10 +143,14 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "get_project_info",
     description:
-      "Call this FIRST in a fresh session. Returns the project's name/branding and every " +
-      "URL you need: the delivery API base (how the live site reads/writes content), the " +
-      "admin URL (hand to the client), and the MCP endpoint. Pair with list_collections " +
-      "to fully orient yourself.",
+      "START EVERY SESSION HERE. Returns the project's name/branding, every URL you need " +
+      "(delivery API base, admin URL, MCP endpoint, changes feed), and the session BRIEFING: " +
+      "`briefing.attention` is your do-first list (handle or explicitly defer before new work); " +
+      "`briefing.updates` are plugin update OFFERS — nothing auto-applies; adopt one by reading " +
+      "get_plugin, reconciling the new spec via define_collection (all safety gates apply), then " +
+      "calling enable_plugin again to acknowledge the version; `briefing.notices` are platform " +
+      "changes since this project's last session (shown once); `briefing.health` summarizes " +
+      "connectors and failed deliveries. Pair with list_collections to fully orient yourself.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -1874,10 +1879,11 @@ export async function callTool(
       }
 
       case "get_project_info": {
-        const [project, authConfig, connectorRows] = await Promise.all([
+        const [project, authConfig, connectorRows, briefing] = await Promise.all([
           getProject(projectId),
           getAuthConfig(projectId),
           listConnectorRows(projectId),
+          buildBriefing(projectId),
         ]);
         if (!project) return err("project not found", "E_NOT_FOUND");
         return ok({
@@ -1885,6 +1891,8 @@ export async function callTool(
             name: project.name,
             branding: project.branding,
           },
+          // Track C: the session briefing — attention first, then offers.
+          briefing,
           locales: project.locales ?? null,
           ...(project.locales
             ? {}
