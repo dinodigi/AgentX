@@ -58,22 +58,56 @@
 
 - ⬜ **SEO title length measured on HTML-encoded text.** A 60-char title with
   two `&` reports as 68. Decode entities before measuring. (~20 min)
-- ⬜ **`delete_asset` blocked by TRASHED rows.** `E_BLOCKED` gives only an entry
-  id, and the blockers were soft-deleted bookkeeping rows. Either exclude
-  trashed rows from the reference count, or say "N of them are in trash —
-  purge or empty_trash to proceed" and name the collections.
-- ⬜ **Workflow actions don't fire right after a redefine.** *The headline.* A
-  transition ~60s after `define_collection` produced no `entry.transitioned`
-  event; the same transition later fired correctly. Hypothesis: the transition
-  matched the OLD workflow config (cache lag) without erroring — the **fifth**
-  instance of our config-staleness class, after the destructive gate, relation
-  targets, the delivery create gate, the connector gate, and the provider
-  registry. **Investigate before patching**; if confirmed, apply the standing
-  rule (a correctness path must not read stale config).
-- ⬜ **Thumbnail burst rate-limiting.** ~150 first-time derivative generations
-  from one media grid trip the limiter and render as permanently broken tiles.
-  Either pre-generate one small derivative at upload, or answer
-  `503 + Retry-After` so browsers retry instead of failing hard.
+- ⬜ **`delete_asset` blocked by TRASHED rows.** ⚠️ **PLAN CORRECTED after code
+  audit — my original fix was wrong.** `lib/r2.ts:416-424` ALREADY runs a
+  separate trashed-row check with its own message ("N trashed entries … purge
+  them first"). But Stallion received the **live-ref** message ("N entries
+  still reference asset … clear those fields first"), which comes from the
+  `entries` query at `:405-412`. So either their blockers were genuinely live
+  rows, or something leaves soft-deleted rows in `entries`. **Investigate
+  which path fired before changing anything.** The part of their ask that
+  survives regardless: neither message names the referencing **collection**,
+  only a count — add that.
+- ⬜ **Workflow actions don't fire right after a redefine.** *The headline.*
+  ⚠️ **My cache-lag hypothesis is NOT supported by the code.** `update_entry`
+  reads config via `mustCollection` → `getCollection`, whose TTL is
+  **15 seconds** (`lib/collections.ts:46`) — that does not explain a miss
+  ~60 seconds after the define. Drop the confident "fifth staleness instance"
+  framing. Candidates to test, in order:
+  1. `fireTransition` is **deferred** (`lib/events.ts:261`) — fire-and-forget
+     after the response; a recycled instance could drop it silently.
+  2. Next's `unstable_cache` can serve **stale-while-revalidate** past the TTL,
+     so 15s is a floor, not a ceiling.
+  3. The `event_action` job handler **skips silently** when the action hash no
+     longer matches current config ("edited since enqueue").
+  **Reproduce first.** No fix until one of these is demonstrated.
+- ⬜ **Thumbnail burst rate-limiting.** First-request derivative generation is
+  confirmed by design (`app/api/v1/assets/[id]/image/route.ts` header: resize →
+  R2-cached derivative → 302). **Not** confirmed: which limiter produced their
+  429s — that route shows no `rateLimit` call, so the throttle may come from
+  elsewhere. Find the actual limiter before choosing between eager
+  thumbnail-at-upload and `503 + Retry-After`.
+
+## Code audit — 2026-07-22 (before writing any code)
+
+Every claim above was checked against the source. Result: **5 verified, 1
+wrong, 1 hypothesis contradicted, 1 partial.**
+
+| Claim | Verdict |
+|---|---|
+| `/api/health` 503 + `healthCheckPath` points at it | ✅ `health/route.ts:28`, `render.yaml:37` |
+| Degraded body has no `"ok"` (UptimeRobot keyword stays red) | ✅ body is `{status:"degraded",db:"down",latencyMs}` |
+| Smoke suite runs against the PRODUCTION control DB | ✅ `helpers.mjs:11` uses `DATABASE_URL` from `.env` |
+| No MCP tool can mint a delivery token | ✅ none in `TOOL_DEFS`; `mintToken` is admin-only (`settings/actions.ts:102`) |
+| `list_plugins` has no applied-state | ✅ nothing in the codebase |
+| SEO title measured on encoded text | ✅ raw regex extract (`seo.ts:92`), no decode, `h.title.length` (`:196`) |
+| `delete_asset` mishandles trashed rows | ❌ **wrong** — a dedicated trashed check already exists; wrong path diagnosed |
+| Workflow miss = config cache lag | ⚠️ **contradicted** — 15s TTL doesn't explain a 60s-later miss |
+| Thumbnail 429s come from the image route's limiter | ⚠️ **partial** — generation confirmed, limiter source not found there |
+
+Lesson worth keeping: the two items I stated most confidently were the two
+that were wrong. Field reports describe **symptoms**; the plan may not assume
+a **cause**.
 
 ## Deliberately NOT in this sprint
 
