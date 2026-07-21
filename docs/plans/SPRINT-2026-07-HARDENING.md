@@ -11,9 +11,20 @@
   amplified by our own health check, which reports 503 when the DB is
   unreachable — Render then restart-looped every instance, so *every* route
   502'd, including static marketing pages that need no database.
-- **The same health check is the monthly bill.** Constant polling keeps the
-  control DB awake 24/7 (~180 CU-h/mo ≈ $19), which is essentially the whole
-  Neon line. Fixing it roughly halves infrastructure cost (~$29 → ~$16/mo).
+- ~~**The same health check is the monthly bill.**~~ ❌ **RETRACTED — this was
+  wrong, twice over (found in the third audit pass, before any code):**
+  1. `health/route.ts:18` queries the control DB **unconditionally**, before
+     any status-code branch. Changing 503→200 does not stop the query, so it
+     saves nothing.
+  2. Even a zero-DB health endpoint wouldn't help: the **jobs-drain cron runs
+     `* * * * *`** (`render.yaml:113`) and every tick hits the control DB four
+     ways — `reclaimStale`, `tickSchedules`, `drainJobs`, `rollupUsage`. A
+     query every 60s against a **5-minute** scale-to-zero threshold means the
+     control DB can never idle, whatever the health check does.
+  **OPS-3 is an availability fix only. It does not reduce the Neon bill.**
+  Real cost reduction would mean drain cadence ≥ ~10 min (trading job/webhook/
+  email latency for ~$12/mo) or moving the job queue off the control DB
+  entirely. Both are product decisions, not part of this sprint.
 - **Two Codex findings** from the plugin poke run: no MCP path to a delivery
   token (so `get_client_code` emits a client that can't run), and `enabled`
   reading as `applied`.
@@ -22,7 +33,8 @@
 
 ## Track 1 — Stop the bleeding (do first; ~1 hour)
 
-- ⬜ **OPS-3 — health liveness/readiness split.** `/api/health` returns **200**
+- ⬜ **OPS-3 — health liveness/readiness split.** *(Availability only — see the
+  retraction above; this does NOT lower the bill.)* `/api/health` returns **200**
   with `{status:"degraded",db:"down"}` when the control DB is unreachable, so
   Render keeps the instance in rotation: static pages serve, APIs fail honestly
   per-request, the drain cron stays reachable. UptimeRobot still alerts (its
@@ -156,7 +168,9 @@ a **cause**.
 
 1. A control-DB outage degrades the platform instead of blacking it out —
    provable by simulating DB-down and still serving the marketing site.
-2. Monthly infrastructure cost roughly halves (control DB sleeps when idle).
+2. ~~Monthly cost roughly halves.~~ **Removed — retracted above.** The
+   every-minute drain cron keeps the control DB awake regardless; cost is the
+   price of a responsive job queue, not a bug.
 3. Smoke runs touch no production database.
 4. An agent can go from empty project → generated client → working delivery
    calls without leaving MCP.
