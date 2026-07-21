@@ -325,8 +325,18 @@ export async function queryDeliveries(projectId) {
 
 /** Attach a connected resend connector with a decryptable API key (direct SQL). */
 export async function connectResend(projectId, { key = "re_smoke_key", fromEmail = "hello@smoke.test" } = {}) {
+  return connectEmailProvider(projectId, "resend", { key, fromEmail });
+}
+
+/** Connect ANY email-category provider (provider registry). connectResend is
+ *  kept as the thin default so the 12 existing email suites stay untouched. */
+export async function connectEmailProvider(
+  projectId,
+  type = "resend",
+  { key = "smoke_key", fromEmail = "hello@smoke.test" } = {},
+) {
   await sql`INSERT INTO project_connectors (project_id, type, config, secret_enc, status)
-    VALUES (${projectId}, 'resend', ${JSON.stringify({ fromEmail })}::jsonb, ${encryptSecret(key)}, 'connected')
+    VALUES (${projectId}, ${type}, ${JSON.stringify({ fromEmail })}::jsonb, ${encryptSecret(key)}, 'connected')
     ON CONFLICT (project_id, type) DO UPDATE SET
       config = EXCLUDED.config, secret_enc = EXCLUDED.secret_enc, status = 'connected'`;
 }

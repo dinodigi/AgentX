@@ -5,7 +5,7 @@ import { assertCollectionCap } from "./caps";
 import { tenantDb } from "./data-plane";
 import type { DbExecutor } from "./db-tx";
 import { collections, entries, entriesTrash, entryVersions, projects, type Collection, type EventAction, type WriteHook } from "@/db/schema";
-import { getConnector } from "./connectors";
+import { getConnector, hasProvider } from "./connectors";
 import { parseAfter, senderRefusal } from "./events";
 import { validateWorkflow } from "./workflow";
 import { recordChangesStrict } from "./changes";
@@ -101,7 +101,7 @@ export interface DefineCollectionInput {
   /** Identity rule presets (Phase 4/12). owner rules need ownerField; claim rules
    *  and any-of arrays and org scoping are the higher rungs. */
   access?: Collection["access"] | null;
-  /** Declarative event actions (Phase 3). Email needs the Resend connector. */
+  /** Declarative event actions (Phase 3). Email needs an email provider connected. */
   events?: {
     created?: EventAction[];
     updated?: EventAction[];
@@ -259,9 +259,9 @@ async function validateAccessAndEvents(
         );
       }
     }
-    if (all.some((a) => a.type === "email") && !(await getConnector(projectId, "resend"))) {
+    if (all.some((a) => a.type === "email") && !(await hasProvider(projectId, "email"))) {
       throw new ValidationError(
-        "events: email actions need the Resend connector — connect it in project settings first",
+        "events: email actions need an email provider — connect Resend or Elastic Email in project settings first",
         "E_CONNECTOR_REQUIRED",
       );
     }
@@ -1096,9 +1096,9 @@ export async function defineCollection(
     const hasEmail = input.workflow.transitions
       .flatMap((t) => t.actions ?? [])
       .some((a) => a.type === "email");
-    if (hasEmail && !(await getConnector(projectId, "resend"))) {
+    if (hasEmail && !(await hasProvider(projectId, "email"))) {
       throw new ValidationError(
-        "workflow: email transition actions need the Resend connector — connect it in project settings first",
+        "workflow: email transition actions need an email provider — connect Resend or Elastic Email in project settings first",
         "E_CONNECTOR_REQUIRED",
       );
     }

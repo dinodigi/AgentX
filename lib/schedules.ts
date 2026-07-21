@@ -9,7 +9,7 @@ import {
   type ScheduleRecurrence,
 } from "@/db/schema";
 import { enqueueJob } from "./jobs";
-import { getConnector } from "./connectors";
+import { getConnector, hasProvider } from "./connectors";
 import { getCollection } from "./collections";
 import { WHERE_OPS } from "./query";
 import { allowedFroms, isTransitionTarget } from "./workflow";
@@ -174,9 +174,9 @@ export async function defineSchedule(
     if (!/^https?:\/\//.test(a.url)) throw new ValidationError("schedule: webhook url must be http(s)");
   } else if (a.type === "email") {
     if (!a.to || !a.subject) throw new ValidationError("schedule: email actions need to + subject");
-    if (!(await getConnector(projectId, "resend"))) {
+    if (!(await hasProvider(projectId, "email"))) {
       throw new ValidationError(
-        "schedule: email actions need the Resend connector — connect it in project settings first",
+        "schedule: email actions need an email provider — connect Resend or Elastic Email in project settings first",
         "E_CONNECTOR_REQUIRED",
       );
     }

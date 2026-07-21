@@ -270,6 +270,17 @@ rebrand (see DESIGN-BRIEF.md).
 ## 13. Platform & data plane
 
 - **Stack**: Next.js + Drizzle + Neon + Clerk + R2 + Stripe + Tailwind v4.
+- **Connector provider registry**: connectors belong to a CATEGORY (auth ·
+  email · payments · database · storage); the type is just which provider
+  serves it. `email` ships two interchangeable providers (**Resend**,
+  **Elastic Email**) behind one adapter interface — send, health probe and key
+  rotation all resolve through it, so adding a provider is an adapter plus a
+  map entry, with no caller changes. **One active provider per swappable
+  category**, enforced at connect time only (pre-existing connections are
+  never re-judged); resolution is fresh-on-miss, so a just-connected provider
+  is never falsely refused. Gates and plugin guidance ask the CATEGORY, never
+  a brand. `database`/`storage` stay single-provider on purpose — the data
+  lives there, so switching is a migration, not a toggle.
 - **Tiered data plane**: shared control DB (free tier) · **managed Neon
   project per tenant** (provisioned via API, soft-delete recoverable 7 days) ·
   **BYO database** connector. `tenantDb(projectId)` resolves the plane;

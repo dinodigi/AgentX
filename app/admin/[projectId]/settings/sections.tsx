@@ -1,3 +1,4 @@
+import type { FormConnectorType } from "@/lib/connectors";
 "use client";
 
 import { useMemo, useState } from "react";
@@ -382,7 +383,7 @@ export function WebhookForm({
 
 export interface ConnectorCardProps {
   projectId: string;
-  type: "clerk" | "resend" | "stripe";
+  type: FormConnectorType;
   label: string;
   configFields: { key: string; label: string; placeholder: string }[];
   secretLabel: string | null;

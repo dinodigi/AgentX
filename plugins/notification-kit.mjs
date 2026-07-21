@@ -24,7 +24,7 @@
  */
 export const NOTIFICATION_KIT_PLUGIN = {
   id: "notification_kit",
-  version: "1.1.0",
+  version: "1.2.0",
   provides: "notifications", // requires:["identity"] arrives WITH the auth_kit split (until then it ships its minimal users fallback)
   name: "Notification Kit — in-app notifications",
   description:
@@ -161,7 +161,7 @@ export const NOTIFICATION_KIT_PLUGIN = {
     "count(read_at exists:false) groupBy kind; volume by topic = count groupBy topic (topic is " +
     "text — group client-side from query results, or promote hot topics to an enum); " +
     "announcements by status = count groupBy status. CHANNELS: this kit is in-app; when the " +
-    "project gains a Resend connector, honor prefs.email by wiring an entry.created email action " +
+    "project connects an email provider (Resend or Elastic Email), honor prefs.email by wiring an entry.created email action " +
     "on notifications (when-clause on kind) or send from the backend — never bypass a mute.",
   acceptance: [
     "all four baseline collections exist (users skipped when an identity collection was already present); announcements workflow enforces initial status 'draft' on every create path",

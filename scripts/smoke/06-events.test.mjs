@@ -177,13 +177,17 @@ describe("events: actions, emit, delivery log", () => {
     }
   });
 
-  it("email actions are define-time gated on the Resend connector", async () => {
+  // The gate is on the email CATEGORY, not one provider (connector provider
+  // registry): any connected email provider satisfies it, so the refusal is
+  // provider-neutral and names the options rather than demanding Resend.
+  it("email actions are define-time gated on having an email provider", async () => {
     const r = await mcp(p.mcpToken, "define_collection", {
       name: "leads",
       fields: [{ name: "email", label: "Email", type: "text" }],
       events: { created: [{ type: "email", to: "x@y.z", subject: "New" }] },
     });
-    assert.ok(!r.ok && /Resend connector/.test(r.errorText));
+    assert.ok(!r.ok, "must refuse without an email provider");
+    assert.match(r.errorText, /an email provider/i, r.errorText);
   });
 
   it("invalid webhook urls are rejected at define time", async () => {

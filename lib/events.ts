@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Collection, EventAction } from "@/db/schema";
 import { deliverWebhook } from "./webhook";
-import { connectorSecret, getConnector } from "./connectors";
+import { connectorSecret, getConnector, activeProvider } from "./connectors";
+import { emailProvider } from "./providers/email";
 import { matchesClauses } from "./query";
 import { ValidationError } from "./validation";
 import { enqueueJob } from "./jobs";
@@ -13,7 +14,7 @@ import { webhookDeliveries } from "@/db/schema";
  * The single emit point (Phase 3). Every entry mutation — MCP, admin, or
  * delivery API — flows through the entries layer, which calls emitEntryEvent.
  * Actions are declarative per collection: webhook (retry+log via lib/webhook)
- * or email (via the project's Resend connector; validated at define time).
+ * or email (via the project's active email provider; validated at define time).
  * Subsystem 08: actions may carry `when` clauses (evaluated against the entry
  * snapshot) and `disabled`; updated events include the previous snapshot +
  * changedFields; failed deliveries can be re-fired from the log.
@@ -171,7 +172,7 @@ export async function runEventAction(
  * fan-out (commas/semicolons) and empty renders. Defense-in-depth for the F2
  * email-relay vector: `to` is interpolated from entry data, so once F2 is fixed
  * the submitter can't control it — but a malformed template still shouldn't
- * reach Resend from the project's verified domain.
+ * reach the provider from the project's verified domain.
  */
 function isValidEmailRecipient(addr: string): boolean {
   return /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/.test(addr);
@@ -213,7 +214,7 @@ const EMAIL_SHAPE_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * 2a: sender-identity gate. A custom `from` must be an APPROVED sender —
- * the connector's fromEmail, any address on its (Resend-verified) domain, or
+ * the connector's fromEmail, any address on its (provider-verified) domain, or
  * an explicit config.approvedSenders entry. Never free-form: from is identity,
  * and an unverified sender is a spoofing/deliverability hole. Returns the
  * refusal message, or null when allowed.
@@ -221,9 +222,10 @@ const EMAIL_SHAPE_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export async function senderRefusal(projectId: string, from?: string): Promise<string | null> {
   if (!from) return null;
   if (!EMAIL_SHAPE_RE.test(from)) return `from "${from}" is not a valid email address`;
-  const connector = await getConnector(projectId, "resend");
+  const active = await activeProvider(projectId, "email");
+  const connector = active?.connector;
   const configured = connector?.config?.fromEmail;
-  if (!configured) return "set the resend connector's fromEmail before using a custom from";
+  if (!configured) return "set the email connector's fromEmail before using a custom from";
   const lower = from.toLowerCase();
   if (lower === String(configured).toLowerCase()) return null;
   const approved = (connector.config as Record<string, unknown>).approvedSenders;
@@ -281,7 +283,7 @@ export interface RenderedEmail {
   bcc?: string[];
 }
 
-/** Send one rendered email via the project's Resend connector; log the outcome.
+/** Send one rendered email via the project's ACTIVE email provider; log the outcome.
  * Exported for the schedule_fire handler (G3) — collectionId is null there. */
 export async function dispatchEmail(
   projectId: string,
@@ -296,11 +298,16 @@ export async function dispatchEmail(
     if (!isValidEmailRecipient(rendered.to)) {
       throw new Error(`refusing to send: invalid recipient "${rendered.to.slice(0, 80)}"`);
     }
-    const [key, connector] = await Promise.all([
-      connectorSecret(projectId, "resend"),
-      getConnector(projectId, "resend"),
-    ]);
-    if (!key || !connector) throw new Error("resend connector not configured");
+    // Provider registry: resolve whichever email provider this project has
+    // connected. A project with only Resend resolves to Resend — identical to
+    // the hardcoded path this replaces.
+    const active = await activeProvider(projectId, "email");
+    if (!active) throw new Error("no email provider connected");
+    const adapter = emailProvider(active.type);
+    if (!adapter) throw new Error(`no adapter for email provider "${active.type}"`);
+    const connector = active.connector;
+    const key = await connectorSecret(projectId, active.type);
+    if (!key) throw new Error(`${adapter.label} connector has no API key stored`);
     // 2a: re-check the custom sender at SEND time (connector config may have
     // changed since define) — a no-longer-approved from falls back to the
     // connector default rather than failing the send or spoofing.
@@ -310,23 +317,9 @@ export async function dispatchEmail(
       if (!refusal) from = rendered.from;
       else console.error(`email from "${rendered.from}" no longer approved — sent as ${from} (${refusal})`);
     }
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({
-        from,
-        to: [rendered.to],
-        subject: rendered.subject,
-        text: rendered.text,
-        ...(rendered.html ? { html: rendered.html } : {}),
-        ...(rendered.replyTo ? { reply_to: rendered.replyTo } : {}),
-        ...(rendered.cc?.length ? { cc: rendered.cc } : {}),
-        ...(rendered.bcc?.length ? { bcc: rendered.bcc } : {}),
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (res.ok) status = "success";
-    else lastError = `Resend HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`;
+    const sent = await adapter.send({ ...rendered, from: String(from) }, key);
+    if (sent.ok) status = "success";
+    else lastError = sent.error ?? `${adapter.label} send failed`;
   } catch (e) {
     lastError = e instanceof Error ? e.message : String(e);
   }

@@ -43,7 +43,7 @@ import { listJobs, cancelJob } from "@/lib/jobs";
 import { listChanges, encodeChangeCursor, decodeChangeCursor } from "@/lib/changes";
 import { defineSchedule, listSchedules, deleteSchedule } from "@/lib/schedules";
 import { generateClientCode } from "@/lib/mcp/client-code";
-import { getAuthConfig, listConnectors as listConnectorRows } from "@/lib/connectors";
+import { getAuthConfig, listConnectors as listConnectorRows, PROVIDER_CATEGORY, type ConnectorType } from "@/lib/connectors";
 import { uploadAsset, fetchAssetFromUrl } from "@/lib/r2";
 import { exportProject, importProject } from "@/lib/manifest";
 import { setLocales } from "@/lib/locales";
@@ -156,8 +156,11 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "list_connectors",
     description:
-      "Status of the project's BYO-infra connectors (clerk = end-user auth, resend = email " +
-      "actions, stripe = payments). Returns type, status, and non-secret config (issuer, " +
+      "Status of the project's BYO-infra connectors, each reported with its CATEGORY — plan " +
+      "against the category (auth | email | payments | database | storage), not the provider: " +
+      "email is served by resend OR elastic_email (one active provider per category), so " +
+      "'can this project send email?' is 'is a connector with category email connected?'. " +
+      "Returns type, category, status, and non-secret config (issuer, " +
       "publishable key, from address). Secrets (sk_/whsec_ keys) NEVER appear here — connecting/" +
       "rotating them is done by the operator in project settings, not over MCP.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -523,7 +526,7 @@ export const TOOL_DEFS: ToolDef[] = [
           type: "object",
           description:
             "declarative actions on entry lifecycle: {created|updated|deleted: [{type:'webhook',url} " +
-            "| {type:'email',to,subject,html?,from?,replyTo?,cc?,bcc?}]}. Email needs the Resend connector; " +
+            "| {type:'email',to,subject,html?,from?,replyTo?,cc?,bcc?}]}. Email needs an email provider (Resend or Elastic Email); " +
             "to/subject/html support {{field}} interpolation from entry data. from is a CUSTOM SENDER — " +
             "static (never interpolated) and must be an APPROVED sender: the connector's fromEmail, any " +
             "address on its verified domain, or the connector's approvedSenders list (rejected at define " +
@@ -1644,15 +1647,24 @@ export async function callTool(
         const allowByType: Record<string, string[]> = {
           clerk: ["publishableKey", "issuer", "additionalIssuers", "audience"],
           resend: ["fromEmail"],
+          elastic_email: ["fromEmail"],
           stripe: ["publishableKey"],
         };
         const rows = await listConnectorRows(projectId);
+        // Provider registry: the CATEGORY is what an agent plans against
+        // ("can this project send email?"), the type is just which provider
+        // serves it. Both are reported so guidance stays provider-neutral.
         return ok(
           rows.map((c) => {
             const allow = allowByType[c.type] ?? [];
             const config: Record<string, unknown> = {};
             for (const k of allow) if (c.config[k] != null) config[k] = c.config[k];
-            return { type: c.type, status: c.status, config };
+            return {
+              type: c.type,
+              category: PROVIDER_CATEGORY[c.type as ConnectorType] ?? null,
+              status: c.status,
+              config,
+            };
           }),
         );
       }

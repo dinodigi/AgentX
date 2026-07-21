@@ -20,6 +20,7 @@ import { getProjectRole, getViewer } from "@/lib/access";
 import { canDeleteProject } from "@/lib/workspaces";
 import { deleteProjectObjects } from "@/lib/r2";
 import { updateCollectionSettings } from "@/lib/collections";
+import type { ConnectorType, FormConnectorType } from "@/lib/connectors";
 
 /** Settings mutations. All require the operator role on the project. */
 
@@ -45,7 +46,7 @@ async function safe<T extends { error?: string }>(fn: () => Promise<T>): Promise
 /** Rotate a connector secret — the new key is validated BEFORE the old one is replaced. */
 export async function rotateConnectorSecretAction(
   projectId: string,
-  type: "clerk" | "resend" | "stripe",
+  type: FormConnectorType,
   newSecret: string,
 ): Promise<{ ok: boolean; detail: string; error?: string }> {
   const denied = await requireOperator(projectId);
@@ -181,14 +182,25 @@ export async function addMember(
 
 export async function saveConnector(
   projectId: string,
-  type: "clerk" | "resend" | "stripe",
+  type: FormConnectorType,
   formData: FormData,
 ): Promise<{ error?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
 
-  const { CONNECTOR_SPECS, upsertConnector, deriveClerkIssuer, secretShapedConfigRefusal } =
-    await import("@/lib/connectors");
+  const {
+    CONNECTOR_SPECS,
+    upsertConnector,
+    deriveClerkIssuer,
+    secretShapedConfigRefusal,
+    categoryConflictRefusal,
+  } = await import("@/lib/connectors");
+  // Provider registry: one ACTIVE provider per swappable category. Connecting a
+  // second email provider is refused with the remedy named — never an implicit
+  // swap (silently disconnecting a live email provider on a form save would be
+  // rude). Pre-existing connections are untouched: this runs on connect only.
+  const conflict = await categoryConflictRefusal(projectId, type);
+  if (conflict) return { error: conflict };
   const spec = CONNECTOR_SPECS[type];
   const config: Record<string, string> = {};
   for (const f of spec.configFields) {
@@ -259,7 +271,7 @@ export async function saveConnector(
 
 export async function disconnectConnector(
   projectId: string,
-  type: "clerk" | "resend" | "stripe" | "neon" | "r2",
+  type: ConnectorType,
 ): Promise<{ error?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
@@ -545,7 +557,7 @@ export async function provisionStripeWebhook(
 
 export async function testConnector(
   projectId: string,
-  type: "clerk" | "resend" | "stripe" | "neon" | "r2",
+  type: ConnectorType,
 ): Promise<{ error?: string; ok?: boolean; detail?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };

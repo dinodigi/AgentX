@@ -2,7 +2,15 @@ import { notFound } from "next/navigation";
 import { CreditCard, Database, HardDrive, KeyRound, Mail } from "lucide-react";
 import { getProjectRole } from "@/lib/access";
 import { getProject } from "@/lib/admin";
-import { listConnectors, CONNECTOR_SPECS, type FormConnectorType } from "@/lib/connectors";
+import {
+  listConnectors,
+  CONNECTOR_SPECS,
+  providersFor,
+  type FormConnectorType,
+} from "@/lib/connectors";
+
+/** Every provider serving the email category — the registry is the source. */
+const EMAIL_TYPES = providersFor("email") as FormConnectorType[];
 import { ConnectorCard, NeonConnectorCard, R2ConnectorCard } from "../settings/sections";
 
 /** Connectors tab — the project's bring-your-own infrastructure. Operator-only.
@@ -29,9 +37,21 @@ export default async function ConnectorsPage({
     { id: "database", label: "Database", Icon: Database, provider: "Neon", status: sandbox ? "shared" : neon?.status ?? "disconnected" },
     { id: "storage", label: "Storage", Icon: HardDrive, provider: "R2", status: sandbox ? "shared" : r2?.status ?? "disconnected" },
     { id: "auth", label: "Auth", Icon: KeyRound, provider: "Clerk", status: svcStatus("clerk") },
-    { id: "email", label: "Email", Icon: Mail, provider: "Resend", status: svcStatus("resend") },
+    {
+      id: "email",
+      label: "Email",
+      Icon: Mail,
+      // Provider registry: the category names whichever provider is connected;
+      // registry order is the tiebreak (same rule the resolver uses).
+      provider: EMAIL_TYPES.find((t) => byType.get(t))
+        ? CONNECTOR_SPECS[EMAIL_TYPES.find((t) => byType.get(t))!].label.replace(/ \(.*\)$/, "")
+        : "Resend or Elastic Email",
+      status: EMAIL_TYPES.some((t) => byType.get(t))
+        ? svcStatus(EMAIL_TYPES.find((t) => byType.get(t))!)
+        : "disconnected",
+    },
     { id: "payments", label: "Payments", Icon: CreditCard, provider: "Stripe", status: svcStatus("stripe") },
-  ] as const;
+  ];
 
   const formCard = (type: FormConnectorType) => {
     const spec = CONNECTOR_SPECS[type];
@@ -121,7 +141,11 @@ export default async function ConnectorsPage({
             ) : c.id === "auth" ? (
               formCard("clerk")
             ) : c.id === "email" ? (
-              formCard("resend")
+              <div className="flex flex-col gap-4">
+                {EMAIL_TYPES.map((t) => (
+                  <div key={t}>{formCard(t)}</div>
+                ))}
+              </div>
             ) : (
               formCard("stripe")
             )}

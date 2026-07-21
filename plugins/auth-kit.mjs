@@ -25,7 +25,7 @@
  */
 export const AUTH_KIT_PLUGIN = {
   id: "auth_kit",
-  version: "1.1.0",
+  version: "1.2.0",
   provides: "identity", // monolith for now — identity/teams split lands with the composition refactor
   name: "Auth Kit — DIY user management",
   description:
@@ -213,7 +213,7 @@ export const AUTH_KIT_PLUGIN = {
     "NEW tokens carry — sessions refresh on the issuer's schedule, so revocation latency = token " +
     "TTL; keep TTLs short. FLOWS: INVITE = create invitations {email, org?, role} → the uuid code " +
     "is stamped server-side (read it back over MCP; it is private by default) → email the accept " +
-    "link (wire an entry.created email action once a Resend connector exists, or send from the " +
+    "link (wire an entry.created email action once an email provider is connected, or send from the " +
     "auth service) → on accept, the auth service verifies code + expiry SERVER-SIDE, creates the " +
     "user (or transitions invited→active), creates the membership, transitions the invitation " +
     "pending→accepted. Expired sweep: query pending where expires_at lt now → transition to " +

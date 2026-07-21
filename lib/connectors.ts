@@ -3,6 +3,7 @@ import { unstable_cache, revalidateTag } from "next/cache";
 import { db } from "@/db";
 import { projectConnectors, type ProjectConnector } from "@/db/schema";
 import { encryptSecret, decryptSecret } from "./crypto";
+import { emailProvider } from "./providers/email";
 import {
   STRIPE_API_BASE,
   STRIPE_VERSION,
@@ -17,7 +18,43 @@ import {
  * they don't need, never secrets.
  */
 
-export type ConnectorType = "clerk" | "resend" | "stripe" | "neon" | "r2";
+export type ConnectorType = "clerk" | "resend" | "elastic_email" | "stripe" | "neon" | "r2";
+
+/**
+ * CONNECTOR CATEGORIES (the provider registry). A category is the CAPABILITY
+ * ("send email"); the connector type is the PROVIDER implementing it. Adding a
+ * provider = an adapter + a line here; nothing that consumes the category
+ * changes. Same rule as plugin capabilities, one layer down: ONE ACTIVE
+ * PROVIDER PER CATEGORY, enforced at connect time (never retroactively — a
+ * project connected before the rule keeps working exactly as it is).
+ *
+ * Derived, not stored: no migration, and existing rows are untouched.
+ *
+ * `database` is deliberately a category of ONE and always will be — the data
+ * LIVES there, so "switching" is a migration, not a toggle. It keeps its own
+ * tiered model (shared / managed / BYO + the migration gate). `storage` is
+ * likewise single today: existing assets don't teleport between buckets.
+ */
+export type ConnectorCategory = "auth" | "email" | "payments" | "database" | "storage";
+
+export const PROVIDER_CATEGORY: Record<ConnectorType, ConnectorCategory> = {
+  clerk: "auth",
+  resend: "email",
+  elastic_email: "email",
+  stripe: "payments",
+  neon: "database",
+  r2: "storage",
+};
+
+/** Provider types serving a category, in registry (tiebreak) order. */
+export function providersFor(category: ConnectorCategory): ConnectorType[] {
+  return (Object.keys(PROVIDER_CATEGORY) as ConnectorType[]).filter(
+    (t) => PROVIDER_CATEGORY[t] === category,
+  );
+}
+
+/** Categories a tenant may switch providers within (stateless dispatch only). */
+export const SWAPPABLE_CATEGORIES: ConnectorCategory[] = ["email"];
 
 /**
  * The connectors the GENERIC settings form may save. `neon` and `r2` are
@@ -68,6 +105,13 @@ export const CONNECTOR_SPECS: Record<
     label: "Resend (email actions)",
     configFields: [
       { key: "fromEmail", label: "From address", placeholder: "notifications@yourdomain.com" },
+    ],
+    secretLabel: "API key",
+  },
+  elastic_email: {
+    label: "Elastic Email (email actions)",
+    configFields: [
+      { key: "fromEmail", label: "From address — must be a verified sender/domain in Elastic Email", placeholder: "notifications@yourdomain.com" },
     ],
     secretLabel: "API key",
   },
@@ -143,6 +187,64 @@ export async function getConnector(
 
 export async function listConnectors(projectId: string): Promise<ProjectConnector[]> {
   return db.select().from(projectConnectors).where(eq(projectConnectors.projectId, projectId));
+}
+
+/**
+ * Resolve the ACTIVE provider for a category. Deterministic by construction:
+ * registry order is the tiebreak, so a project that has only Resend connected
+ * resolves to Resend — byte-identical to the hardcoded behavior it replaces.
+ * Returns null when the category has no connected provider.
+ */
+export async function activeProvider(
+  projectId: string,
+  category: ConnectorCategory,
+): Promise<{ type: ConnectorType; connector: ProjectConnector } | null> {
+  const types = providersFor(category);
+  for (const type of types) {
+    const connector = await getConnector(projectId, type);
+    if (connector) return { type, connector };
+  }
+  // Fresh-on-miss — the standing gate rule: a DENY must never rest on a cached
+  // read. The cached lookup lags a just-connected provider by up to a TTL (and
+  // across instances, revalidateTag only clears the local one), so concluding
+  // "no provider in this category" without confirming would refuse email on a
+  // project that just connected one. Same fix as getAuthConfig's; paid only on
+  // the miss path, which is rare and already an error branch.
+  for (const type of types) {
+    const fresh = await getConnectorFresh(projectId, type);
+    if (fresh) return { type, connector: fresh };
+  }
+  return null;
+}
+
+/** Cheap "is this capability available?" for the define-time gates. */
+export async function hasProvider(projectId: string, category: ConnectorCategory): Promise<boolean> {
+  return (await activeProvider(projectId, category)) !== null;
+}
+
+/**
+ * Connect-time guard: refuse a SECOND provider in a swappable category and
+ * name the remedy. Deliberately NOT an auto-swap — silently disconnecting a
+ * tenant's live email provider on a form save would be rude, and infra
+ * credentials deserve an explicit act. Returns a refusal message, or null.
+ */
+export async function categoryConflictRefusal(
+  projectId: string,
+  type: ConnectorType,
+): Promise<string | null> {
+  const category = PROVIDER_CATEGORY[type];
+  if (!SWAPPABLE_CATEGORIES.includes(category)) return null;
+  for (const other of providersFor(category)) {
+    if (other === type) continue;
+    if (await getConnector(projectId, other)) {
+      return (
+        `This project already uses ${CONNECTOR_SPECS[other as FormConnectorType]?.label ?? other} for ${category}. ` +
+        `One active provider per category — disconnect it first, then connect this one. ` +
+        `(Content and settings are untouched either way.)`
+      );
+    }
+  }
+  return null;
 }
 
 /** Uncached fetch — the fresh-on-miss half of the gate rule (see getAuthConfig). */
@@ -290,18 +392,13 @@ export async function rotateConnectorSecret(
   const existing = await getConnector(projectId, type);
   if (!existing) return { ok: false, detail: "connector not connected" };
 
-  if (type === "resend") {
-    try {
-      const res = await fetch("https://api.resend.com/domains", {
-        headers: { Authorization: `Bearer ${newSecret.trim()}` },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) {
-        return { ok: false, detail: `Resend rejected the new key (HTTP ${res.status}) — old key kept` };
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      return { ok: false, detail: `could not validate the new key (${msg}) — old key kept` };
+  // Email providers validate through their adapter — one method serving both
+  // rotation and the health probe, so a new provider gets both for free.
+  const emailAdapter = emailProvider(type);
+  if (emailAdapter) {
+    const probe = await emailAdapter.verifyKey(newSecret.trim());
+    if (!probe.ok) {
+      return { ok: false, detail: `${emailAdapter.label} rejected the new key (${probe.detail}) — old key kept` };
     }
   } else if (type === "stripe") {
     try {
@@ -379,15 +476,13 @@ export async function checkConnectorHealth(
       const res = await fetch(auth.jwksUrl, { signal: AbortSignal.timeout(8000) });
       ok = res.ok;
       detail = ok ? "JWKS reachable" : `JWKS returned HTTP ${res.status}`;
-    } else if (type === "resend") {
-      const key = await connectorSecret(projectId, "resend");
+    } else if (emailProvider(type)) {
+      const adapter = emailProvider(type)!;
+      const key = await connectorSecret(projectId, type);
       if (!key) return { ok: false, detail: "no API key stored" };
-      const res = await fetch("https://api.resend.com/domains", {
-        headers: { Authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(8000),
-      });
-      ok = res.ok;
-      detail = ok ? "API key valid" : `Resend returned HTTP ${res.status}`;
+      const probe = await adapter.verifyKey(key);
+      ok = probe.ok;
+      detail = probe.detail;
     } else {
       // stripe: the secret key is valid iff GET /v1/account succeeds.
       const key = await connectorSecret(projectId, "stripe");
