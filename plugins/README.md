@@ -13,6 +13,10 @@ Full type + system logic: [`lib/plugins.ts`](../lib/plugins.ts) (`PluginDef`, `e
 | `countryside-crm.mjs` | `countryside_crm` — client CRM | first-party, client case study | **DB-seeded** — a data file loaded into `plugin_defs` via the seed script |
 | `auth-kit.mjs` | `auth_kit` — DIY user management | first-party, credential-free by design | **DB-seeded** — `node --env-file=.env scripts/seed-auth-kit-plugin.mjs` |
 | `notification-kit.mjs` | `notification_kit` — in-app notifications | first-party, pairs with auth_kit | **DB-seeded** — `node --env-file=.env scripts/seed-notification-kit-plugin.mjs` |
+| `booking.mjs` | `booking` — no-double-book slots | wave-1 BASE (provides: booking) | **DB-seeded** — `node --env-file=.env scripts/seed-base-plugins.mjs` |
+| `waitlist.mjs` | `waitlist` — signups → invites | wave-1 BASE (provides: waitlist) | **DB-seeded** — same script |
+| `feedback-wall.mjs` | `feedback_wall` — user feedback triage | wave-1 BASE (provides: feedback_wall) | **DB-seeded** — same script |
+| `media-gallery.mjs` | `media_gallery` — publishable albums | wave-1 BASE (provides: media_gallery) | **DB-seeded** — same script |
 
 ## Two delivery mechanisms
 

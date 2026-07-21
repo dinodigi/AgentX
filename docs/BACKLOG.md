@@ -132,7 +132,8 @@ payment-mode only — that's BILL-1.*
 | AUTO-1 | **Declarative scheduled data mutations** — `define_schedule` is actions-only (webhook/email); a constrained bulk-transition rule (cron + where + transition + stamp field) would let flows like the CRM recycle sweep self-host instead of depending on an external agent being alive. Triage Track C. | 📥 Backlog | M | wall |
 | EMAIL-1 | **Email template management layer** — the styled HTML engine shipped (`8cbdf30`); the builder/library/admin form for managing templates did not. | 📥 Backlog | M | design |
 | FEED-1 | **Feedback issues layer** (canonical issues + auto-attach dedup + smart `send_feedback` replies + ranked board) — designed, board mockup agreed. **ON HOLD by decision 2026-07-19: run the wall manually first.** Revisit when the same item arrives from 3+ projects or manual triage becomes ritual. | 🅿️ Parked | M | design |
-| FEED-2 | **Client-facing feedback plugin** — a per-project feedback wall for a tenant's OWN end users (mirror of our internal loop). Explicitly requested as backlog, second priority. | 📥 Backlog | M | design |
+| FEED-2 | **Client-facing feedback plugin** | ✅ Shipped 2026-07-21 | — | design |
+| | *Shipped as the `feedback_wall` wave-1 base (Plugin Bases Plan Track D): public intake, our own triage pipeline, server-owned statuses, report recipes.* | | | |
 
 ---
 

@@ -81,7 +81,10 @@ a second expendable poke surface.
 - Tests: briefing shape; drift appears after catalog bump; notice appears
   once and clears after being seen.
 
-### Track D — wave-1 bases + the poke project — ⬜
+### Track D — wave-1 bases + the poke project — ✅ bases shipped 2026-07-21
+> (booking/waitlist/feedback_wall/media_gallery seeded global, all four
+> proven enabling together conflict-free; the POKE PROJECT itself is the
+> operator's move — Phase 1 code is COMPLETE, the maturation loop begins)
 - Extract/new bases, seeded global with `provides`/`requires` from birth:
   - `booking` (extract from countryside — slots + no-double-book)
   - `waitlist` (generalize our marketing intake)

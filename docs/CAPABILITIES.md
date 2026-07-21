@@ -227,9 +227,15 @@ Cloudflare edge cache; public status page linked in the site footer).
   pref rows), and workflow-governed broadcast announcements (draft → published,
   publish gated to mcp/admin). Realtime rides the changes feed/SSE — the
   platform's own realtime surface is the push channel.
-- **Store**: per-project Plugins tab (enable/disable, price chips); operator
-  console manages fleet activation + display pricing (`pluginOverrides`).
-  Billing enforcement deliberately not wired yet.
+- **Wave-1 bases** (each owns ONE capability, born with `provides`):
+  `booking` (no-double-book slots + AUTO-1 hold expiry), `waitlist` (public
+  signups → uuid invites), `feedback_wall` (client-facing feedback triage —
+  the FEED-2 mirror of our own wall), `media_gallery` (publishable albums,
+  publicFilter-gated, seeded via upload-by-URL). All four enable together
+  conflict-free. Full base ideation: PLUGIN-BASE-CATALOG.md.
+- **Store**: per-project Plugins tab (enable/disable, price chips, capability
+  badges); operator console manages fleet activation + display pricing
+  (`pluginOverrides`). Billing enforcement deliberately not wired yet.
 
 ## 11. Safety, observability, portability
 
