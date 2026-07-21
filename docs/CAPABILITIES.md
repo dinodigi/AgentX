@@ -136,6 +136,13 @@ Cloudflare edge cache; public status page linked in the site footer).
   interpolation, delivery log + re-fire; delayed actions (`after: "3d"`).
 - **Jobs runner**: pg queue, `FOR UPDATE SKIP LOCKED` claim, drained by Render
   cron. **Recurring schedules**: UTC, CAS-advanced ticks.
+- **Declarative scheduled mutations** (AUTO-1): a schedule action of
+  `type: "mutate"` — where-select (relative `{daysAgo}` cutoffs resolved per
+  tick) → CAS guard at write (changed rows skipped, never stomped) →
+  workflow transition (mcp actor) + field stamps (closed vocabulary:
+  now / null / literal / copyFrom). 200 rows/tick bound; audit rows carry the
+  schedule name; idempotent re-runs. The CRM recycle sweep now self-hosts —
+  no external compute required.
 - **Declarative state machines**: `collections.workflow` — enum transitions
   with actor gates + per-transition actions, enforced at the entries choke
   point on every write path; dropping a workflow on redefine requires

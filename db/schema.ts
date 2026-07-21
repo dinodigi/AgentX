@@ -630,7 +630,9 @@ export type AuditActor =
   // explicitWorkflowState: the migration escape hatch was used on this create
   // (feedback #12) — entries were loaded at explicit workflow states instead of
   // `initial`. Stamped by the MCP tool layer so imports are audit-traceable.
-  | { type: "mcp"; explicitWorkflowState?: true }
+  // schedule: this mutation was performed by a declarative scheduled mutation
+  // (AUTO-1) — the value is the schedule's name, so sweeps are audit-traceable.
+  | { type: "mcp"; explicitWorkflowState?: true; schedule?: string }
   | { type: "admin"; userId?: string }
   | { type: "delivery"; userSub?: string }
   | { type: "inbound" } // 2b: an inbound-email → collection route (trusted, secret-gated)
@@ -802,11 +804,49 @@ export interface ScheduleRecurrence {
   timezone?: string;
 }
 
-/** A schedule's action — the same webhook/email vocabulary as entry events,
- * but without `when`/`after` (there is no entry to evaluate against). */
+/** Relative time markers resolve at TICK time — a sweep's cutoff must move
+ * with the clock, never be a stale literal. */
+export type MutateClauseValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | { daysAgo: number }
+  | { hoursAgo: number };
+export interface MutateClause {
+  field: string;
+  op: string; // the query WHERE_OPS vocabulary, validated at run through queryEntries
+  value: MutateClauseValue;
+}
+/** The closed `set` vocabulary (AUTO-1) — deliberately tiny, no arithmetic,
+ * no branching: stamp now, set a literal, unset, or copy a sibling field
+ * (the sweep's previous_owner = owner). This is the seed of the plugin-verbs
+ * vocabulary; growth happens by DECISION, not drift. */
+export type MutateSet =
+  | "now"
+  | null
+  | { value: string | number | boolean }
+  | { copyFrom: string };
+
+/** A schedule's action — the webhook/email vocabulary of entry events, plus
+ * AUTO-1's declarative data mutation (Plugin Bases Plan, Track B). */
 export type ScheduleAction =
   | { type: "webhook"; url: string }
-  | { type: "email"; to: string; subject: string; html?: string };
+  | { type: "email"; to: string; subject: string; html?: string }
+  | {
+      type: "mutate";
+      collection: string;
+      /** Row selection (≥1 clause — no blind full-collection sweeps). */
+      where: MutateClause[];
+      /** Atomic re-check at WRITE time (CAS): a row that changed between the
+       * query and the write is skipped, never stomped. Defaults to `where`. */
+      guard?: MutateClause[];
+      /** Workflow move to this target (the collection's workflow field is
+       * implied); rides the same transition validation as any update. */
+      transition?: { to: string };
+      /** Field stamps applied with the transition (see MutateSet). */
+      set?: Record<string, MutateSet>;
+    };
 
 /**
  * Recurring schedules (G3), ticked by the drain endpoint: due rows CAS-advance

@@ -10,6 +10,9 @@ import {
 } from "@/db/schema";
 import { enqueueJob } from "./jobs";
 import { getConnector } from "./connectors";
+import { getCollection } from "./collections";
+import { WHERE_OPS } from "./query";
+import { allowedFroms, isTransitionTarget } from "./workflow";
 import { ValidationError } from "./validation";
 
 /**
@@ -72,6 +75,77 @@ export function computeNextRun(r: ScheduleRecurrence, from: Date): Date {
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
+/** AUTO-1 hard caps — a sweep is surgical, never a bulldozer. */
+export const MUTATE_MAX_CLAUSES = 8;
+export const MUTATE_MAX_SET_FIELDS = 10;
+export const MUTATE_MAX_ROWS_PER_TICK = 200;
+
+/**
+ * Define-time validation for the declarative mutation action (AUTO-1). The
+ * vocabulary is CLOSED on purpose — no arithmetic, no branching, no free
+ * expressions. What can't be validated here (op/value fit) fails safely at
+ * run through the same query/update validation every write uses.
+ */
+async function validateMutateAction(
+  projectId: string,
+  a: Extract<ScheduleAction, { type: "mutate" }>,
+): Promise<void> {
+  const bad = (m: string): never => {
+    throw new ValidationError(`schedule mutate: ${m}`);
+  };
+  const collection = await getCollection(projectId, a.collection);
+  if (!collection) bad(`unknown collection "${a.collection}" — create it first`);
+  const fieldNames = new Set(collection!.fields.map((f) => f.name));
+
+  if (!Array.isArray(a.where) || a.where.length === 0) {
+    bad("`where` needs at least one clause — a sweep must SELECT rows, never mutate a whole collection blind");
+  }
+  if (a.where.length > MUTATE_MAX_CLAUSES || (a.guard?.length ?? 0) > MUTATE_MAX_CLAUSES) {
+    bad(`at most ${MUTATE_MAX_CLAUSES} clauses in where/guard`);
+  }
+  for (const c of [...a.where, ...(a.guard ?? [])]) {
+    if (!c || typeof c.field !== "string" || !fieldNames.has(c.field)) {
+      bad(`clause field "${c?.field}" is not a field of "${a.collection}"`);
+    }
+    if (!(WHERE_OPS as readonly string[]).includes(c.op)) {
+      bad(`clause op "${c.op}" — allowed: ${WHERE_OPS.join(", ")}`);
+    }
+  }
+
+  const setEntries = Object.entries(a.set ?? {});
+  if (!a.transition && setEntries.length === 0) bad("declare at least one of `transition` or `set`");
+  if (setEntries.length > MUTATE_MAX_SET_FIELDS) bad(`at most ${MUTATE_MAX_SET_FIELDS} set fields`);
+
+  const wf = collection!.workflow;
+  if (a.transition) {
+    if (!wf) bad(`"${a.collection}" has no workflow — transition needs one (or use set)`);
+    if (typeof a.transition.to !== "string" || !isTransitionTarget(wf!, a.transition.to)) {
+      bad(`"${a.transition?.to}" is not a transition target of "${a.collection}"'s workflow`);
+    }
+    if (allowedFroms(wf!, a.transition.to, "mcp").length === 0) {
+      bad(`no mcp-actor transition reaches "${a.transition.to}" — scheduled mutations move workflows as the mcp actor`);
+    }
+  }
+  for (const [field, spec] of setEntries) {
+    if (!fieldNames.has(field)) bad(`set field "${field}" is not a field of "${a.collection}"`);
+    if (wf && field === wf.field) bad(`set must not touch the workflow field "${field}" — use transition`);
+    const def = collection!.fields.find((f) => f.name === field)!;
+    if (def.computed) bad(`set field "${field}" is computed (server-stamped) — it cannot be set`);
+    const okShape =
+      spec === "now" ||
+      spec === null ||
+      (typeof spec === "object" &&
+        spec !== null &&
+        (("value" in spec && ["string", "number", "boolean"].includes(typeof spec.value)) ||
+          ("copyFrom" in spec && typeof spec.copyFrom === "string" && fieldNames.has(spec.copyFrom))));
+    if (!okShape) {
+      bad(
+        `set.${field} must be "now", null (unset), {value: <literal>}, or {copyFrom: "<existing field>"} — the vocabulary is closed`,
+      );
+    }
+  }
+}
+
 export interface DefineScheduleInput {
   name: string;
   recurrence: ScheduleRecurrence;
@@ -106,8 +180,10 @@ export async function defineSchedule(
         "E_CONNECTOR_REQUIRED",
       );
     }
+  } else if (a.type === "mutate") {
+    await validateMutateAction(projectId, a);
   } else {
-    throw new ValidationError('schedule: action type must be "webhook" or "email"');
+    throw new ValidationError('schedule: action type must be "webhook", "email", or "mutate"');
   }
   const recurrence = recurrenceSchema.parse(input.recurrence);
 

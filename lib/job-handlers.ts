@@ -1,10 +1,20 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { tenantDb } from "./data-plane";
-import { collections, entries, projectSchedules, type EventAction, type ScheduleAction } from "@/db/schema";
+import {
+  collections,
+  entries,
+  projectSchedules,
+  type EventAction,
+  type MutateClause,
+  type ScheduleAction,
+} from "@/db/schema";
 import { actionHash, dispatchEmail, runEventAction, escapeHtml, htmlToText, type EntryEvent } from "./events";
 import { deliverWebhook } from "./webhook";
-import { matchesClauses } from "./query";
+import { matchesClauses, type WhereItem } from "./query";
+import { getCollection } from "./collections";
+import { queryEntries, updateEntryIf } from "./entries";
+import { MUTATE_MAX_ROWS_PER_TICK } from "./schedules";
 import type { JobHandlers } from "./jobs";
 
 /**
@@ -107,6 +117,63 @@ export const HANDLERS: JobHandlers = {
         event: "schedule.fired",
         payload,
       });
+    } else if (s.action.type === "mutate") {
+      // AUTO-1 (Plugin Bases Plan, Track B): the declarative sweep. Rows are
+      // selected by `where` (relative times resolved NOW), then each write is
+      // a CAS through updateEntryIf — the guard clauses re-checked atomically,
+      // so a row that changed since the query is SKIPPED, never stomped.
+      // Transitions ride the normal workflow validation (mcp actor); the
+      // audit actor carries the schedule's name. Bounded per tick; the next
+      // tick continues — a sweep is a stream, not a bomb.
+      const a = s.action;
+      const collection = await getCollection(job.projectId, a.collection);
+      if (!collection) return; // collection deleted since — skip-as-succeeded
+      const resolveClauses = (cs: MutateClause[]): WhereItem[] =>
+        cs.map((c) => {
+          let value = c.value;
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            const hours = "daysAgo" in value ? value.daysAgo * 24 : value.hoursAgo;
+            value = new Date(Date.now() - hours * 3_600_000).toISOString();
+          }
+          return { field: c.field, op: c.op, value } as WhereItem;
+        });
+      const where = resolveClauses(a.where);
+      const guards = resolveClauses(a.guard ?? a.where);
+      const rows = await queryEntries(collection, { where, limit: MUTATE_MAX_ROWS_PER_TICK });
+      let applied = 0;
+      let skipped = 0;
+      for (const row of rows) {
+        const patch: Record<string, unknown> = {};
+        for (const [field, spec] of Object.entries(a.set ?? {})) {
+          if (spec === "now") patch[field] = new Date().toISOString();
+          else if (spec === null) patch[field] = null;
+          else if ("value" in spec) patch[field] = spec.value;
+          else {
+            const src = (row.data as Record<string, unknown>)[spec.copyFrom];
+            if (src !== undefined) patch[field] = src; // absent source: skip the stamp, never unset
+          }
+        }
+        if (a.transition && collection.workflow) {
+          if (row.data[collection.workflow.field] === a.transition.to) {
+            skipped++;
+            continue; // already at the target — idempotent re-run
+          }
+          patch[collection.workflow.field] = a.transition.to;
+        }
+        if (Object.keys(patch).length === 0) {
+          skipped++;
+          continue;
+        }
+        const r = await updateEntryIf(job.projectId, collection, row.id, {
+          if: guards,
+          data: patch,
+          actor: { type: "mcp", schedule: s.name },
+        });
+        if (r.ok) applied++;
+        else skipped++; // guard no longer holds / concurrent change — correct skip
+      }
+      void applied;
+      void skipped;
     } else {
       // {{name}} / {{scheduledFor}} interpolation for schedule emails.
       const val = (k: string) => (k === "name" ? s.name : k === "scheduledFor" ? p.scheduledFor : "");

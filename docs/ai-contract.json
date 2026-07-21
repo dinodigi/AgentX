@@ -2134,7 +2134,7 @@
     },
     {
       "name": "define_schedule",
-      "description": "Create or update (upsert by name) a recurring schedule that fires a webhook or email — presets only, no cron strings. recurrence: {frequency: hourly|daily|weekly|monthly, at: 'HH:MM' (24h UTC; not for hourly — hourly fires at the top of each hour), weekday (weekly), dayOfMonth 1-28 (monthly; capped so every month has the day)}. UTC-only for now. action: {type:'webhook',url} | {type:'email',to,subject,html?} — the same vocabulary as events but WITHOUT when/after (the recurrence is the timing; email supports {{name}}/{{scheduledFor}}). Fires are at-least-once (receivers must dedupe) and may run up to a minute late; a missed window fires once, never backfills. enabled:false pauses the schedule AND skips its already-queued fires. Outcomes land in get_deliveries as schedule.fired; pending fires show in list_jobs.",
+      "description": "Create or update (upsert by name) a recurring schedule that fires a webhook, an email, or a DECLARATIVE DATA MUTATION — presets only, no cron strings. recurrence: {frequency: hourly|daily|weekly|monthly, at: 'HH:MM' (24h UTC; not for hourly), weekday (weekly), dayOfMonth 1-28 (monthly)}. UTC-only for now. action: {type:'webhook',url} | {type:'email',to,subject,html?} | {type:'mutate', collection, where:[{field,op,value}], guard?:[...], transition?:{to}, set?:{field: spec}} — the sweep that used to need external compute. MUTATE semantics (closed vocabulary, no arithmetic/branching): `where` selects rows (≥1 clause; value may be a RELATIVE time {daysAgo:n}|{hoursAgo:n}, resolved at each tick); `guard` re-checks atomically at write time (CAS — changed rows are skipped, never stomped; defaults to where); `transition.to` moves the collection's workflow (validated as the mcp actor); `set` stamps fields: \"now\" | null (unset) | {value:<literal>} | {copyFrom:'<field>'} (e.g. previous_owner={copyFrom:'owner'}). Bounded to 200 rows per tick — the next tick continues. Audit rows carry the schedule name. Fires are at-least-once and idempotent (already-at-target rows skip); a missed window fires once, never backfills. enabled:false pauses AND skips queued fires. Webhook/email outcomes land in get_deliveries; pending fires in list_jobs.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -2186,7 +2186,7 @@
           },
           "action": {
             "type": "object",
-            "description": "{type:'webhook',url} | {type:'email',to,subject,html?}"
+            "description": "{type:'webhook',url} | {type:'email',to,subject,html?} | {type:'mutate', collection, where:[{field,op,value|{daysAgo}|{hoursAgo}}], guard?, transition?:{to}, set?:{field: \"now\"|null|{value}|{copyFrom}}}"
           },
           "enabled": {
             "type": "boolean",

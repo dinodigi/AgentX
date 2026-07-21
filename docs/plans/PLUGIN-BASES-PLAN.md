@@ -55,7 +55,9 @@ a second expendable poke surface.
 - NOTE: `includes`/notes/delta layering is **Phase 2** — nothing blueprint-
   shaped ships in this track.
 
-### Track B — AUTO-1: declarative scheduled mutations — ⬜
+### Track B — AUTO-1: declarative scheduled mutations — ✅ shipped 2026-07-21
+> (vocabulary gained {copyFrom} + relative {daysAgo|hoursAgo} — the real sweep
+> demanded both; countryside v1.2.1 guidance now defines the self-hosting sweep)
 - `define_schedule` gains a constrained DATA action: `{where[], guard[],
   transition?, set?{field: now|value}}` executed by the jobs drain — the
   countryside recycle sweep self-hosts (two wall demand signals).

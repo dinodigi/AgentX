@@ -13,7 +13,7 @@
  */
 export const COUNTRYSIDE_PLUGIN = {
   id: "countryside_crm",
-  version: "1.2.0",
+  version: "1.2.1",
   // Interim monolith honesty (pre-blueprint): it genuinely owns all three
   // capabilities today, so NEW projects get the contact_forms-vs-CRM tiebreaker
   // the wall asked for. The Phase 2 blueprint dissolves this into includes.
@@ -154,10 +154,13 @@ export const COUNTRYSIDE_PLUGIN = {
     "You are the queue-worker for a land-tour CRM (next-best-action loop, doc §7). CONVENTIONS: " +
     "PROTECTION = leads.owner set (a rep RELATION); UNPROTECTED QUEUE = query_entries leads where " +
     "[{field:'owner',op:'exists',value:false}] (optionally + ranch_code) — this replaces the 3.1k " +
-    "dead pile. ASSIGN = set owner (a reps id) + status new→left_message as you work. RECYCLE SWEEP (run " +
-    "daily, YOU are the job): query leads where last_kit_at lt <30 days ago> (or " +
-    "last_activity_at stale) and status in [left_message,kit] → for each: set previous_owner = " +
-    "owner (copy the rep id), clear owner (null), transition status→unprotected. SEARCH leads by " +
+    "dead pile. ASSIGN = set owner (a reps id) + status new→left_message as you work. RECYCLE SWEEP " +
+    "(SELF-HOSTING — define ONCE, the platform runs it nightly; no external compute): " +
+    "define_schedule {name:'recycle-sweep', recurrence:{frequency:'daily',at:'03:00'}, action:" +
+    "{type:'mutate', collection:'leads', where:[{field:'last_kit_at',op:'lt',value:{daysAgo:30}}," +
+    "{field:'status',op:'in',value:['left_message','kit']}], transition:{to:'unprotected'}, " +
+    "set:{previous_owner:{copyFrom:'owner'}, owner:null}}} — stale leads lose protection and return " +
+    "to the queue automatically; audit rows carry the schedule name. SEARCH leads by " +
     "name/email/phone via search_entries. KIT CADENCE: logging a KIT = create " +
     "an activities row {type:'kit'} + set leads.last_kit_at/last_activity_at = now + status→kit. " +
     "APPOINTMENTS: create appointments {rep, tour_date, slot} — a duplicate rep+date+slot is " +

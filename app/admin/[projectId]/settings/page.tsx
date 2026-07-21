@@ -261,7 +261,11 @@ export default async function SettingsPage({
                           {s.recurrence.dayOfMonth ? ` (day ${s.recurrence.dayOfMonth})` : ""}
                         </td>
                         <td className="px-3 py-2.5 font-mono text-xs text-ink-mute">
-                          {s.action.type === "webhook" ? "webhook" : `email:${s.action.to}`}
+                          {s.action.type === "webhook"
+                            ? "webhook"
+                            : s.action.type === "mutate"
+                              ? `mutate:${s.action.collection}`
+                              : `email:${s.action.to}`}
                         </td>
                         <td className="px-3 py-2.5 text-xs text-ink-mute">
                           {s.enabled
