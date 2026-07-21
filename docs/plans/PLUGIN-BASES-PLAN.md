@@ -24,6 +24,12 @@ already live-update from the catalog — only structure snapshots.
 project that enables everything and pokes; blueprints are **Phase 2,
 deferred** until bases stabilize. XVibe is parked and carries no weight here.
 
+**Constraint removed (operator, 2026-07-21):** CSLP is a TEST project — no
+migration/compat obligation to its applied state, ever. Ignore its drift;
+countryside catalog refactors can be aggressive; the real client engagement
+gets a FRESH apply (of the Phase 2 blueprint, most likely). CSLP doubles as
+a second expendable poke surface.
+
 ## Phase 1 — bases that compose, self-maintain, and get poked (NOW)
 
 ### Track A — composition core (bases only) — ⬜
@@ -83,9 +89,9 @@ deferred** until bases stabilize. XVibe is parked and carries no weight here.
 Trigger: wave-1 bases stable in the poke project (no wall friction across a
 full poke pass) AND the operator calls it. Scope when it opens: `includes` +
 extension notes (declared deltas, additive-first, overrides flagged) +
-provenance + conflict lister on base updates + **countryside_crm refactored
-into the first blueprint** (catalog-side; applied projects untouched, told
-via drift notice).
+provenance + conflict lister on base updates + **countryside_crm rebuilt as
+the first blueprint** — aggressively, with no compatibility choreography
+(CSLP is a test bed; the real client gets a fresh apply of the blueprint).
 
 ## Later / adjacent (tracked elsewhere)
 
