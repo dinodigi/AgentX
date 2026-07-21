@@ -29,30 +29,64 @@
   keyword `"ok"` is absent from a degraded body). A genuinely hung process
   still restarts — no response at all trips Render's timeout.
   *Test:* simulate DB-down and assert 200 + degraded body + no `"ok"`.
-- ⬜ **OPS-4 — dedicated test database.** Point the smoke suite at its own Neon
-  project so test runs can never exhaust or bill production's compute.
+  ✅ **Nothing is pinned to 503.** `55-health.test.mjs` asserts only the happy
+  path (200/ok), which is unchanged. **One doc must be updated with the code:**
+  `runbooks/STATUS-PAGE-SETUP.md:7` currently documents the 503 behavior.
+- ⬜ **OPS-4 — dedicated test database.** ⚠️ **Bigger than "point the helpers at
+  it" — audit found a split-brain risk.** The app reads `DATABASE_URL` in
+  `db/index.ts:5` and `data-plane.ts:231`; the smoke helpers read the SAME var
+  (`helpers.mjs:11`); and the suite reaches the app over HTTP via `SMOKE_BASE`,
+  so **the app is a separate process with its own environment**. Changing only
+  the helpers would have them writing to the test DB while the server still
+  read production. The whole stack must share one test env:
+  a `.env.test` holding the test `DATABASE_URL`, the **dev server started with
+  it**, and the smoke runner using the same file.
+  **Boundary to document:** `SMOKE_BASE=https://pluggie.app` (prod smoke) still
+  hits production's DB by definition — a test DB cannot change that, so prod
+  smoke runs stay deliberate and rare.
   **⚑ Needs the operator:** create one Neon project and hand over its
-  connection string; I do the env/CI plumbing and update the runbook.
+  connection string.
 - ⬜ **Purge orphaned test projects.** 178 planless `smoke-*` projects survived
   failed/interrupted suites. Harmless to cost (control DB is 41 MB) but they
-  clutter the fleet view. Purge safely, then fix the leak: ephemeral cleanup
-  must survive a failing suite.
+  clutter the fleet view. Then fix the leak: ephemeral cleanup must survive a
+  failing suite.
+  ✅ **Audit says this is safe:** **0 of the 178 hold `neon`/`r2` connectors**,
+  so no cloud resources would be orphaned by deleting rows. They own 244
+  entries, which cascade — 21 project-child FKs, all `CASCADE` except
+  `platform_events` and `platform_feedback`, both `SET NULL` **by design** so
+  the audit trail and the feedback wall outlive their project.
 
 ## Track 2 — Close the agent loop (the Codex findings)
 
 - ⬜ **TOK-1 — mint/rotate delivery tokens over MCP.** Two independent reports.
   The sharp version: `get_client_code` generates a frontend client requiring a
   delivery token that no MCP tool can produce — the platform hands out code it
-  won't let you run. Privilege-DOWNWARD (MCP is already the master credential),
-  so safe in principle; audit-stamp mints like the import escape hatch.
-  *Test:* mint → the token works on delivery and is refused on MCP; audit row
-  carries the actor; rotation invalidates the old one.
+  won't let you run.
+  ⚠️ **Security correction from the audit.** `mintToken`
+  (`settings/actions.ts:102`) takes `scope: "mcp" | "delivery"` and **defaults
+  to `"mcp"`**. Exposed naively, an MCP token could mint MORE MCP tokens —
+  privilege-LATERAL, not downward, and it would defeat revocation (revoke one,
+  the holder mints three more). **The MCP path must hard-restrict to
+  `scope: "delivery"` and refuse anything else.** With that, "privilege
+  downward" holds.
+  Also: `mintToken` is gated on `requireOperator` → `getProjectRole`, which
+  resolves a **Clerk session**. MCP has none, so this cannot be reused
+  directly — the tool needs its own path authorized by the MCP token itself.
+  *Test:* mint → works on delivery, refused on MCP; **minting an mcp-scope
+  token over MCP is refused**; audit row carries the actor; revoke invalidates.
 - ⬜ **PLUG-3 — `enabled` ≠ `applied`.** `list_plugins` gains an applied-state
   (`none` / `partial` / `full`, computed by checking baseline collection names
   against the project) plus an explicit `nextAction`. Also closes a Track C
   hole: we stamp the enabled VERSION but never whether the structure landed, so
   a never-applied plugin is indistinguishable from a fully-applied one in the
   session briefing.
+  ⚠️ **Must read FRESH.** `listCollections` is cached (`collections.ts:46`,
+  15s TTL) and its own comment records a live incident: *"a confirmed retype
+  looked unapplied because the OTHER instance kept serving the old schema."*
+  Computing applied-state from that cache could tell an agent "not applied"
+  about a baseline it just applied — sending it to re-apply and trip the
+  destructive-change gate, which is **worse than the confusion we're fixing**.
+  Same standing rule as every other correctness read.
 
 ## Track 3 — Clear the Stallion four
 
