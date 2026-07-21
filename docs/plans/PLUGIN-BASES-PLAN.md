@@ -39,6 +39,13 @@ a second expendable poke surface.
   second provider names the conflict and requires an explicit swap. Enabling
   a plugin with unmet `requires` names what's missing (or auto-enables it —
   decide during build; lean auto-enable with a note in the response).
+- **Grandfather rule (binding):** enforcement applies to NEW enable actions
+  only. Existing enablements are never retroactively disabled or blocked
+  (CSLP runs contact_forms + countryside today — stays exactly as is; at
+  most a briefing note). Applied project state is NEVER touched by catalog
+  changes — defs are recipes, projects are the baked result; only an
+  explicit re-apply through the reconcile gates changes a project. Test:
+  a pre-existing double-provider project keeps both active and functional.
 - Store + `list_plugins` surface capability + requires; conflicts explained
   in the response, not discovered via 401s.
 - Annotate the five existing defs (identity, notify, lead_capture, seo,
