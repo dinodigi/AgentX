@@ -40,6 +40,17 @@ services:
       - fromGroup: agentx-shared # CRON_SECRET
       - key: NODE_VERSION
         value: "22"
+      # Pins EVERY caller-facing URL (MCP endpoint, deliveryBase in
+      # get_project_info, the generated client's DEFAULT_BASE_URL, Stripe
+      # webhook registration) to the canonical origin. Without it,
+      # originFromHeaders falls back to x-forwarded-host — and any EXTRA proxy
+      # hop between the caller and us injects ITS host: Replit's MCP
+      # infrastructure stamps connectors.replit.com, which shipped inside a
+      # generated client and 404'd a field agent's every delivery call for
+      # three sessions (Codex 07-21→07-23). Header derivation stays as the
+      # dev fallback (localhost has no proxy); production must always pin.
+      - key: APP_URL
+        value: https://pluggie.app
       # Static, non-secret — safe to keep in the Blueprint.
       - key: NEXT_PUBLIC_CLERK_SIGN_IN_URL
         value: /sign-in

@@ -34,6 +34,26 @@ by the reporter** (already-fixed, wrong-cause, or self-inflicted) — but every
 one pointed at real friction. Reports are symptoms; verify, then fix the
 system that produced the symptom.
 
+### ⚠️ CORRECTION (2026-07-23, verifyConnection field run) — verdicts #4/#5 REVERSED
+
+The C2 self-test, run live in the reporter's own Replit workspace, printed the
+true cause: the generated client shipped
+`DEFAULT_BASE_URL = https://connectors.replit.com/api/v1` — **Replit's MCP
+proxy**, not the platform. Mechanism: `publicOrigin` trusts `x-forwarded-host`
+when `APP_URL` is unset, and Replit's MCP proxy injects ITS host into that
+header; `APP_URL` was in neither `.env` nor `render.yaml` (the memory note
+"APP_URL pins MCP origin" recorded the intent; the var never reached Render).
+So the agent's app faithfully used the client we generated — **the platform
+was at fault**, my "requests never reached us, wrong base URL on their side"
+verdict was RIGHT about the symptom and WRONG about the blame, and report #5
+("documented base URL does not match the live host") was **correct**. Every
+caller-facing URL (deliveryBase, admin URL, changes feed) served through a
+Replit-proxied MCP session had the same poison.
+**Fix:** `APP_URL=https://pluggie.app` added to `render.yaml` (⚑ operator must
+re-sync the Blueprint for env changes to apply); header derivation remains the
+dev-only fallback. Diagnosed BY the C2 tool this sprint built — the fix for
+the misdiagnosis found the misdiagnosis.
+
 ## Track A — turn OFF the staleness class for agents (~half day)
 
 The class has now bitten: retype-looked-unapplied (recorded in code), PLUG-3
