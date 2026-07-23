@@ -2313,7 +2313,7 @@ Dry-run a collection's before-write hook against sample data WITHOUT writing any
 
 ## `mint_delivery_token`
 
-Mint a NEW delivery-scoped token for this project — the credential the generated client (get_client_code) and every delivery-API call needs. Returns the raw token ONCE; the platform stores only a hash, so save it immediately. HANDLING: the token belongs server-side ONLY — an env var the server reads (e.g. AGENTX_DELIVERY_TOKEN), never a NEXT_PUBLIC_*/client-bundled variable, never committed to the repo, never pasted into chat or logs. Anyone holding it can read all public content and write to publicWrite collections. Scope is fixed: this tool can ONLY create delivery tokens (never mcp). Mints are audit-logged and tied to the minting token — revoking that token also revokes everything it minted. If you leak one: revoke_delivery_token, then mint a replacement.
+Mint a NEW delivery-scoped token for this project — the credential the generated client (get_client_code) and every delivery-API call needs. Returns the raw token ONCE; the platform stores only a hash, so save it immediately. HANDLING: the token belongs server-side ONLY — an env var the server reads (e.g. AGENTX_DELIVERY_TOKEN), never a NEXT_PUBLIC_*/client-bundled variable, never committed to the repo, never pasted into chat or logs. Anyone holding it can read all public content and write to publicWrite collections. Scope is fixed: this tool can ONLY create delivery tokens (never mcp). Mints are audit-logged and tied to the minting token — revoking that token also revokes everything it minted. If you leak one: revoke_delivery_token, then mint a replacement. AFTER MINTING: prove connectivity BEFORE writing app code — regenerate get_client_code and run `await ax.verifyConnection()` (or curl {deliveryBase}/_health). It pinpoints wrong-base-URL vs bad-token in one call; a 404 storm on your fetches means YOUR app is hitting its own origin with relative paths, not the platform.
 
 **Input schema:**
 
@@ -2359,12 +2359,13 @@ Permanently revoke a delivery token by id (from list_delivery_tokens). Takes eff
   "properties": {
     "tokenId": {
       "type": "string",
-      "description": "the token's id from list_delivery_tokens"
+      "description": "the token's id from list_delivery_tokens (rows carry it as both `tokenId` and `id`)"
+    },
+    "id": {
+      "type": "string",
+      "description": "alias for tokenId — either is accepted"
     }
   },
-  "required": [
-    "tokenId"
-  ],
   "additionalProperties": false
 }
 ```

@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { and, count, desc, eq, isNotNull } from "drizzle-orm";
-import { revalidateTag, unstable_cache } from "next/cache";
+import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { db } from "@/db";
 import { projects, projectTokens } from "@/db/schema";
 
@@ -205,6 +205,10 @@ export async function mintDeliveryTokenViaMcp(
       mintedByTokenId,
     })
     .returning({ id: projectTokens.id });
+  // Console lag (Codex 07-23): the Settings token list is a server component —
+  // without this, a human watching the console misses agent mints until a full
+  // reload. Same convergence-honesty rule as A2, applied to the admin surface.
+  revalidatePath(`/admin/${projectId}/settings`);
   return { ok: true, token: raw, tokenId: row.id };
 }
 
@@ -270,5 +274,6 @@ export async function revokeDeliveryTokenViaMcp(
   // Token→project resolution is cached; drop it so the revoked token dies NOW
   // on this instance (the 5-min TTL is the cross-instance backstop).
   revalidateTag("project-tokens");
+  revalidatePath(`/admin/${projectId}/settings`); // console list converges too
   return { ok: true, cascaded: Number(n) };
 }

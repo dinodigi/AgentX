@@ -1275,7 +1275,11 @@ export const TOOL_DEFS: ToolDef[] = [
       "chat or logs. Anyone holding it can read all public content and write to publicWrite " +
       "collections. Scope is fixed: this tool can ONLY create delivery tokens (never mcp). " +
       "Mints are audit-logged and tied to the minting token — revoking that token also revokes " +
-      "everything it minted. If you leak one: revoke_delivery_token, then mint a replacement.",
+      "everything it minted. If you leak one: revoke_delivery_token, then mint a replacement. " +
+      "AFTER MINTING: prove connectivity BEFORE writing app code — regenerate get_client_code " +
+      "and run `await ax.verifyConnection()` (or curl {deliveryBase}/_health). It pinpoints " +
+      "wrong-base-URL vs bad-token in one call; a 404 storm on your fetches means YOUR app is " +
+      "hitting its own origin with relative paths, not the platform.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1307,9 +1311,9 @@ export const TOOL_DEFS: ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        tokenId: { type: "string", description: "the token's id from list_delivery_tokens" },
+        tokenId: { type: "string", description: "the token's id from list_delivery_tokens (rows carry it as both `tokenId` and `id`)" },
+        id: { type: "string", description: "alias for tokenId — either is accepted" },
       },
-      required: ["tokenId"],
       additionalProperties: false,
     },
   },
@@ -2781,15 +2785,20 @@ export async function callTool(
       }
 
       case "list_delivery_tokens": {
-        return ok(await listDeliveryTokens(projectId));
+        // Field paper cut (Codex 07-23): list emitted `id` while revoke wants
+        // `tokenId` — the agent had to guess the mapping. Emit BOTH, same value.
+        const rows = await listDeliveryTokens(projectId);
+        return ok(rows.map((t: { id: string }) => ({ ...t, tokenId: t.id })));
       }
 
       case "revoke_delivery_token": {
-        const a = rawArgs as { tokenId?: string };
-        if (typeof a?.tokenId !== "string" || !a.tokenId.trim()) {
+        // Accept `tokenId` or `id` — mirror of the list fix above.
+        const a = rawArgs as { tokenId?: string; id?: string };
+        const target = (typeof a?.tokenId === "string" && a.tokenId.trim()) || (typeof a?.id === "string" && a.id.trim()) || "";
+        if (!target) {
           return err("tokenId is required — list_delivery_tokens shows ids", "E_VALIDATION");
         }
-        const res = await revokeDeliveryTokenViaMcp(projectId, a.tokenId.trim());
+        const res = await revokeDeliveryTokenViaMcp(projectId, target);
         if (!res.ok) return err(res.error!, "E_NOT_FOUND");
         const project = await getProject(projectId);
         recordPlatformEvent({
@@ -2797,10 +2806,10 @@ export async function callTool(
           projectName: project?.branding?.displayName ?? "?",
           type: "token_revoke",
           actorEmail: ctx.callerTokenId ? `mcp-token:${ctx.callerTokenId}` : "mcp",
-          note: `delivery token ${a.tokenId.trim()} revoked over MCP${res.cascaded ? ` (+${res.cascaded} minted by it)` : ""}`,
+          note: `delivery token ${target} revoked over MCP${res.cascaded ? ` (+${res.cascaded} minted by it)` : ""}`,
         });
         return ok({
-          revoked: a.tokenId.trim(),
+          revoked: target,
           cascaded: res.cascaded ?? 0,
           project: project?.branding?.displayName ?? projectId, // B2
           note: "takes effect within seconds; anything still sending this token gets 401s",
