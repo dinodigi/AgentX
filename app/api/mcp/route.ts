@@ -3,6 +3,7 @@ import { bearerFrom, resolveToken } from "@/lib/tokens";
 import { rateLimit } from "@/lib/ratelimit";
 import { readBounded, MAX_MCP_BODY_BYTES } from "@/lib/http";
 import { TOOL_DEFS, callTool } from "@/lib/mcp/tools";
+import { ensureToolSurfaceNotice } from "@/lib/tool-surface";
 import { ERROR_CODES } from "@/lib/error-codes";
 import { originFromHeaders } from "@/lib/origin";
 
@@ -151,6 +152,9 @@ export async function POST(req: NextRequest) {
       const name = msg.params?.name as string;
       const args = msg.params?.arguments ?? {};
       if (!name) return rpcError(msg.id, -32602, "missing tool name");
+      // B1: once per instance, detect a deploy-time tool-surface change and
+      // author the platform notice live sessions read via get_project_info.
+      ensureToolSurfaceNotice(TOOL_DEFS.map((t) => t.name));
       const toolResult = await callTool(projectId, name, args, {
         baseUrl: publicOrigin(req),
         // TOK-1: mint parentage — which token performed this call.

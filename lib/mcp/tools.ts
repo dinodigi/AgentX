@@ -2,8 +2,8 @@ import { z } from "zod";
 import { accessSchema } from "@/lib/access-rules";
 import { FIELD_TYPE_SPECS, COMMON_FIELD_CONFIG } from "@/lib/field-types";
 import {
-  getCollection,
-  listCollections,
+  getCollectionFresh,
+  listCollectionsFresh,
   listCollectionNamesFresh,
   defineCollection,
   planDeleteCollection,
@@ -1680,7 +1680,11 @@ function err(message: string, code: ErrorCode, issues?: ConstraintIssue[]): Tool
 }
 
 async function mustCollection(projectId: string, name: string) {
-  const c = await getCollection(projectId, name);
+  // FRESH by design (friction sprint A1): every MCP tool that resolves a
+  // collection resolves it from the DB, so an agent always reads its own
+  // writes — the 15s cross-instance cache window stays a delivery/admin
+  // concern. This one line is the choke point for 21 tools.
+  const c = await getCollectionFresh(projectId, name);
   if (!c) throw new ValidationError(`collection "${name}" not found`, "E_NOT_FOUND");
   return c;
 }
@@ -2189,11 +2193,18 @@ export async function callTool(
           ...(result.diff ? { changes: result.diff } : {}),
           ...(result.constraintWarnings ? { constraintWarnings: result.constraintWarnings } : {}),
           ...(result.accessNote ? { accessNote: result.accessNote } : {}),
+          // A2 (Codex: "searchable not picked up after redefine" — it WAS
+          // picked up; a cached read elsewhere said otherwise for ≤15s).
+          convergence:
+            "live on this MCP surface immediately; the delivery API and other instances converge within ~15s",
         });
       }
 
       case "list_collections": {
-        const all = await listCollections(projectId);
+        // FRESH (A1): the orientation read agents trust after their own
+        // define/delete — a stale answer here is what "deletion reported
+        // success but the collection remains visible" looked like.
+        const all = await listCollectionsFresh(projectId);
         return ok(
           all.map((c) => ({
             name: c.name,
@@ -2251,7 +2262,15 @@ export async function callTool(
           });
         }
         await deleteCollection(projectId, a.name);
-        return ok({ deleted: a.name, entriesDeleted: plan.entryCount });
+        // A2: YOUR next MCP read is fresh (A1) and will not show this
+        // collection; other surfaces converge within the cache TTL. Saying so
+        // preempts the "success was a lie" misread (Codex field report).
+        return ok({
+          deleted: a.name,
+          entriesDeleted: plan.entryCount,
+          convergence:
+            "gone from this MCP surface immediately; the delivery API, admin, and other instances converge within ~15s",
+        });
       }
 
       case "create_entry": {
@@ -2750,6 +2769,10 @@ export async function callTool(
         return ok({
           token: minted.token,
           tokenId: minted.tokenId,
+          // B2: credential results SELF-IDENTIFY — a session juggling several
+          // projects (or a machine holding several credentials) catches a
+          // wrong-target mint here, at mint time, not later in a console.
+          project: project?.branding?.displayName ?? projectId,
           shownOnce: "this is the ONLY time the token value exists — store it server-side now",
           handling:
             "server-side env var only (e.g. AGENTX_DELIVERY_TOKEN); never NEXT_PUBLIC_*, never " +
@@ -2779,14 +2802,17 @@ export async function callTool(
         return ok({
           revoked: a.tokenId.trim(),
           cascaded: res.cascaded ?? 0,
+          project: project?.branding?.displayName ?? projectId, // B2
           note: "takes effect within seconds; anything still sending this token gets 401s",
         });
       }
 
       case "get_client_code": {
+        // FRESH (A1): the generated client is a schema snapshot — snapshotting
+        // a stale schema right after a define is the worst version of the bug.
         const [project, all] = await Promise.all([
           getProject(projectId),
-          listCollections(projectId),
+          listCollectionsFresh(projectId),
         ]);
         if (!project) return err("project not found", "E_NOT_FOUND");
         if (all.length === 0) {

@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { bearerFrom, resolveDeliveryToken } from "@/lib/tokens";
-import { getCollection, getCollectionFresh } from "@/lib/collections";
+import { getCollection, getCollectionFresh, listCollections } from "@/lib/collections";
 import { rateLimit } from "@/lib/ratelimit";
 import { searchEntriesPage, publicSearchableFields } from "@/lib/search";
 import { preflight } from "@/lib/cors";
@@ -38,7 +38,27 @@ async function resolve(req: NextRequest, name: string) {
   if (!auth.ok) return { error: deliveryError(401, auth.error, undefined, undefined, auth.code) };
   const projectId = auth.projectId;
   const collection = await getCollection(projectId, name);
-  if (!collection) return { error: notFound() };
+  if (!collection) {
+    // C1 (friction sprint): the caller AUTHENTICATED — this is their own
+    // project, so naming its public collections is not enumeration, it is
+    // orientation. Field case (Codex/Replit 2026-07-23): a wrong path shape
+    // produced "404 for every endpoint" and burned the session; one response
+    // that says what DOES exist ends that mystery. Cached read is fine here —
+    // this is a help text, not a correctness gate. Anonymous callers never
+    // reach this branch (401 above).
+    const all = await listCollections(projectId);
+    const publicNames = all.filter((c) => publicFields(c).length > 0).map((c) => c.name);
+    return {
+      error: deliveryError(
+        404,
+        `no collection "${name}" in this project — ` +
+          (publicNames.length
+            ? `its public collections are: ${publicNames.join(", ")}. ` +
+              `Check the path shape: {base}/api/v1/{collection}`
+            : `it has no publicly readable collections yet (publicRead is per-field; set it via define_collection)`),
+      ),
+    };
+  }
   return { projectId, collection };
 }
 

@@ -23,6 +23,9 @@ describe("delivery-token lifecycle over MCP (TOK-1)", () => {
     assert.match(r.value.token, /^agx_/);
     assert.ok(r.value.tokenId);
     assert.match(r.value.handling, /never NEXT_PUBLIC/);
+    // B2 (friction sprint): credential results SELF-IDENTIFY their project —
+    // the wrong-target mint of 07-22 gets caught at mint time, not later.
+    assert.match(r.value.project, /token-lifecycle/, JSON.stringify(r.value.project));
 
     // Usable where delivery tokens belong…
     await mcp(p.mcpToken, "define_collection", {

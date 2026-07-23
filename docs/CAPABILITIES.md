@@ -78,6 +78,12 @@ Cloudflare edge cache; public status page linked in the site footer).
 - **Read→write symmetry**: reads resolve asset/relation values to
   `{id, url|label, …}` objects — writes accept those objects back (coerced to
   the id), so loading an entry and saving it unchanged always round-trips.
+- **Read-your-own-writes (friction sprint A)**: the MCP authoring surface
+  resolves collections FRESH on every call — an agent's own define/delete is
+  visible to its next read immediately, on any instance. Mutation results
+  carry a `convergence` note for the surfaces that still ride the ~15s cache
+  (delivery, admin). Deploy-time tool-surface changes are announced via
+  `briefing.notices` ("re-run tools/list").
 - **Migration escape hatch**: `create_entry`/`bulk_create_entries` accept
   `allowExplicitWorkflowState: true` — historical records import at their real
   workflow states (any declared enum option); use is stamped into the audit

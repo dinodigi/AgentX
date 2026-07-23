@@ -66,6 +66,29 @@ export async function listCollectionNamesFresh(projectId: string): Promise<strin
   return rows.map((r) => r.name);
 }
 
+/**
+ * FRESH full-row reads for the MCP AUTHORING surface (friction sprint, Track A).
+ *
+ * Agents act within seconds of their own mutations, and the 15s cross-instance
+ * cache window has now produced its sixth and seventh field reports (Codex
+ * 2026-07-23: "deletion reports success but the collection remains visible",
+ * "searchable:true not picked up after redefine" — both converge in <1s
+ * single-instance; the reports came from the multi-instance window). On the
+ * authoring surface, read-your-own-writes is CORRECTNESS, not a nicety — a
+ * stale read walks an agent into re-applying or re-deleting through the
+ * destructive-change gate.
+ *
+ * Delivery and admin keep the cached readers above: human-paced, volume-heavy,
+ * and a 15s window is invisible at human speed. Cost here is one indexed
+ * control-DB read per MCP call, bounded by the 300/min surface cap.
+ */
+export async function listCollectionsFresh(projectId: string): Promise<Collection[]> {
+  const rows = await db.select().from(collections).where(eq(collections.projectId, projectId));
+  return rows.map(revive);
+}
+// (getCollectionFresh already exists below — added for the delivery deny-path
+// re-check, an earlier sighting of the same staleness class. A1 reuses it.)
+
 /** Fetch one collection by slug within a project (cached; revalidated on define). */
 export async function getCollection(
   projectId: string,

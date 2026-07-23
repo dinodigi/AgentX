@@ -255,6 +255,12 @@ export function generateClientCode(opts: {
  * user's JWT: call ax.setUserToken(jwt) (sent as X-User-Token).
  * Errors throw AgentXError with the HTTP status, the server's message, and a
  * stable machine code (E_VALIDATION, E_AUTH, E_NOT_FOUND, E_RATE_LIMITED, …).
+ *
+ * FIRST RUN? Call \`await ax.verifyConnection()\` once — it separates
+ * "wrong base URL" from "bad token" from "wrong path shape" in one answer.
+ * Equivalent from a shell:
+ *   curl ${opts.deliveryBase}/_health                      # base URL reachable?
+ *   curl -H "Authorization: Bearer $TOKEN" ${opts.deliveryBase}/${included[0]?.slug ?? "your_collection"}?limit=1
  */
 
 const DEFAULT_BASE_URL = ${JSON.stringify(opts.deliveryBase)};
@@ -343,6 +349,44 @@ export interface ChangeEvent {
     /** Swap the end-user JWT after login/logout. */
     setUserToken(t: string | null) {
       userToken = t;
+    },
+
+    /**
+     * One-call connectivity self-test. Probes the unauthenticated liveness
+     * endpoint first (isolates a wrong base URL), then an authenticated read
+     * (isolates a bad/mis-scoped token). Returns a diagnosis, never throws.
+     */
+    async verifyConnection(): Promise<{ ok: boolean; diagnosis: string }> {
+      try {
+        const live = await fetch(baseUrl + "/_health");
+        if (!live.ok) {
+          return {
+            ok: false,
+            diagnosis:
+              "base URL is wrong: " + baseUrl + "/_health answered HTTP " + live.status +
+              " — the delivery base must be the ABSOLUTE platform URL (not your app's origin), path shape {base}/{collection}",
+          };
+        }
+      } catch (e) {
+        return { ok: false, diagnosis: "cannot reach " + baseUrl + " at all (" + (e instanceof Error ? e.message : String(e)) + ") — check the host and your network" };
+      }
+${
+      included[0]
+        ? `      const res = await fetch(baseUrl + ${JSON.stringify("/" + included[0].slug)} + "?limit=1", {
+        headers: { authorization: "Bearer " + options.token },
+      });`
+        : `      // No collections existed when this client was generated — the liveness
+      // probe above is all we can verify. Regenerate after defining one.
+      return { ok: true, diagnosis: "base URL reachable; no collections to test a token against yet" };
+      // eslint-disable-next-line no-unreachable
+      const res = new Response();`
+    }
+      if (res.ok) return { ok: true, diagnosis: "base URL reachable, token accepted — you are connected" };
+      const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, diagnosis: "base URL is right but the token was rejected (" + (body?.code ?? res.status) + "): " + (body?.error ?? "") };
+      }
+      return { ok: false, diagnosis: "unexpected HTTP " + res.status + " (" + (body?.code ?? "?") + "): " + (body?.error ?? "") };
     },
 
     /**
