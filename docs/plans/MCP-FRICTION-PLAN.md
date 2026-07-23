@@ -49,7 +49,7 @@ verdict was RIGHT about the symptom and WRONG about the blame, and report #5
 ("documented base URL does not match the live host") was **correct**. Every
 caller-facing URL (deliveryBase, admin URL, changes feed) served through a
 Replit-proxied MCP session had the same poison.
-**Fix:** `APP_URL=https://pluggie.app` added to `render.yaml` (⚑ operator must
+**Fix:** `APP_URL=https://pluggie.app` added to `render.yaml` (✅ LIVE 2026-07-23 18:14Z — Blueprint auto-synced on push; verified by spoofed-header probe: connectors.replit.com in x-forwarded-host now yields a pluggie.app base). (Original note: operator must
 re-sync the Blueprint for env changes to apply); header derivation remains the
 dev-only fallback. Diagnosed BY the C2 tool this sprint built — the fix for
 the misdiagnosis found the misdiagnosis.
