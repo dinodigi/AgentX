@@ -207,7 +207,16 @@ describe("mcp surface: error codes", () => {
 
   it("scope rejection carries E_SCOPE; GET exposes the code registry", async () => {
     const r = await mcp(p.deliveryToken, "list_collections", {});
-    assert.ok(!r.ok && /\[E_SCOPE\]/.test(r.errorText), r.errorText);
+    // 6dceefa (dogfood): auth failures are a JSON envelope {error, code}, not
+    // the old bare text — the bracket format this test originally matched died
+    // with that change and the assertion silently rotted for 5 days. Assert
+    // the actual contract: the CODE field, plus the remedy in the message.
+    assert.ok(!r.ok, "a delivery token must not pass MCP auth");
+    assert.match(r.errorText, /^HTTP 401: /, r.errorText);
+    const envelope = JSON.parse(r.errorText.replace(/^HTTP 401: /, ""));
+    assert.equal(envelope.code, "E_SCOPE");
+    assert.match(envelope.error, /delivery-scoped/, "the message names the scope problem");
+    assert.match(envelope.error, /mcp-scoped token/, "the message names the remedy");
 
     const res = await fetch(`${BASE}/api/mcp`);
     const body = await res.json();

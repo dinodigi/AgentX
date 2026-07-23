@@ -22,6 +22,13 @@ const MAX_DIM = 2000;
 /** Max distinct derivatives cached per asset before we refuse new variants. */
 export const DERIVATIVE_BUDGET = 40;
 
+/**
+ * Per-IP transform GENERATIONS per minute. Sized for a first page view of an
+ * image-heavy page (gallery, catalogue) rather than for a single API caller —
+ * see the note at the rate-limit call. Cached derivatives never reach it.
+ */
+export const IMAGE_BURST_PER_IP = 120;
+
 const QUALITY = { webp: 80, jpeg: 82 } as const;
 
 function snapUp(v: number): number {
@@ -134,12 +141,23 @@ export async function ensureDerivative(
   // Rate-limit generation per IP (global) and per asset+IP (hot-asset abuse).
   // Only the asset-scoped key is attributed for metering — attributing the
   // global key too would double-count one transform.
+  //
+  // The per-IP budget is DELIBERATELY far above the generic 20/min API brake.
+  // Stallion field report (2026-07-20), diagnosed 2026-07-22: one visitor
+  // opening a gallery page for the FIRST time generates one transform per
+  // uncached thumbnail, from a single IP, in one burst. At the default 20/min
+  // a 21-image page 429s on its first view — legitimate traffic, not abuse,
+  // and `media_gallery` is a shipped plugin whose whole purpose is such pages.
+  // Note this only ever throttles GENERATION: a cached derivative returns
+  // above, before any limiter, so steady-state page views are unaffected.
+  // The per-asset key keeps the default — >20 distinct variants of ONE asset
+  // inside a minute is not a page load, it's someone probing the ladder.
   const keys = [
-    { key: `img:${ip}`, projectId: undefined },
-    { key: `img:${asset.r2Key}:${ip}`, projectId: asset.projectId },
+    { key: `img:${ip}`, projectId: undefined, max: IMAGE_BURST_PER_IP },
+    { key: `img:${asset.r2Key}:${ip}`, projectId: asset.projectId, max: undefined },
   ];
   for (const k of keys) {
-    const rl = await rateLimit(k.key, { projectId: k.projectId });
+    const rl = await rateLimit(k.key, { projectId: k.projectId, ...(k.max ? { max: k.max } : {}) });
     if (!rl.allowed) {
       return { ok: false, status: 429, error: "too many image transforms — try again shortly", retryAfterSec: rl.retryAfterSec };
     }

@@ -69,6 +69,37 @@ async function readCapped(res: Response, cap: number): Promise<string> {
   return Buffer.concat(chunks).toString("utf8", 0, Math.min(total, cap));
 }
 
+/**
+ * HTML entities → the text a human and a search engine actually see.
+ *
+ * Field report (Stallion, 2026-07-20): a 60-char title containing two `&`
+ * measured as 68 and got dinged for being too long — we were counting the
+ * SOURCE, not the rendered string. Lengths, and the `found:` text we hand back,
+ * must both be on decoded text. It also fixes `&amp;` inside canonical/og:image
+ * URLs, which is how a correctly-escaped query string appears in markup.
+ *
+ * ONE pass, deliberately: a decode-then-decode-again approach would turn the
+ * correctly-escaped `&amp;lt;` into `<`. Unknown named entities are left
+ * verbatim rather than guessed at.
+ */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
+  ndash: "–", mdash: "—", hellip: "…",
+  lsquo: "‘", rsquo: "’", ldquo: "“", rdquo: "”",
+};
+
+function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z][a-z0-9]*);/gi, (whole, body: string) => {
+    if (body[0] !== "#") return NAMED_ENTITIES[body.toLowerCase()] ?? whole;
+    const code =
+      body[1] === "x" || body[1] === "X" ? parseInt(body.slice(2), 16) : parseInt(body.slice(1), 10);
+    // Reject non-scalar values (lone surrogates would throw fromCodePoint).
+    if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return whole;
+    if (code >= 0xd800 && code <= 0xdfff) return whole;
+    return String.fromCodePoint(code);
+  });
+}
+
 /** Attribute-order-tolerant head extraction — regex heuristics, not a DOM. */
 function parseHead(html: string): Omit<PageHead, "url" | "status"> {
   const head = html.slice(0, html.search(/<\/head>/i) === -1 ? html.length : html.search(/<\/head>/i));
@@ -77,7 +108,10 @@ function parseHead(html: string): Omit<PageHead, "url" | "status"> {
   const attr = (tag: string, name: string): string | null => {
     // Leading boundary so e.g. data-name= can never satisfy name=.
     const m = tag.match(new RegExp(`(?:^|[\\s"'])${name}\\s*=\\s*("([^"]*)"|'([^']*)')`, "i"));
-    return m ? (m[2] ?? m[3] ?? null) : null;
+    const raw = m ? (m[2] ?? m[3] ?? null) : null;
+    // Decode HERE so every attribute-sourced value (descriptions, og:*, and the
+    // canonical/og:image URLs) is measured and reported as rendered text.
+    return raw === null ? null : decodeEntities(raw);
   };
   const metaBy = (key: "name" | "property", value: string): string | null => {
     for (const m of metas) {
@@ -89,7 +123,11 @@ function parseHead(html: string): Omit<PageHead, "url" | "status"> {
     links.map((l) => ((attr(l, "rel") ?? "").toLowerCase() === "canonical" ? attr(l, "href") : null)).find(Boolean) ??
     null;
   return {
-    title: head.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() ?? null,
+    // Decode BEFORE trim — trim() also strips a decoded &nbsp; at the edges.
+    title: (() => {
+      const raw = head.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+      return raw === undefined ? null : decodeEntities(raw).trim();
+    })(),
     metaDescription: metaBy("name", "description"),
     canonical,
     ogTitle: metaBy("property", "og:title"),

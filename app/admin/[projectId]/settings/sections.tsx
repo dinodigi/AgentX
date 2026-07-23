@@ -1,7 +1,7 @@
-import type { FormConnectorType } from "@/lib/connectors";
 "use client";
 
 import { useMemo, useState } from "react";
+import type { FormConnectorType } from "@/lib/connectors";
 import { Check, Copy, Eye, EyeOff, Search, Trash2, Type } from "lucide-react";
 import { McpSnippet } from "@/components/McpSnippet";
 import { PROJECT_ICON_NAMES, PROJECT_ICONS, projectIcon } from "@/components/admin/project-icons";
@@ -237,6 +237,8 @@ export function TokensSection({
     scope: string;
     createdAt: string;
     lastUsedAt: string | null;
+    /** TOK-1: minted by an agent over MCP (vs a human here in the console). */
+    agentMinted: boolean;
   }[];
 }) {
   const [error, setError] = useState<string | null>(null);
@@ -256,6 +258,11 @@ export function TokensSection({
               <span className="font-mono text-xs text-ink-mute">agx_••••••••</span>
               <span className="truncate">{t.label ?? "untitled"}</span>
               <span className={`chip ${t.scope === "mcp" ? "chip-brand" : "chip-mute"}`}>{t.scope}</span>
+              {t.agentMinted && (
+                <span className="chip chip-mute" title="Minted by an agent over MCP; revoking the minting MCP token also revokes this one">
+                  agent
+                </span>
+              )}
               <span className="ml-auto whitespace-nowrap text-xs text-ink-mute" title="≤5 min granularity">
                 {lastUsedLabel(t.lastUsedAt)}
               </span>
@@ -403,6 +410,10 @@ export function ConnectorCard(p: ConnectorCardProps) {
   const [busy, setBusy] = useState(false);
   const [rotating, setRotating] = useState(false);
   const [newKey, setNewKey] = useState("");
+  // EE-1: a one-provider-per-category refusal now carries the losing provider
+  // and the submitted form, so the swap is one click instead of a manual
+  // disconnect-then-reconnect that nobody could tell existed.
+  const [conflict, setConflict] = useState<{ other: string; fd: FormData } | null>(null);
 
   return (
     <form
@@ -412,6 +423,7 @@ export function ConnectorCard(p: ConnectorCardProps) {
         const res = await saveConnector(p.projectId, p.type, fd);
         setBusy(false);
         setError(res.error ?? null);
+        setConflict(res.conflictWith ? { other: res.conflictWith, fd } : null);
         if (!res.error) setNote("Saved");
       }}
       className="card max-w-md p-5"
@@ -570,6 +582,26 @@ export function ConnectorCard(p: ConnectorCardProps) {
         </div>
       )}
       <ErrorLine error={error} />
+      {conflict && (
+        <button
+          type="button"
+          disabled={busy}
+          className="btn mt-2 disabled:opacity-60"
+          onClick={async () => {
+            setBusy(true);
+            setNote(null);
+            const res = await saveConnector(p.projectId, p.type, conflict.fd, { swap: true });
+            setBusy(false);
+            setError(res.error ?? null);
+            if (!res.error) {
+              setConflict(null);
+              setNote(`Switched to ${p.label}`);
+            }
+          }}
+        >
+          {busy ? "Switching…" : `Switch to ${p.label} (disconnects the current provider)`}
+        </button>
+      )}
     </form>
   );
 }

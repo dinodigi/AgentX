@@ -61,4 +61,51 @@ describe("seo plugin (Track 3)", () => {
     assert.equal(r.ok, false);
     assert.match(r.errorText, /not an HTML page/i, r.errorText);
   });
+
+  // REGRESSION (Stallion field report 2026-07-20): lengths were measured on the
+  // HTML SOURCE, so a 59-char title carrying two "&" measured 67 and got dinged
+  // for being over 60. Served locally because the case needs exact control of
+  // the entity markup — the SSRF guard is production-gated, so 127.0.0.1 is a
+  // legitimate target against a dev server.
+  it("measures title/description length on DECODED text, not entity source", async () => {
+    const title = "Roofing & Siding Contractors & Emergency Repairs Norfolk VA"; // 59 real
+    const encoded = title.replace(/&/g, "&amp;"); // 67 in source
+    assert.equal(title.length, 59);
+    assert.equal(encoded.length, 67);
+
+    const html = `<!doctype html><html lang="en"><head>
+<title>${encoded}</title>
+<meta name="description" content="Trusted roofing &amp; siding contractors serving Tidewater since 1998 &mdash; free estimates &amp; fast repairs today.">
+<link rel="canonical" href="https://x.test/svc?a=1&amp;b=2">
+<meta property="og:title" content="Roofing &amp; Siding">
+<meta property="og:description" content="Roofing and siding, done right.">
+<meta property="og:image" content="https://x.test/card.png?w=1200&amp;h=630">
+<meta name="viewport" content="width=device-width">
+<script type="application/ld+json">{}</script>
+</head><body><h1>hi</h1></body></html>`;
+
+    const { createServer } = await import("node:http");
+    const srv = createServer((_q, res) => {
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      res.end(html);
+    });
+    await new Promise((ok) => srv.listen(4599, "127.0.0.1", ok));
+    try {
+      const r = await mcp(p.mcpToken, "score_page", { url: "http://127.0.0.1:4599/" });
+      assert.ok(r.ok, r.errorText);
+      assert.equal(r.value.head.title, title, "title comes back as rendered text, entities decoded");
+      assert.equal(
+        r.value.findings.find((f) => f.check === "title"),
+        undefined,
+        "a 59-char title must not be dinged just because its source form is 67",
+      );
+      // Entity decoding also repairs correctly-escaped URLs.
+      assert.equal(r.value.head.canonical, "https://x.test/svc?a=1&b=2");
+      assert.equal(r.value.head.ogImage, "https://x.test/card.png?w=1200&h=630");
+      // &mdash; is one character, not eight.
+      assert.equal(r.value.head.metaDescription.length, 104);
+    } finally {
+      srv.close();
+    }
+  });
 });

@@ -228,20 +228,26 @@ export async function hasProvider(projectId: string, category: ConnectorCategory
  * tenant's live email provider on a form save would be rude, and infra
  * credentials deserve an explicit act. Returns a refusal message, or null.
  */
-export async function categoryConflictRefusal(
+export async function categoryConflict(
   projectId: string,
   type: ConnectorType,
-): Promise<string | null> {
+): Promise<{ other: ConnectorType; message: string } | null> {
   const category = PROVIDER_CATEGORY[type];
   if (!SWAPPABLE_CATEGORIES.includes(category)) return null;
   for (const other of providersFor(category)) {
     if (other === type) continue;
     if (await getConnector(projectId, other)) {
-      return (
-        `This project already uses ${CONNECTOR_SPECS[other as FormConnectorType]?.label ?? other} for ${category}. ` +
-        `One active provider per category — disconnect it first, then connect this one. ` +
-        `(Content and settings are untouched either way.)`
-      );
+      const otherLabel = CONNECTOR_SPECS[other as FormConnectorType]?.label ?? other;
+      return {
+        other,
+        // Names the remedy AND the one-click path. Before EE-1 this said only
+        // "disconnect it first", which read as a wall: the operator who hit it
+        // had a valid key and no way to tell that a two-step existed.
+        message:
+          `This project already uses ${otherLabel} for ${category}. ` +
+          `One active provider per category — switch to this one, or disconnect ${otherLabel} first. ` +
+          `(Content and settings are untouched either way.)`,
+      };
     }
   }
   return null;

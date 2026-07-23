@@ -1,6 +1,6 @@
 # Pluggie (AgentX) — System Capabilities
 
-> **Living — last synced 2026-07-21.** What the platform can do **today**,
+> **Living — last synced 2026-07-22.** What the platform can do **today**,
 > grouped by surface. Sync this doc whenever a batch changes the tool surface
 > or platform behavior (see CLAUDE.md ship ritual). For what's next, see
 > [BACKLOG.md](BACKLOG.md) and [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md);
@@ -45,11 +45,12 @@ Cloudflare edge cache; public status page linked in the site footer).
 - **Structured errors everywhere**: `ConstraintIssue[]` + stable `E_*` codes —
   an agent repairs its own mistake from the error alone.
 
-## 2. MCP tool surface (57 tools)
+## 2. MCP tool surface (60 tools)
 
 | Group | Tools |
 |---|---|
 | Project/meta | `get_project_info`, `list_field_types`, `list_connectors`, `get_client_code` |
+| Tokens (TOK-1) | `mint_delivery_token` (delivery-scope ONLY — no scope parameter exists; label required; cap 25/project; parentage-stamped, so revoking the minter cascades), `list_delivery_tokens` (ids/labels/origin, never values), `revoke_delivery_token` (delivery-only; cascade counted) |
 | Schema | `define_collection`, `list_collections`, `describe_collection`, `delete_collection`, `set_locales` |
 | Blocks | `define_block`, `list_blocks`, `delete_block` |
 | Writes | `create_entry`, `update_entry`, `update_entry_if` (CAS), `delete_entry`, `bulk_create_entries`, `transact` |
@@ -206,6 +207,13 @@ Cloudflare edge cache; public status page linked in the site footer).
   explicit `swap:true` path; unmet `requires` auto-enable the sole catalog
   provider (ambiguity asks you to choose); disabling a provider warns which
   enabled plugins lose their dependency. Store + `list_plugins` surface it all.
+- **Enabled ≠ applied (PLUG-3)**: each ENABLED plugin with a structure carries
+  `applied` `{status: none|unclear|full, matched, of, unmatched, nextAction}` —
+  EVIDENCE from fresh (uncached) baseline-name matching, not a verdict. Only
+  the ends assert: 0/M = `none`, M/M = `full`; the middle is `unclear` because
+  a baseline is adapted, not stamped — an unmatched name usually means it was
+  reconciled into an existing collection, so the instruction is check
+  (`list_collections`), never re-apply.
 - **Two delivery mechanisms**: built-in (compiled: `seo`, `contact_forms`) and
   **DB-backed** (`plugin_defs` — global first-party defs seeded by the
   operator, or project-private defs authored at runtime via `define_plugin`).

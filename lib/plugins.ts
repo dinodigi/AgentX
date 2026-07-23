@@ -78,6 +78,83 @@ export interface PluginDef {
   priceCents?: number | null;
 }
 
+/**
+ * PLUG-3: enabled ≠ applied. We stamp the enabled VERSION but never whether the
+ * structure actually landed, so a never-applied plugin is indistinguishable from
+ * a fully-applied one — in list_plugins and in the session briefing.
+ *
+ * This reports EVIDENCE, not a verdict, and the distinction is load-bearing.
+ * A baseline is ADAPTED, not stamped (see `structure.reconcile` — it is a
+ * REQUIRED field), so a baseline name that is absent very often means it was
+ * reconciled into an existing collection, not that anything is missing.
+ * Measured before this was written: `countryside_crm` scores 5/6 against the
+ * live CSLP project, because its `reps` baseline was correctly realized as
+ * `users` with a role enum. A verdict-shaped answer would have called a
+ * finished production install "partial" and invited a re-apply straight into
+ * the destructive-change gate.
+ *
+ * So only the ENDS are asserted — 0 matched is meaningfully "none", all matched
+ * is meaningfully "full" — and the middle says "unclear" and hands back the
+ * unmatched names for the agent to check. Plugins without a structure have
+ * nothing to apply and get no state at all.
+ *
+ * The caller MUST pass FRESH collection names (listCollectionNamesFresh) — a
+ * stale read here produces exactly the false "not applied" this guards against.
+ */
+export interface PluginAppliedState {
+  status: "none" | "unclear" | "full";
+  matched: number;
+  of: number;
+  /** Baseline names with no same-named collection — candidates for reconciliation. */
+  unmatched: string[];
+  nextAction: string;
+}
+
+export function pluginAppliedState(
+  def: Pick<PluginDef, "structure">,
+  collectionNames: string[],
+): PluginAppliedState | null {
+  const baseline = def.structure?.baseline ?? [];
+  if (baseline.length === 0) return null;
+
+  const present = new Set(collectionNames);
+  const names = baseline.map((b) => b.name);
+  const unmatched = names.filter((n) => !present.has(n));
+  const matched = names.length - unmatched.length;
+
+  if (matched === 0) {
+    return {
+      status: "none",
+      matched,
+      of: names.length,
+      unmatched,
+      nextAction:
+        "no baseline collection appears in this project — the structure looks UNAPPLIED. " +
+        "Read get_plugin for the baseline + reconcile rules, then realize it with define_collection.",
+    };
+  }
+  if (unmatched.length === 0) {
+    return {
+      status: "full",
+      matched,
+      of: names.length,
+      unmatched,
+      nextAction: "every baseline collection is present — the structure looks applied. Nothing to do.",
+    };
+  }
+  return {
+    status: "unclear",
+    matched,
+    of: names.length,
+    unmatched,
+    nextAction:
+      `${matched} of ${names.length} baseline collections match by name; no match for: ${unmatched.join(", ")}. ` +
+      "A baseline is ADAPTED, not stamped, so a missing NAME usually means it was reconciled into an " +
+      "existing collection (e.g. merged, or renamed to fit this project). Check with list_collections / " +
+      "describe_collection BEFORE re-applying — re-applying a live baseline can trip the destructive-change gate.",
+  };
+}
+
 /** Operator per-plugin overrides (platform_settings key "pluginOverrides"). */
 export interface PluginOverride {
   /** false hides the plugin fleet-wide (store, list_plugins, enable). */

@@ -269,11 +269,33 @@ function fireTransition(collection: Collection, emit: EmitDescriptor): void {
     ...(emit.previous ? { previous: { data: emit.previous } } : {}),
     transition: emit.transition,
   };
-  defer(() =>
-    Promise.allSettled(
+  // OBSERVABILITY (Stallion 2026-07-20, "actions don't fire after a redefine").
+  // The reported shape did NOT reproduce single-instance (see
+  // scripts/repro-workflow-after-redefine.mjs), which leaves the multi-instance
+  // suspicions alive and undiagnosable — because this path used to swallow
+  // everything. `allSettled` discards its results, so a rejected action
+  // vanished; and if the whole deferred callback dies with a recycled instance,
+  // a FIRED action and a NEVER-ATTEMPTED one look identical in the logs.
+  //
+  // A delivered action already writes a webhook_deliveries row, so the missing
+  // half is the intent: log that a transition MATCHED and how many actions it
+  // is about to run. Absence of the follow-up delivery row then means the
+  // deferred work died, which is the distinction we could not previously draw.
+  const label = `${collection.name}#${emit.entry.id} ${emit.transition.from}→${emit.transition.to}`;
+  console.info(`workflow transition matched: ${label} — dispatching ${t.actions!.length} action(s)`);
+  defer(async () => {
+    const settled = await Promise.allSettled(
       t.actions!.map((a) => runEventAction(collection, "entry.transitioned", a, emit.entry, payload)),
-    ),
-  );
+    );
+    for (const [i, r] of settled.entries()) {
+      if (r.status === "rejected") {
+        console.error(
+          `workflow action ${i + 1}/${settled.length} FAILED for ${label}:`,
+          r.reason instanceof Error ? r.reason.message : r.reason,
+        );
+      }
+    }
+  });
 }
 
 /**

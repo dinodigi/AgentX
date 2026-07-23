@@ -4,6 +4,7 @@ import { FIELD_TYPE_SPECS, COMMON_FIELD_CONFIG } from "@/lib/field-types";
 import {
   getCollection,
   listCollections,
+  listCollectionNamesFresh,
   defineCollection,
   planDeleteCollection,
   deleteCollection,
@@ -57,12 +58,15 @@ import {
   enablePluginChecked,
   disablePluginChecked,
   providesOf,
+  pluginAppliedState,
 } from "@/lib/plugins";
 import { buildBriefing } from "@/lib/briefing";
 import { fetchPageHead, scoreHead, auditSite } from "@/lib/seo";
 import { defineBlock, deleteBlock, listBlocks } from "@/lib/blocks";
 import { configureInbound, disableInbound } from "@/lib/inbound";
 import { rateLimit } from "@/lib/ratelimit";
+import { mintDeliveryTokenViaMcp, listDeliveryTokens, revokeDeliveryTokenViaMcp } from "@/lib/tokens";
+import { recordPlatformEvent } from "@/lib/platform-events";
 import { controlDb } from "@/db";
 import { platformFeedback } from "@/db/schema";
 import { WHERE_OPS } from "@/lib/query";
@@ -315,7 +319,12 @@ export const TOOL_DEFS: ToolDef[] = [
       "into the project), tools (extra MCP verbs unlocked by enabling), and guidance (domain " +
       "operating context). When the user asks for a capability (contact forms, SEO, booking…), " +
       "check here FIRST before hand-rolling one — an enabled plugin is a capability the project " +
-      "already committed to.",
+      "already committed to. ENABLED IS NOT APPLIED: enabling records the commitment, applying " +
+      "realizes the structure. Each enabled plugin with a structure carries `applied` " +
+      "{status: none|unclear|full, matched, of, unmatched, nextAction} — EVIDENCE from matching " +
+      "baseline collection NAMES, not a verdict. Because a baseline is adapted rather than " +
+      "stamped, an unmatched name usually means it was reconciled into an existing collection; " +
+      "`unclear` means CHECK (list_collections/describe_collection), not re-apply.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -1256,14 +1265,64 @@ export const TOOL_DEFS: ToolDef[] = [
     },
   },
   {
+    name: "mint_delivery_token",
+    description:
+      "Mint a NEW delivery-scoped token for this project — the credential the generated client " +
+      "(get_client_code) and every delivery-API call needs. Returns the raw token ONCE; the " +
+      "platform stores only a hash, so save it immediately. HANDLING: the token belongs " +
+      "server-side ONLY — an env var the server reads (e.g. AGENTX_DELIVERY_TOKEN), never a " +
+      "NEXT_PUBLIC_*/client-bundled variable, never committed to the repo, never pasted into " +
+      "chat or logs. Anyone holding it can read all public content and write to publicWrite " +
+      "collections. Scope is fixed: this tool can ONLY create delivery tokens (never mcp). " +
+      "Mints are audit-logged and tied to the minting token — revoking that token also revokes " +
+      "everything it minted. If you leak one: revoke_delivery_token, then mint a replacement.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        label: {
+          type: "string",
+          description: "What this token is for, shown in Settings → Tokens (e.g. \"marketing-site\") — required so humans can tell tokens apart",
+        },
+      },
+      required: ["label"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "list_delivery_tokens",
+    description:
+      "List this project's delivery tokens — id, label, created, last-used, and whether an " +
+      "agent minted it. NO token values (those exist only at mint time). Use before minting " +
+      "(reuse beats duplication, and there is a per-project cap) and to find stale or unknown " +
+      "tokens worth revoking.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "revoke_delivery_token",
+    description:
+      "Permanently revoke a delivery token by id (from list_delivery_tokens). Takes effect " +
+      "within seconds; sites still holding the token start getting 401s. Also revokes any " +
+      "tokens it minted (cascade). Delivery tokens only — mcp tokens can never be revoked " +
+      "from here; that stays in the console. Use for rotation (revoke + mint) or cleanup.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tokenId: { type: "string", description: "the token's id from list_delivery_tokens" },
+      },
+      required: ["tokenId"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "get_client_code",
     description:
       "Generate a typed, dependency-free TypeScript client for this project's delivery API " +
       "from the live schema — use it in the site instead of hand-rolling fetch calls. " +
       "Per-collection types + list/get/create/update/remove (each generated only where the " +
-      "schema allows it), delivery-token and X-User-Token handling built in. Save the returned " +
-      "code as a file (e.g. lib/agentx.ts) and RE-CALL THIS TOOL after any define_collection " +
-      "change — the client is a snapshot of the schema.",
+      "schema allows it), delivery-token and X-User-Token handling built in. The client needs " +
+      "a delivery-scoped token: mint one with mint_delivery_token if the project has none. " +
+      "Save the returned code as a file (e.g. lib/agentx.ts) and RE-CALL THIS TOOL after any " +
+      "define_collection change — the client is a snapshot of the schema.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -1630,6 +1689,9 @@ async function mustCollection(projectId: string, name: string) {
 export interface ToolContext {
   /** Origin of the incoming request, e.g. http://localhost:3000 */
   baseUrl: string;
+  /** TOK-1: the calling mcp token's row id — stamped as parentage on mints so a
+   * leaked token's descendants revoke with it. Absent only in legacy callers. */
+  callerTokenId?: string;
 }
 
 export async function callTool(
@@ -1797,6 +1859,12 @@ export async function callTool(
 
       case "list_plugins": {
         const [enabled, catalog] = await Promise.all([enabledPlugins(projectId), effectiveCatalog(projectId)]);
+        // PLUG-3: enabled ≠ applied. Only ENABLED plugins get an applied-state —
+        // for the rest there is nothing to have applied, and the extra read is
+        // pointless. FRESH names, never the 15s cache: a stale miss here would
+        // tell an agent to re-apply a baseline that is already live.
+        const anyEnabledStructure = catalog.some((p) => enabled.has(p.id) && p.structure);
+        const names = anyEnabledStructure ? await listCollectionNamesFresh(projectId) : [];
         return ok(
           catalog.map((p) => ({
             id: p.id,
@@ -1804,6 +1872,12 @@ export async function callTool(
             version: p.version,
             description: p.description,
             enabled: enabled.has(p.id),
+            ...(enabled.has(p.id)
+              ? (() => {
+                  const applied = pluginAppliedState(p, names);
+                  return applied ? { applied } : {};
+                })()
+              : {}),
             ...(providesOf(p).length > 0 ? { provides: providesOf(p) } : {}),
             ...(p.requires?.length ? { requires: p.requires } : {}),
             price: p.priceCents ? `$${(p.priceCents / 100).toFixed(2)}/mo` : "included",
@@ -2636,6 +2710,77 @@ export async function callTool(
           current = row.data;
         }
         return ok(await dryRunHook(projectId, collection, a.stage, a.data, current));
+      }
+
+      case "mint_delivery_token": {
+        const a = rawArgs as { label?: string };
+        // Credential tool — STRICT args. The server doesn't schema-enforce
+        // additionalProperties, and elsewhere silently ignoring extras is fine;
+        // here a caller passing `scope` believes scope is negotiable, and must
+        // learn loudly that it is not, rather than receive something different
+        // from what it asked for.
+        const unknown = Object.keys((rawArgs as object) ?? {}).filter((k) => k !== "label");
+        if (unknown.length) {
+          return err(
+            `unknown argument${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")} — this tool takes only {label}. ` +
+              `Scope is FIXED to 'delivery': the MCP surface can never mint an mcp-scoped token.`,
+            "E_VALIDATION",
+          );
+        }
+        if (typeof a?.label !== "string" || !a.label.trim()) {
+          return err("label is required — humans tell tokens apart by it in Settings → Tokens", "E_VALIDATION");
+        }
+        if (!ctx.callerTokenId) {
+          // The route always threads this; its absence means an internal caller
+          // that can't be attributed — refuse rather than mint parentless.
+          return err("cannot attribute this mint to a calling token — refused", "E_INTERNAL");
+        }
+        const minted = await mintDeliveryTokenViaMcp(projectId, ctx.callerTokenId, a.label);
+        if (!minted.ok) return err(minted.error!, "E_CAP_REACHED");
+        // Operator-visible trail: id + label ONLY — the raw token exists in
+        // this response and nowhere else, ever (rule set with the operator).
+        const project = await getProject(projectId);
+        recordPlatformEvent({
+          projectId,
+          projectName: project?.branding?.displayName ?? "?",
+          type: "token_mint",
+          actorEmail: `mcp-token:${ctx.callerTokenId}`,
+          note: `delivery token "${a.label.trim()}" (${minted.tokenId}) minted over MCP`,
+        });
+        return ok({
+          token: minted.token,
+          tokenId: minted.tokenId,
+          shownOnce: "this is the ONLY time the token value exists — store it server-side now",
+          handling:
+            "server-side env var only (e.g. AGENTX_DELIVERY_TOKEN); never NEXT_PUBLIC_*, never " +
+            "committed, never client-bundled. Leaked? revoke_delivery_token then mint again.",
+        });
+      }
+
+      case "list_delivery_tokens": {
+        return ok(await listDeliveryTokens(projectId));
+      }
+
+      case "revoke_delivery_token": {
+        const a = rawArgs as { tokenId?: string };
+        if (typeof a?.tokenId !== "string" || !a.tokenId.trim()) {
+          return err("tokenId is required — list_delivery_tokens shows ids", "E_VALIDATION");
+        }
+        const res = await revokeDeliveryTokenViaMcp(projectId, a.tokenId.trim());
+        if (!res.ok) return err(res.error!, "E_NOT_FOUND");
+        const project = await getProject(projectId);
+        recordPlatformEvent({
+          projectId,
+          projectName: project?.branding?.displayName ?? "?",
+          type: "token_revoke",
+          actorEmail: ctx.callerTokenId ? `mcp-token:${ctx.callerTokenId}` : "mcp",
+          note: `delivery token ${a.tokenId.trim()} revoked over MCP${res.cascaded ? ` (+${res.cascaded} minted by it)` : ""}`,
+        });
+        return ok({
+          revoked: a.tokenId.trim(),
+          cascaded: res.cascaded ?? 0,
+          note: "takes effect within seconds; anything still sending this token gets 401s",
+        });
       }
 
       case "get_client_code": {

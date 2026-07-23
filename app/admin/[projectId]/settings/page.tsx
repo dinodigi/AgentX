@@ -41,6 +41,7 @@ export default async function SettingsPage({
         scope: projectTokens.scope,
         createdAt: projectTokens.createdAt,
         lastUsedAt: projectTokens.lastUsedAt,
+        mintedByTokenId: projectTokens.mintedByTokenId,
       })
       .from(projectTokens)
       .where(eq(projectTokens.projectId, projectId)),
@@ -146,6 +147,7 @@ export default async function SettingsPage({
             scope: t.scope,
             createdAt: t.createdAt.toISOString(),
             lastUsedAt: t.lastUsedAt?.toISOString() ?? null,
+            agentMinted: t.mintedByTokenId !== null,
           }))}
         />
       </section>

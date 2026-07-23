@@ -123,21 +123,48 @@ const ELASTIC_EMAIL: EmailProvider = {
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   },
+  /**
+   * Verified against the LIVE API 2026-07-22, after a real key reported `error`.
+   *
+   * Elastic Email answers **HTTP 400 for everything** — bad key, wrong scope,
+   * missing parameter alike. It never returns 401 or 403, so the previous
+   * status-code branching could not work: the old 403 "send-only scope" case
+   * was unreachable, and a perfectly good key came back as a red dot reading
+   * only "returned HTTP 400", with their actual message thrown away.
+   *
+   * The BODY is what carries the meaning:
+   *   {"Error":"APIKey Expired"}  → key is invalid/absent   (definitive)
+   *   {"Error":"Access Denied."}  → key is REAL, but not scoped for this call
+   *   200                          → key is valid and in scope
+   *
+   * So probe an endpoint a sending key can actually reach (`/v4/statistics`
+   * needs `from`; without it the API replies "Missing required parameter",
+   * which is itself proof the key authenticated) and read the error text.
+   * A narrowly-scoped key must never read as a bad key — that is exactly the
+   * false red dot this replaces.
+   */
   async verifyKey(apiKey) {
     try {
-      // The docs' suggested lightweight account-level call. A send-only key
-      // (Access Level: SendHttp) can legitimately be REFUSED here — 403 means
-      // "key is real but scoped narrowly", which must not read as a bad key,
-      // or every send-only setup would show a false red health dot.
-      const res = await fetch("https://api.elasticemail.com/v4/lists?limit=1", {
-        headers: { Authorization: `Bearer ${apiKey}`, "X-ElasticEmail-ApiKey": apiKey },
-        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-      });
+      const res = await fetch(
+        "https://api.elasticemail.com/v4/statistics?from=2000-01-01T00:00:00",
+        {
+          headers: { Authorization: `Bearer ${apiKey}`, "X-ElasticEmail-ApiKey": apiKey },
+          signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+        },
+      );
       if (res.ok) return { ok: true, detail: "API key valid" };
-      if (res.status === 403) {
-        return { ok: true, detail: "API key accepted (send-only scope — cannot read account lists)" };
+
+      const body = (await res.text()).slice(0, 200);
+      if (/APIKey (Expired|Invalid)|Incorrect API/i.test(body)) {
+        return { ok: false, detail: "Elastic Email rejected the key (APIKey Expired/Invalid)" };
       }
-      return { ok: false, detail: `Elastic Email returned HTTP ${res.status}` };
+      if (/Access Denied/i.test(body)) {
+        return {
+          ok: true,
+          detail: "API key accepted (scoped — it authenticates but cannot read reports)",
+        };
+      }
+      return { ok: false, detail: `Elastic Email returned HTTP ${res.status}: ${body}` };
     } catch (e) {
       return { ok: false, detail: e instanceof Error ? e.message : String(e) };
     }

@@ -8,12 +8,12 @@ import {
   ListObjectsV2Command,
 } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { controlDb } from "@/db";
 import { tenantDb } from "./data-plane";
 import { assertAssetCap } from "./caps";
 import { decryptSecret } from "./crypto";
-import { assets, assetPointers, entries, entriesTrash, projectConnectors, type Asset } from "@/db/schema";
+import { assets, assetPointers, collections, entries, entriesTrash, projectConnectors, type Asset } from "@/db/schema";
 import { ValidationError } from "./validation";
 
 /**
@@ -392,6 +392,38 @@ export async function listAssets(
  * references its id — deleting would leave dangling refs the validator can't
  * repair. Asset ids are uuids, so a text containment check is precise.
  */
+/**
+ * Name the collections holding a blocking reference, so a refusal is ACTIONABLE.
+ *
+ * Stallion field report (2026-07-20) read as "delete_asset is blocked by TRASHED
+ * rows". Investigated 2026-07-22: it is not. The live and trashed checks are
+ * separate queries over separate TABLES, and a soft-delete is a genuine MOVE
+ * (`DELETE FROM entries` → `INSERT INTO entries_trash`, `lib/entries.ts:1301`),
+ * so a trashed row cannot satisfy the live check. Their blockers were live rows;
+ * the real defect is that a bare COUNT gives you nowhere to go next.
+ *
+ * Worth knowing while reading a refusal: the match is a substring test over the
+ * whole row JSON, so an asset id sitting in a text/markdown/URL field blocks
+ * deletion exactly like a real asset field does. That is precisely the case
+ * where "clear those fields first" is baffling without a collection name.
+ */
+async function describeRefs(
+  rows: { collectionId: string; n: number }[],
+): Promise<{ total: number; where: string }> {
+  const total = rows.reduce((sum, r) => sum + Number(r.n), 0);
+  if (total === 0) return { total: 0, where: "" };
+  const named = await controlDb
+    .select({ id: collections.id, name: collections.name })
+    .from(collections)
+    .where(inArray(collections.id, rows.map((r) => r.collectionId)));
+  const byId = new Map(named.map((c) => [c.id, c.name]));
+  const where = [...rows]
+    .sort((a, b) => Number(b.n) - Number(a.n))
+    .map((r) => `${Number(r.n)} in "${byId.get(r.collectionId) ?? r.collectionId}"`)
+    .join(", ");
+  return { total, where };
+}
+
 export async function deleteAsset(projectId: string, assetId: string): Promise<void> {
   const tdb = await tenantDb(projectId);
   const [asset] = await tdb
@@ -402,25 +434,29 @@ export async function deleteAsset(projectId: string, assetId: string): Promise<v
   if (!asset) throw new ValidationError(`asset ${assetId} not found`, "E_NOT_FOUND");
 
   const like = "%" + assetId + "%";
-  const [ref] = await tdb
-    .select({ n: sql<number>`count(*)` })
+  const liveRefs = await tdb
+    .select({ collectionId: entries.collectionId, n: sql<number>`count(*)` })
     .from(entries)
-    .where(and(eq(entries.projectId, projectId), sql`${entries.data}::text LIKE ${like}`));
-  if (Number(ref.n) > 0) {
+    .where(and(eq(entries.projectId, projectId), sql`${entries.data}::text LIKE ${like}`))
+    .groupBy(entries.collectionId);
+  const live = await describeRefs(liveRefs);
+  if (live.total > 0) {
     throw new ValidationError(
-      `blocked: ${ref.n} entries still reference asset ${assetId} — clear those fields first`,
+      `blocked: ${live.total} entries still reference asset ${assetId} (${live.where}) — clear those fields first`,
       "E_BLOCKED",
     );
   }
 
   // A trashed entry can still be restored, so it still pins the asset.
-  const [trashRef] = await tdb
-    .select({ n: sql<number>`count(*)` })
+  const trashRefs = await tdb
+    .select({ collectionId: entriesTrash.collectionId, n: sql<number>`count(*)` })
     .from(entriesTrash)
-    .where(and(eq(entriesTrash.projectId, projectId), sql`${entriesTrash.data}::text LIKE ${like}`));
-  if (Number(trashRef.n) > 0) {
+    .where(and(eq(entriesTrash.projectId, projectId), sql`${entriesTrash.data}::text LIKE ${like}`))
+    .groupBy(entriesTrash.collectionId);
+  const trashed = await describeRefs(trashRefs);
+  if (trashed.total > 0) {
     throw new ValidationError(
-      `blocked: ${trashRef.n} trashed entries still reference asset ${assetId} — restore-and-clear the field or purge them first`,
+      `blocked: ${trashed.total} trashed entries still reference asset ${assetId} (${trashed.where}) — restore-and-clear the field or purge them first`,
       "E_BLOCKED",
     );
   }

@@ -12,6 +12,7 @@ import {
   uniqueIndex,
   index,
   primaryKey,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -224,6 +225,23 @@ export const projectTokens = pgTable(
     label: text("label"),
     /** ≤5-min granularity (token cache TTL); null = never used. */
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    /**
+     * TOK-1 PARENTAGE. Which token minted this one — null for anything a human
+     * created in the console.
+     *
+     * `onDelete: "cascade"` is the load-bearing part, and it is deliberately a
+     * DATABASE guarantee rather than app logic. Letting an mcp token mint
+     * delivery tokens adds no new reach (an mcp token already outranks every
+     * delivery token — it can `export_project`), but it WOULD add persistence:
+     * an attacker who minted tokens keeps a foothold that survives the
+     * remediation you believed was complete. With the cascade, revoking a
+     * compromised token deletes everything it minted, in the same statement,
+     * whether the revoke came from the console, an MCP call, or psql. "Revoke
+     * the leaked token and the incident is over" stays true.
+     */
+    mintedByTokenId: uuid("minted_by_token_id").references((): AnyPgColumn => projectTokens.id, {
+      onDelete: "cascade",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("project_tokens_hash_idx").on(t.tokenHash)],
@@ -379,7 +397,12 @@ export const workspaceMembers = pgTable(
  * by deleting the project). Visible to the tenant in project Settings —
  * that visibility is the support-access policy, not a courtesy.
  */
-export type PlatformEventType = "suspend" | "unsuspend" | "support_access";
+export type PlatformEventType =
+  | "suspend"
+  | "unsuspend"
+  | "support_access"
+  | /** TOK-1: a delivery token minted over MCP (never the token value — id + label only). */ "token_mint"
+  | /** TOK-1: a delivery token revoked over MCP; note records any cascade. */ "token_revoke";
 
 export const platformEvents = pgTable(
   "platform_events",

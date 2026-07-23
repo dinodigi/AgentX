@@ -153,6 +153,8 @@ export async function POST(req: NextRequest) {
       if (!name) return rpcError(msg.id, -32602, "missing tool name");
       const toolResult = await callTool(projectId, name, args, {
         baseUrl: publicOrigin(req),
+        // TOK-1: mint parentage — which token performed this call.
+        callerTokenId: info.tokenId,
       });
       return result(msg.id, toolResult);
     }

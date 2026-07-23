@@ -184,23 +184,30 @@ export async function saveConnector(
   projectId: string,
   type: FormConnectorType,
   formData: FormData,
-): Promise<{ error?: string }> {
+  opts: { swap?: boolean } = {},
+): Promise<{ error?: string; conflictWith?: string }> {
   const denied = await requireOperator(projectId);
   if (denied) return { error: denied };
 
   const {
     CONNECTOR_SPECS,
     upsertConnector,
+    removeConnector,
     deriveClerkIssuer,
     secretShapedConfigRefusal,
-    categoryConflictRefusal,
+    categoryConflict,
   } = await import("@/lib/connectors");
   // Provider registry: one ACTIVE provider per swappable category. Connecting a
   // second email provider is refused with the remedy named — never an implicit
   // swap (silently disconnecting a live email provider on a form save would be
   // rude). Pre-existing connections are untouched: this runs on connect only.
-  const conflict = await categoryConflictRefusal(projectId, type);
-  if (conflict) return { error: conflict };
+  // EE-1: an explicit SWAP, mirroring enable_plugin's {swap:true} for the same
+  // one-provider rule. Still never implicit — the caller has to ask for it —
+  // but the old path offered no way to ask at all, so a valid key read as a
+  // wall. The old provider is removed only AFTER the new key validates below,
+  // so a failed swap can never leave the project with no email provider.
+  const conflict = await categoryConflict(projectId, type);
+  if (conflict && !opts.swap) return { error: conflict.message, conflictWith: conflict.other };
   const spec = CONNECTOR_SPECS[type];
   const config: Record<string, string> = {};
   for (const f of spec.configFields) {
@@ -258,6 +265,24 @@ export async function saveConnector(
   if (extraSecrets.webhookSigning && !/^whsec_/.test(extraSecrets.webhookSigning)) {
     return { error: "Webhook signing secret should start with whsec_" };
   }
+  // EE-1: validate an email key BEFORE storing it. Clerk already refuses to save
+  // an instance it cannot reach, on the stated principle that "a connector that
+  // never worked shouldn't say connected" — email was the odd one out, so a bad
+  // key saved green and failed silently at the first send instead. A narrowly
+  // scoped key still passes: the adapter reports scope-limited as valid.
+  if (secret) {
+    const { emailProvider } = await import("@/lib/providers/email");
+    const adapter = emailProvider(type);
+    if (adapter) {
+      const probe = await adapter.verifyKey(secret);
+      if (!probe.ok) {
+        return { error: `${adapter.label} rejected that key — ${probe.detail}` };
+      }
+    }
+  }
+  // Key is good (or none was needed) — only now is it safe to drop the old
+  // provider, so a rejected swap leaves the existing setup untouched.
+  if (conflict && opts.swap) await removeConnector(projectId, conflict.other);
   await upsertConnector(
     projectId,
     type,

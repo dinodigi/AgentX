@@ -47,7 +47,15 @@ describe("plugin system (Track 2)", () => {
     const e2 = await mcp(p.mcpToken, "enable_plugin", { id: "contact_forms" });
     assert.ok(e2.ok, "double-enable must not error");
     const list = await mcp(p.mcpToken, "list_plugins", {});
-    assert.equal(list.value.find((x) => x.id === "contact_forms").enabled, true);
+    const cf = list.value.find((x) => x.id === "contact_forms");
+    assert.equal(cf.enabled, true);
+    // PLUG-3: enabled ≠ applied. Nothing has been reconciled yet, so the
+    // structure must NOT read as present just because the flag flipped.
+    assert.equal(cf.applied.status, "none", JSON.stringify(cf.applied));
+    assert.equal(cf.applied.matched, 0);
+    assert.match(cf.applied.nextAction, /UNAPPLIED/);
+    // A plugin that is not enabled has nothing to have applied.
+    assert.equal(list.value.find((x) => !x.enabled).applied, undefined);
   });
 
   it("the AI-apply path: baseline reconciled via define_collection, acceptance holds", async () => {
@@ -81,6 +89,57 @@ describe("plugin system (Track 2)", () => {
     const rows = await mcp(p.mcpToken, "query_entries", { collection: "inbox" });
     assert.ok(rows.ok, rows.errorText);
     assert.equal(rows.value.entries?.length ?? rows.value.length, 1);
+
+    // PLUG-3: now that the baseline IS reconciled, applied-state flips to full.
+    // Reads FRESH, so it must flip immediately — not after a 15s cache window.
+    const list = await mcp(p.mcpToken, "list_plugins", {});
+    const applied = list.value.find((x) => x.id === "contact_forms").applied;
+    assert.equal(applied.status, "full", JSON.stringify(applied));
+    assert.equal(applied.matched, applied.of);
+    assert.deepEqual(applied.unmatched, []);
+  });
+
+  // PLUG-3, the case that decided the design. A baseline is ADAPTED, not
+  // stamped, so a partially-name-matching project is AMBIGUOUS: it may be
+  // mid-apply, or it may be a finished install whose collections were merged /
+  // renamed during reconciliation. Measured on production: countryside_crm
+  // scores 5/6 against CSLP because its `reps` baseline was correctly realized
+  // as `users`. So the middle state must say CHECK, never "re-apply" — a
+  // re-apply of a live baseline can trip the destructive-change gate.
+  it("a partly-reconciled structure reads as UNCLEAR, and says check-don't-reapply", async () => {
+    const q = await createEphemeralProject("plug3-unclear");
+    try {
+      const e = await mcp(q.mcpToken, "enable_plugin", { id: "auth_kit" });
+      assert.ok(e.ok, e.errorText);
+
+      const spec = await mcp(q.mcpToken, "get_plugin", { id: "auth_kit" });
+      const baseline = spec.value.structure.baseline;
+      assert.ok(baseline.length >= 3, "this test needs a multi-collection baseline");
+
+      // Realize exactly ONE baseline collection — the rest stay unmatched.
+      const first = baseline[0];
+      const def = await mcp(q.mcpToken, "define_collection", {
+        name: first.name,
+        displayName: first.displayName,
+        fields: first.fields,
+      });
+      assert.ok(def.ok, def.errorText);
+
+      const list = await mcp(q.mcpToken, "list_plugins", {});
+      const applied = list.value.find((x) => x.id === "auth_kit").applied;
+      assert.equal(applied.status, "unclear", JSON.stringify(applied));
+      assert.equal(applied.matched, 1);
+      assert.equal(applied.of, baseline.length);
+      assert.equal(applied.unmatched.length, baseline.length - 1);
+      assert.ok(!applied.unmatched.includes(first.name));
+      // The wording is the safety feature: reconciliation is named as the
+      // likely explanation, and the instruction is to verify, not to re-apply.
+      assert.match(applied.nextAction, /ADAPTED, not stamped/);
+      assert.match(applied.nextAction, /BEFORE re-applying/);
+      assert.match(applied.nextAction, /destructive-change gate/);
+    } finally {
+      await q.destroy();
+    }
   });
 
   it("disable keeps content, flips the flag", async () => {

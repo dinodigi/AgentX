@@ -27,7 +27,44 @@ function mintTokenRow() {
 }
 
 /** Project + mcp/delivery tokens via direct SQL; destroy() cascades everything. */
+/**
+ * Sweep ephemeral projects stranded by EARLIER runs.
+ *
+ * `destroy()` only runs if a suite reaches its `after()` hook — a crash, a throw
+ * before `after`, or a Ctrl-C strands the project permanently. 185 had piled up
+ * by 2026-07-22. Self-healing on create is the same shape the platform already
+ * uses for trash retention and audit pruning: cheap, opportunistic, no separate
+ * job to remember.
+ *
+ * Two guards, because this deletes rows in the CONTROL DB:
+ *  - the name must match the EXACT minted shape below. `plan IS NULL` alone is
+ *    NOT a safe filter — most real client projects are planless too.
+ *  - only rows older than SWEEP_AFTER_HOURS, so a concurrently running suite
+ *    can never sweep its own live fixtures.
+ * Bounded per call so this is always a small, predictable delete.
+ */
+const SWEEP_AFTER_HOURS = 2;
+const SWEEP_BATCH = 25;
+
+async function sweepStrandedProjects() {
+  try {
+    const gone = await sql`
+      DELETE FROM projects WHERE id IN (
+        SELECT id FROM projects
+        WHERE plan IS NULL
+          AND name ~ '^smoke [a-z0-9-]+ [0-9]{13}$'
+          AND created_at < now() - make_interval(hours => ${SWEEP_AFTER_HOURS})
+        LIMIT ${SWEEP_BATCH}
+      ) RETURNING id`;
+    if (gone.length) console.error(`[smoke] swept ${gone.length} stranded ephemeral project(s)`);
+  } catch (e) {
+    // Never fail a test run over housekeeping.
+    console.error("[smoke] sweep skipped:", e instanceof Error ? e.message : e);
+  }
+}
+
 export async function createEphemeralProject(label) {
+  await sweepStrandedProjects();
   const name = `smoke ${label} ${Date.now()}`;
   const signingSecret = randomBytes(32).toString("hex");
   const [project] = await sql`

@@ -208,7 +208,7 @@
     },
     {
       "name": "list_plugins",
-      "description": "Plugins available to this project and whether each is enabled. A plugin is ONE installable unit declaring intent you realize: structure (a content model to reconcile into the project), tools (extra MCP verbs unlocked by enabling), and guidance (domain operating context). When the user asks for a capability (contact forms, SEO, booking…), check here FIRST before hand-rolling one — an enabled plugin is a capability the project already committed to.",
+      "description": "Plugins available to this project and whether each is enabled. A plugin is ONE installable unit declaring intent you realize: structure (a content model to reconcile into the project), tools (extra MCP verbs unlocked by enabling), and guidance (domain operating context). When the user asks for a capability (contact forms, SEO, booking…), check here FIRST before hand-rolling one — an enabled plugin is a capability the project already committed to. ENABLED IS NOT APPLIED: enabling records the commitment, applying realizes the structure. Each enabled plugin with a structure carries `applied` {status: none|unclear|full, matched, of, unmatched, nextAction} — EVIDENCE from matching baseline collection NAMES, not a verdict. Because a baseline is adapted rather than stamped, an unmatched name usually means it was reconciled into an existing collection; `unclear` means CHECK (list_collections/describe_collection), not re-apply.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -2008,8 +2008,51 @@
       }
     },
     {
+      "name": "mint_delivery_token",
+      "description": "Mint a NEW delivery-scoped token for this project — the credential the generated client (get_client_code) and every delivery-API call needs. Returns the raw token ONCE; the platform stores only a hash, so save it immediately. HANDLING: the token belongs server-side ONLY — an env var the server reads (e.g. AGENTX_DELIVERY_TOKEN), never a NEXT_PUBLIC_*/client-bundled variable, never committed to the repo, never pasted into chat or logs. Anyone holding it can read all public content and write to publicWrite collections. Scope is fixed: this tool can ONLY create delivery tokens (never mcp). Mints are audit-logged and tied to the minting token — revoking that token also revokes everything it minted. If you leak one: revoke_delivery_token, then mint a replacement.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "What this token is for, shown in Settings → Tokens (e.g. \"marketing-site\") — required so humans can tell tokens apart"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_delivery_tokens",
+      "description": "List this project's delivery tokens — id, label, created, last-used, and whether an agent minted it. NO token values (those exist only at mint time). Use before minting (reuse beats duplication, and there is a per-project cap) and to find stale or unknown tokens worth revoking.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "revoke_delivery_token",
+      "description": "Permanently revoke a delivery token by id (from list_delivery_tokens). Takes effect within seconds; sites still holding the token start getting 401s. Also revokes any tokens it minted (cascade). Delivery tokens only — mcp tokens can never be revoked from here; that stays in the console. Use for rotation (revoke + mint) or cleanup.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "tokenId": {
+            "type": "string",
+            "description": "the token's id from list_delivery_tokens"
+          }
+        },
+        "required": [
+          "tokenId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "get_client_code",
-      "description": "Generate a typed, dependency-free TypeScript client for this project's delivery API from the live schema — use it in the site instead of hand-rolling fetch calls. Per-collection types + list/get/create/update/remove (each generated only where the schema allows it), delivery-token and X-User-Token handling built in. Save the returned code as a file (e.g. lib/agentx.ts) and RE-CALL THIS TOOL after any define_collection change — the client is a snapshot of the schema.",
+      "description": "Generate a typed, dependency-free TypeScript client for this project's delivery API from the live schema — use it in the site instead of hand-rolling fetch calls. Per-collection types + list/get/create/update/remove (each generated only where the schema allows it), delivery-token and X-User-Token handling built in. The client needs a delivery-scoped token: mint one with mint_delivery_token if the project has none. Save the returned code as a file (e.g. lib/agentx.ts) and RE-CALL THIS TOOL after any define_collection change — the client is a snapshot of the schema.",
       "inputSchema": {
         "type": "object",
         "properties": {},

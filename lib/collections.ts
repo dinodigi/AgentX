@@ -48,6 +48,24 @@ export async function listCollections(projectId: string): Promise<Collection[]> 
   return (await cached()).map(revive);
 }
 
+/**
+ * Collection NAMES, read FRESH — never through the cache.
+ *
+ * Standing rule (destructive-change gate, relation-target validation are the
+ * precedents): anything a correctness decision hangs on reads from the DB, not
+ * from a 15s window that another instance may still be serving stale. PLUG-3's
+ * applied-state is such a decision — a stale "that collection isn't here" would
+ * push an agent to re-apply a baseline that IS here, straight into the
+ * destructive-change gate. Names only, so it stays one cheap indexed read.
+ */
+export async function listCollectionNamesFresh(projectId: string): Promise<string[]> {
+  const rows = await db
+    .select({ name: collections.name })
+    .from(collections)
+    .where(eq(collections.projectId, projectId));
+  return rows.map((r) => r.name);
+}
+
 /** Fetch one collection by slug within a project (cached; revalidated on define). */
 export async function getCollection(
   projectId: string,

@@ -143,10 +143,17 @@ describe("feedback wall + plugin store management", () => {
     await sql`UPDATE platform_settings
       SET value = value || '{"wall_test_plugin": {"active": false}}'::jsonb, updated_at = now()
       WHERE key = 'pluginOverrides'`;
+    // Its OWN deadline. These writes bypass revalidateTag by design (separate
+    // process — cross-instance convergence IS the 60s platform-settings TTL),
+    // so each transition legitimately needs up to a full TTL window. The
+    // original SHARED 90s deadline demanded two ~60s convergences fit inside
+    // it — a coin flip on cache phase that finally landed tails (2026-07-22,
+    // twice, quiet server). Budget each loop for TTL + polling slack instead.
+    const deactivateDeadline = Date.now() + 90_000;
     for (;;) {
       const list = await mcp(p.mcpToken, "list_plugins", {});
       if (!list.value.some((x) => x.id === "wall_test_plugin")) break;
-      if (Date.now() > deadline) assert.fail("deactivated plugin still listed");
+      if (Date.now() > deactivateDeadline) assert.fail("deactivated plugin still listed");
       await new Promise((r2) => setTimeout(r2, 5000));
     }
   });
