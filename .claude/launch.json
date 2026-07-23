@@ -4,8 +4,24 @@
     {
       "name": "agentx-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "-p", "3100"],
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "-p",
+        "3100"
+      ],
       "port": 3100,
+      "autoPort": false
+    },
+    {
+      "name": "agentx-test",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:test"
+      ],
+      "port": 3200,
       "autoPort": false
     }
   ]

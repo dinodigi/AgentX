@@ -71,7 +71,7 @@
   ⚑ **Operator follow-up:** confirm the two UptimeRobot monitors match on the
   keyword `ok` and NOT on the status code — otherwise a real DB outage now goes
   unalerted. `/api/v1/_health` is unaffected (it touches no DB).
-- ⬜ **OPS-4 — dedicated test database.** ⚠️ **Bigger than "point the helpers at
+- ✅ **OPS-4 — dedicated test database.** ⚠️ **Bigger than "point the helpers at
   it" — audit found a split-brain risk.** The app reads `DATABASE_URL` in
   `db/index.ts:5` and `data-plane.ts:231`; the smoke helpers read the SAME var
   (`helpers.mjs:11`) — **and so does every test file that opens its own client:
@@ -90,6 +90,26 @@
   smoke runs stay deliberate and rare.
   **⚑ Needs the operator:** create one Neon project and hand over its
   connection string.
+  ✅ **DONE 2026-07-22** (operator created `pluggie-test`, PG 18.4 = prod).
+  - **Bootstrap:** `drizzle-kit generate` → `db/migrations/0000_bootstrap.sql`
+    (76 stmts, 27 tables) applied by hand. ⚠️ **The generated DDL was NOT
+    enough:** production carries hand-applied schema the schema file never
+    knew — the `plugin_defs` expression unique index (seed `ON CONFLICT`
+    target) and the per-collection index layer. A prod-vs-test catalog diff
+    copied **1,168 missing indexes by exact DDL**; columns/tables diffed clean.
+    The residue of the broken-`db:push` era is now mirrored, and the diff
+    pattern is reusable for ENV-1 staging.
+  - **Seeds:** all 7 global plugin defs seeded.
+  - **Wiring:** `.env.test` holds ONLY the test `DATABASE_URL` (git-ignored —
+    verified); `npm run dev:test` starts the app on :3200 with
+    `--env-file=.env --env-file=.env.test` (later file wins — verified), so
+    app AND smoke share one env: no split-brain. `agentx-test` launch config
+    added.
+  - **Default flipped:** `npm run smoke` now targets the TEST DB;
+    `npm run smoke:prod` is the deliberate prod run (the documented boundary).
+  - **PROVEN with row counts:** prod before `{p:74,t:153,c:241}` → 19/19 tests
+    green on :3200 → prod after `{p:74,t:153,c:241}` — **zero production
+    writes**. Success criterion 3 met.
 - ⬜ **Purge orphaned test projects.** 178 planless `smoke-*` projects survived
   failed/interrupted suites. Harmless to cost (control DB is 41 MB) but they
   clutter the fleet view. Then fix the leak: ephemeral cleanup must survive a
