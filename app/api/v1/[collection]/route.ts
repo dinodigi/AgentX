@@ -71,9 +71,18 @@ export async function GET(
   if ("error" in r) return r.error;
   const { projectId, collection } = r;
 
-  // Per-field gate: no public fields => nothing to expose.
+  // Per-field gate: no public fields => nothing to expose. C1 follow-up
+  // (LearnLab, 07-23): the caller AUTHENTICATED, so say WHY it's a 404 —
+  // "exists but nothing public" is actionable; a bare "not found" reads as a
+  // connectivity failure and burned another debugging session.
   const pub = publicFields(collection);
-  if (pub.length === 0) return notFound();
+  if (pub.length === 0) {
+    return deliveryError(
+      404,
+      `collection "${name}" exists but has no publicly readable fields — ` +
+        `publicRead is per-field; set it via define_collection, or read this collection over MCP instead`,
+    );
+  }
 
   // Identity gate (Phase 4): public / authenticated / owner.
   const gate = await gateRead(projectId, collection, req.headers.get("x-user-token"));

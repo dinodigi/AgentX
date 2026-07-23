@@ -216,6 +216,10 @@ export function generateClientCode(opts: {
 }): { code: string; collections: string[]; skipped: string[] } {
   const plans = opts.collections.map(plan);
   const included = plans.filter((p) => p.canRead || p.canCreate);
+  // The collection every example/probe should point at: readable with the
+  // delivery token ALONE. included[0] is NOT that — it may be create-only or
+  // user-gated (the LearnLab probe bug, 07-23).
+  const probe = included.find((p) => p.canRead && !p.needsUser);
   const skipped = plans.filter((p) => !p.canRead && !p.canCreate).map((p) => p.slug);
 
   // K6: a checkout helper appears when any collection is sellable. Prices are
@@ -248,7 +252,7 @@ export function generateClientCode(opts: {
  *
  * Usage:
  *   const ax = createClient({ token: process.env.AGENTX_DELIVERY_TOKEN! });
- *   const rows = await ax.${included[0]?.slug ?? "your_collection"}.list();
+ *   const rows = await ax.${probe?.slug ?? included[0]?.slug ?? "your_collection"}.list();
  *
  * The token is a delivery-scoped project token — keep it server-side.
  * Collections with authenticated/owner access rules also need the signed-in
@@ -260,7 +264,7 @@ export function generateClientCode(opts: {
  * "wrong base URL" from "bad token" from "wrong path shape" in one answer.
  * Equivalent from a shell:
  *   curl ${opts.deliveryBase}/_health                      # base URL reachable?
- *   curl -H "Authorization: Bearer $TOKEN" ${opts.deliveryBase}/${included[0]?.slug ?? "your_collection"}?limit=1
+ *   curl -H "Authorization: Bearer $TOKEN" ${opts.deliveryBase}/${probe?.slug ?? "your_collection"}?limit=1
  */
 
 const DEFAULT_BASE_URL = ${JSON.stringify(opts.deliveryBase)};
@@ -371,20 +375,34 @@ export interface ChangeEvent {
         return { ok: false, diagnosis: "cannot reach " + baseUrl + " at all (" + (e instanceof Error ? e.message : String(e)) + ") — check the host and your network" };
       }
 ${
-      included[0]
-        ? `      const res = await fetch(baseUrl + ${JSON.stringify("/" + included[0].slug)} + "?limit=1", {
-        headers: { authorization: "Bearer " + options.token },
-      });`
-        : `      // No collections existed when this client was generated — the liveness
-      // probe above is all we can verify. Regenerate after defining one.
-      return { ok: true, diagnosis: "base URL reachable; no collections to test a token against yet" };
+      // Probe target must be readable with the DELIVERY TOKEN ALONE — public
+      // fields AND no user-JWT gate. Field lesson (LearnLab, 07-23): probing
+      // included[0] hit an owner-only collection, answered a correct 404, and
+      // verifyConnection reported failure on a healthy connection.
+      (() => {
+        if (!probe) {
+          return `      // No collection is publicly readable with a delivery token alone —
+      // a schema fact, not a connectivity failure. The liveness probe above
+      // already proved the base URL; the token gets exercised on first real use.
+      return { ok: true, diagnosis: "base URL reachable; no public collection to exercise the token against (collections here need a user JWT) — connection looks fine" };
       // eslint-disable-next-line no-unreachable
-      const res = new Response();`
+      const res = new Response();`;
+        }
+        return `      const res = await fetch(baseUrl + ${JSON.stringify("/" + probe.slug)} + "?limit=1", {
+        headers: { authorization: "Bearer " + options.token },
+      });`;
+      })()
     }
       if (res.ok) return { ok: true, diagnosis: "base URL reachable, token accepted — you are connected" };
       const body = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
       if (res.status === 401 || res.status === 403) {
         return { ok: false, diagnosis: "base URL is right but the token was rejected (" + (body?.code ?? res.status) + "): " + (body?.error ?? "") };
+      }
+      if (res.status === 404 && body?.code) {
+        // A JSON E_NOT_FOUND can ONLY come from an AUTHENTICATED request —
+        // anonymous callers are rejected 401 before collection resolution. So
+        // connectivity and the token are both proven; the schema just moved.
+        return { ok: true, diagnosis: "connected and authenticated — but the probe collection no longer exists or lost public read; regenerate this client (get_client_code) to match the current schema" };
       }
       return { ok: false, diagnosis: "unexpected HTTP " + res.status + " (" + (body?.code ?? "?") + "): " + (body?.error ?? "") };
     },

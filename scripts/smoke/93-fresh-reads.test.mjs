@@ -118,3 +118,47 @@ describe("delivery on-ramp (friction C)", () => {
     assert.match(r.value.code, /curl .*_health/, "header carries the shell equivalent");
   });
 });
+
+// LearnLab field case (07-23): included[0] was owner-only, the probe hit it,
+// and verifyConnection reported failure on a HEALTHY connection. The probe
+// must target a collection readable with the delivery token ALONE, and an
+// authenticated 404 on an existing-but-private collection must say why.
+describe("verifyConnection probe targeting (friction C2 follow-up)", () => {
+  let p;
+
+  before(async () => {
+    await ensureServer();
+    p = await createEphemeralProject("probe-pick");
+    // FIRST collection: create-only shape, zero public fields (included[0]).
+    await mcp(p.mcpToken, "define_collection", {
+      name: "a_private_inbox",
+      publicWrite: true,
+      fields: [{ name: "note", label: "N", type: "text", required: true }],
+    });
+    // SECOND: genuinely public — the probe must pick THIS one.
+    await mcp(p.mcpToken, "define_collection", {
+      name: "z_public_posts",
+      fields: [{ name: "title", label: "T", type: "text", required: true, publicRead: true }],
+    });
+  });
+  after(() => p.destroy());
+
+  it("the generated probe targets the delivery-readable collection, not included[0]", async () => {
+    const r = await mcp(p.mcpToken, "get_client_code", {});
+    assert.ok(r.ok, r.errorText);
+    assert.match(r.value.code, /fetch\(baseUrl \+ "\/z_public_posts" \+ "\?limit=1"/, "probe picks the public collection");
+    assert.match(r.value.code, /curl .*z_public_posts\?limit=1/, "header curl agrees with the probe");
+  });
+
+  it("an authenticated 404 on an existing private collection says WHY", async () => {
+    const r = await delivery(p.deliveryToken, "/a_private_inbox");
+    assert.equal(r.status, 404);
+    assert.match(r.json.error, /exists but has no publicly readable fields/);
+    assert.match(r.json.error, /publicRead is per-field/);
+  });
+
+  it("a JSON 404 on the probe is diagnosed as CONNECTED (auth proven), not failure", async () => {
+    const r = await mcp(p.mcpToken, "get_client_code", {});
+    assert.match(r.value.code, /connected and authenticated — but the probe collection no longer exists/);
+  });
+});
