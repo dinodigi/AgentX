@@ -84,7 +84,7 @@ mutations; a 15s convergence window guarantees this keeps happening.
 
 Sequenced per the 07-22 design discussion (recorded under DX-6 in BACKLOG):
 
-- ⬜ **D1 — the migration batch** (hand-applied, one pass): `expires_at` +
+- ✅ **D1 — the migration batch** (schema half applied 2026-07-23 to BOTH DBs; resolveToken expiry ENFORCEMENT rides with D2 code) (hand-applied, one pass): `expires_at` +
   refresh support on `project_tokens` (OAuth prerequisite; today every token
   lives forever), TOK-2 cap headroom in briefing, PLUG-4 realized-names stamp.
 - ⬜ **D2 — MT-1: scoped MCP tokens.** Scopes must exist before a consent
