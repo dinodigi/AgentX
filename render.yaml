@@ -107,8 +107,23 @@ services:
 
   # ── The job drain (replaces the Netlify scheduled function) ───────────────
   # Every minute, POST /api/jobs/drain with the shared CRON_SECRET. Uses node's
-  # global fetch (no curl/image dep); a non-2xx exits non-zero so Render surfaces
-  # a failing tick. The endpoint is fail-closed (503 until CRON_SECRET is set).
+  # global fetch (no curl/image dep). The endpoint is fail-closed (503 until
+  # CRON_SECRET is set).
+  #
+  # RETRIES (added 2026-07-25 after a 6-tick red streak, 9:01–9:06 PDT, that
+  # self-healed): 3 attempts, 8s connect timeout, 6s apart — worst case ~28s,
+  # comfortably inside the 1-minute tick. Every web-service restart (deploy,
+  # host move) makes the internal host briefly unresolvable then refused, so a
+  # no-retry cron guarantees red ticks on every deploy. Alert fatigue is the
+  # real risk: when a ❌ only means "a deploy happened", nobody looks at the ❌
+  # that means the drain is actually dead.
+  #
+  # Retries apply to CONNECT failures and 5xx only. A 4xx (e.g. 401 = the
+  # CRON_SECRET drifted from the web service's) fails FAST and loud — retrying
+  # a rejected credential just delays the alert that matters.
+  #
+  # Missed ticks are deferred, never lost: jobs are a DB queue, so the next
+  # successful tick claims everything waiting.
   #
   # Talks to the web service over Render's PRIVATE network: WEB_HOST is the
   # internal host:port (fromService property: hostport), reached over plain
@@ -124,7 +139,7 @@ services:
     schedule: "* * * * *"
     buildCommand: "echo 'no build — drain is a one-line fetch'"
     startCommand: >
-      node -e "fetch('http://'+process.env.WEB_HOST+'/api/jobs/drain',{method:'POST',headers:{authorization:'Bearer '+process.env.CRON_SECRET}}).then(r=>{console.log('drain',r.status);process.exit(r.ok?0:1)}).catch(e=>{console.error(e);process.exit(1)})"
+      node -e "const u='http://'+process.env.WEB_HOST+'/api/jobs/drain';const h={authorization:'Bearer '+process.env.CRON_SECRET};const sleep=ms=>new Promise(r=>setTimeout(r,ms));(async()=>{for(let a=1;a<=3;a++){try{const r=await fetch(u,{method:'POST',headers:h,signal:AbortSignal.timeout(8000)});if(r.ok){console.log('drain',r.status,'attempt',a);process.exit(0)}if(r.status<500){console.error('drain REFUSED',r.status,(await r.text()).slice(0,200));process.exit(1)}console.error('drain',r.status,'attempt',a)}catch(e){console.error('attempt',a,'unreachable:',e.cause&&e.cause.code||e.message)}if(a<3)await sleep(6000)}console.error('drain failed after 3 attempts across ~28s — the web service is genuinely unreachable');process.exit(1)})()"
     envVars:
       - fromGroup: agentx-shared # same CRON_SECRET as the web service
       - key: NODE_VERSION

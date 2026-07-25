@@ -1,6 +1,6 @@
 # Pluggie (AgentX) — System Capabilities
 
-> **Living — last synced 2026-07-22.** What the platform can do **today**,
+> **Living — last synced 2026-07-23.** What the platform can do **today**,
 > grouped by surface. Sync this doc whenever a batch changes the tool surface
 > or platform behavior (see CLAUDE.md ship ritual). For what's next, see
 > [BACKLOG.md](BACKLOG.md) and [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md);
@@ -10,9 +10,10 @@
 Pluggie is an MCP-native backend platform: an agent defines a project's data
 model over MCP and gets back a branded client admin, a public delivery API, and
 declarative behaviors (authz, automation, payments, hooks, plugins) — without
-Pluggie ever hosting tenant code. **57 MCP tools · 8 delivery endpoint
-families · 554 smoke tests green (82 suites) · live at pluggie.app** (Render +
-Cloudflare edge cache; public status page linked in the site footer).
+Pluggie ever hosting tenant code. **60 MCP tools · 8 delivery endpoint
+families · 630+ smoke tests green (117 suites, run against a dedicated test
+DB) · live at pluggie.app** (Render + Cloudflare edge cache; public status
+page linked in the site footer).
 
 ---
 
@@ -50,7 +51,7 @@ Cloudflare edge cache; public status page linked in the site footer).
 | Group | Tools |
 |---|---|
 | Project/meta | `get_project_info`, `list_field_types`, `list_connectors`, `get_client_code` |
-| Tokens (TOK-1) | `mint_delivery_token` (delivery-scope ONLY — no scope parameter exists; label required; cap 25/project; parentage-stamped, so revoking the minter cascades), `list_delivery_tokens` (ids/labels/origin, never values), `revoke_delivery_token` (delivery-only; cascade counted) |
+| Tokens (TOK-1) | `mint_delivery_token` (delivery-scope ONLY — no scope parameter exists; label required; cap 25/project; parentage-stamped, so revoking the minter cascades), `list_delivery_tokens` (ids/labels/origin, never values; rows carry `id` AND `tokenId`), `revoke_delivery_token` (delivery-only; accepts `id` or `tokenId`; cascade counted). Mint/revoke results **name their project** (self-identifying, so a multi-project session catches a wrong target); console token list revalidates live on agent mint/revoke. |
 | Schema | `define_collection`, `list_collections`, `describe_collection`, `delete_collection`, `set_locales` |
 | Blocks | `define_block`, `list_blocks`, `delete_block` |
 | Writes | `create_entry`, `update_entry`, `update_entry_if` (CAS), `delete_entry`, `bulk_create_entries`, `transact` |
@@ -122,7 +123,18 @@ Cloudflare edge cache; public status page linked in the site footer).
   (`E_RATE_LIMITED` + `retryAfterSec` in `error.data` + a `Retry-After`
   header), never bare prose.
 - `get_client_code` generates a typed, dependency-free TS client from the live
-  schema (compile-verified under `--strict`).
+  schema (compile-verified under `--strict`). Ships an `await ax.verifyConnection()`
+  self-test that isolates *wrong base URL* (probes the tokenless `/_health`
+  first) from *bad/mis-scoped token* from *stale client* in one call, plus the
+  curl equivalents in the header — the on-ramp diagnostic for a browser dev.
+- **Orientation, not a dead end**: an AUTHENTICATED 404 on the delivery API
+  names the project's public collections and the path shape (`{base}/api/v1/
+  {collection}`); an existing-but-private collection says "no publicly readable
+  fields — publicRead is per-field", not a bare "not found". Anonymous callers
+  still get a plain 401 (no enumeration). The canonical origin for every
+  caller-facing URL (delivery base, admin URL, changes feed, generated-client
+  default) is pinned via `APP_URL`, so a proxy hop between caller and platform
+  can never poison a generated base URL.
 
 ## 4. Identity & authorization (fail-closed ladder)
 
@@ -269,7 +281,12 @@ Cloudflare edge cache; public status page linked in the site footer).
   enabled-plugin versions) rendered as badges on the wall — invented claims
   are visible on sight; the reproduction still decides what's true. First
   triage produced 5 shipped fixes + 1 security fix (see
-  reviews/FEEDBACK-TRIAGE-2026-07.md); the wall has since driven 8 more.
+  reviews/FEEDBACK-TRIAGE-2026-07.md); two subsequent agent field runs
+  (Codex-on-Replit) drove a full sprint (fresh MCP reads, deploy-change
+  notices, on-ramp diagnostics) plus same-day fix cycles — the `APP_URL`
+  base-URL poisoning and the `verifyConnection` probe-targeting were each
+  *diagnosed by the tooling a prior report produced*: wall → verify → fix →
+  prove, at speed.
 
 ## 12. Admin & console
 
@@ -302,18 +319,26 @@ rebrand (see DESIGN-BRIEF.md).
 - **Caps & metering**: sandbox caps (collections/entries/data bytes), per-project
   usage stats + Neon usage pull, Platform Settings editable in UI, metered
   billing rails (inert until enabled).
-- **Ops**: Render blueprint deploy (push-master), Cloudflare CDN, health probes
-  (`/api/health` process+DB, `/api/v1/_health` delivery), UptimeRobot keyword
-  monitors + public status page (linked in the site footer). See OPS.md +
-  runbooks/.
-- **Verification culture**: `npm run verify` = tsc + live smoke run (554 tests,
-  82 suites) against a real dev server.
+- **Ops**: Render blueprint deploy (push-master), Cloudflare CDN. Health is
+  **liveness/readiness split** (OPS-3): `/api/health` returns **200** with
+  `{status:"degraded",db:"down"}` on a control-DB failure so a dependency
+  outage degrades instead of restart-looping the fleet into a full blackout;
+  UptimeRobot matches the keyword `ok` (a status-code monitor would be blind).
+  `/api/v1/_health` is a DB-free delivery-plane probe. See OPS.md + runbooks/.
+- **Dedicated test database** (OPS-4): `npm run smoke` defaults to a separate
+  Neon project (`smoke:prod` is the deliberate production run); the dev server
+  and smoke runner share one `.env.test`, so a full suite touches **zero**
+  production rows (proven by before/after row counts).
+- **Verification culture**: `npm run verify` = tsc + live smoke run (630+ tests,
+  117 suites) against a real dev server — last full gate 633/633 green.
 
 ## Not built (deliberate — with pointers)
 
 - Date-bucketed aggregates + second groupBy dimension (top of triage Track B)
-- Declarative scheduled data mutations; per-role workflow actors; enum option
-  renames; SMS connector; capacity constraints (triage Tracks C/F)
+- Per-role workflow actors; enum option renames; SMS connector; capacity
+  constraints (triage Tracks C/F)
+- Scoped MCP tokens (MT-1) · token expiry enforcement (`expires_at` column
+  applied, enforcement pending) · MCP OAuth connect (DX-6) — the next spine
 - Tenant subscription commerce (BILL-1) · delivery-surface bulk writes (WP-7)
 - Semantic/locale-aware search · per-row sharing ACLs
 - Feedback issues-layer automation (designed, **on hold** — manual triage first)
