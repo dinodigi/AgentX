@@ -19,6 +19,34 @@
 Countryside…). The builder agent has full authoring rights: it can redefine
 collections and delete data. Use a project you would not mind losing.
 
+## 1b. Connectors — what the project actually needs
+
+On a **managed (hosted)** project the database and R2 bucket are provisioned
+automatically. Nothing else is *required* to start. What you add depends on
+what the agent will build — and the important nuance is **when each gate
+fires**:
+
+| Connector | Needed for | Fails | Recommendation |
+|---|---|---|---|
+| Database + R2 | everything | — | ✅ automatic on managed — nothing to do |
+| **Clerk** | collections with `authenticated` / `owner` / claim access | ⚠️ **LATE** — the collection defines fine; the delivery API then answers **503 "this project has no auth issuer connected"** at request time | **Connect it up front** |
+| Email (Resend) | email event actions, workflow transition emails | ✅ **EARLY** — `define_collection` refuses and names the remedy | Optional; 30 seconds |
+| Stripe | `checkout` config | ✅ **EARLY** — refuses at define time | Skip unless demoing commerce |
+
+**Why Clerk specifically.** Email and Stripe are gated at *define* time: the
+agent tries, gets a clear refusal, adapts. That is a good failure. Clerk is not
+gated at define time — a collection with `access: {read: "owner"}` defines
+successfully and only fails when a real user reads it. An autonomous builder
+will happily ship something that looks correct and 503s at runtime, which is
+the worst failure shape available here. Any app with "my stuff vs your stuff"
+hits this immediately.
+
+**Email caveat (development-only annoyance).** Connecting Resend lets the agent
+*define* email actions, but sends fail while the sending domain is unverified
+(`403 … domain is not verified`). Expect defined-but-undelivered email in the
+sandbox; it is a domain-verification chore on the Pluggie side, not an XVibe
+bug.
+
 ## 2. Mint the mcp token
 
 In that project: **Settings → Tokens** → label it `xvibe-dev` → scope
