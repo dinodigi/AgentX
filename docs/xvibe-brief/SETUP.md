@@ -8,16 +8,40 @@
 > token minting both require a signed-in Pluggie session, and there is no API
 > for either (CONNECTION.md §9).
 
-## 1. Create the project (Pluggie console)
+## 1. The project — ALREADY CREATED ✅
 
-1. Sign in at **https://pluggie.app** → **New project**.
-2. Name it something unmistakably a sandbox: **`XVibe Dev`**.
-3. Pick a plan. `sandbox` is free but **limited to one per workspace** — if
-   that slot is taken, use a paid plan or reuse an existing throwaway project.
+The operator created and verified it on 2026-07-26. **Do not create another
+one.**
 
-⚠️ **Do not point XVibe at a client project** (Stallion, Hatchly, CSLP,
-Countryside…). The builder agent has full authoring rights: it can redefine
-collections and delete data. Use a project you would not mind losing.
+| | |
+|---|---|
+| Name | **`xvibe`** |
+| Project id | `29e647bc-1a7c-43dd-a2e3-6c309f37d021` |
+| Plan / status | `managed` · `active` |
+| Admin | `https://pluggie.app/admin/29e647bc-1a7c-43dd-a2e3-6c309f37d021` |
+
+**Verified ready** (checked directly against the data plane, not assumed):
+
+- **Tenant database: schema v1 = current, 9 tables.** The first
+  `define_collection` works immediately — no cold-start migration gate.
+- **R2: managed mode, bucket provisioned, public base URL live.** Uploads and
+  image transforms work out of the box.
+- **Clerk connected** (`discrete-urchin-42.clerk.accounts.dev`) — so
+  owner/authenticated collections work rather than 503ing at request time.
+- **Resend connected and `builtbystallion.com` is VERIFIED** — email actions
+  genuinely send. (Ignore any advice elsewhere about unverified sending
+  domains; it does not apply to this project.)
+- Collections: **0** — a clean slate.
+
+🔥 **This is a BURN project. Treat it as disposable.** The builder agent has
+full authoring rights and will define, redefine and delete collections
+constantly — that is its job. When it gets incoherent, wipe the collections or
+delete and recreate. Never accumulate anything here you would miss, and never
+point XVibe at a client project (Stallion, Hatchly, CSLP, Countryside…).
+
+*XVibe's own operational data — its users, their apps, deploy history — will
+live in a **separate** Pluggie project when Phase 2 needs it. Deliberately not
+created yet, and the builder agent must never be pointed at it.*
 
 ## 1b. Connectors — what the project actually needs
 
@@ -54,6 +78,10 @@ In that project: **Settings → Tokens** → label it `xvibe-dev` → scope
 
 **Copy it immediately — it is shown once** and only a hash is stored. If you
 lose it, delete the row and mint another; they are free.
+
+⚠️ The project ships with one auto-created token labelled *"created with
+project"*. If its value was not captured at creation time it is unrecoverable —
+**mint a fresh one** rather than hunting for it.
 
 ## 3. Put it in the environment, never in a file you commit
 
