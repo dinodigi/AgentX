@@ -242,6 +242,16 @@ export const projectTokens = pgTable(
     mintedByTokenId: uuid("minted_by_token_id").references((): AnyPgColumn => projectTokens.id, {
       onDelete: "cascade",
     }),
+    /**
+     * OAuth prerequisite (D1): absolute expiry. **null = non-expiring**, which
+     * is every token minted before this existed — so the column is inert until
+     * something sets it, and no live credential changes behavior on deploy.
+     * Enforcement lives in `resolveToken`; consent-issued tokens (D3) set it.
+     *
+     * Column applied to both DBs 2026-07-23; declared here 07-25 to close the
+     * ORM drift (see realizedNames below for the same story).
+     */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("project_tokens_hash_idx").on(t.tokenHash)],
@@ -605,6 +615,20 @@ export const projectPlugins = pgTable(
      * before version tracking. Drift vs the catalog powers briefing offers;
      * re-running enable_plugin after adopting an update re-stamps it. */
     version: text("version"),
+    /**
+     * PLUG-4: the collection names this plugin's structure ACTUALLY realized,
+     * stamped at apply time. Ground truth for `list_plugins`' applied-state,
+     * which today infers from baseline-name matching and has to answer
+     * `unclear` in the middle (a baseline is adapted, not stamped — e.g.
+     * countryside_crm's `reps` was legitimately realized as `users` on CSLP,
+     * scoring 5/6). null = pre-PLUG-4 or never applied; the heuristic remains
+     * the fallback for those rows.
+     *
+     * Column applied to both DBs 2026-07-23 (scripts/migrate-token-expiry-batch.ts);
+     * declared here 07-25 to close the ORM drift — an undeclared column is one
+     * `drizzle-kit generate` away from being dropped.
+     */
+    realizedNames: jsonb("realized_names").$type<string[]>(),
   },
   (t) => [primaryKey({ columns: [t.projectId, t.pluginId] })],
 );
