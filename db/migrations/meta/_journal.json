@@ -15,6 +15,13 @@
       "when": 1785024776658,
       "tag": "0001_drift-check",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785029841497,
+      "tag": "0002_token-scopes",
+      "breakpoints": true
     }
   ]
 }

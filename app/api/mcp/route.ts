@@ -159,6 +159,8 @@ export async function POST(req: NextRequest) {
         baseUrl: publicOrigin(req),
         // TOK-1: mint parentage — which token performed this call.
         callerTokenId: info.tokenId,
+        // MT-1/D2: null = grandfathered full access.
+        callerScopes: info.scopes,
       });
       return result(msg.id, toolResult);
     }

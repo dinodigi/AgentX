@@ -252,6 +252,20 @@ export const projectTokens = pgTable(
      * ORM drift (see realizedNames below for the same story).
      */
     expiresAt: timestamp("expires_at", { withTimezone: true }),
+    /**
+     * MT-1 / D2 — the capability subset this token may exercise on the MCP
+     * surface. **null = FULL ACCESS (grandfathered)**, which is every token
+     * that existed before scopes, so nothing changes behavior on deploy.
+     *
+     * Scope names are the vocabulary a consent screen reads aloud, so they
+     * are coarse and explainable (see MCP_SCOPES in lib/scopes.ts):
+     * content.read · content.write · schema.manage · automation.manage ·
+     * tokens.manage · observability.read
+     *
+     * Enforced once, at the top of callTool, against TOOL_SCOPE. Delivery
+     * tokens ignore this column — their capability is fixed by the surface.
+     */
+    scopes: jsonb("scopes").$type<string[]>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (t) => [uniqueIndex("project_tokens_hash_idx").on(t.tokenHash)],

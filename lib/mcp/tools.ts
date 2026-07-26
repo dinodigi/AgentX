@@ -61,6 +61,7 @@ import {
   pluginAppliedState,
 } from "@/lib/plugins";
 import { buildBriefing } from "@/lib/briefing";
+import { checkToolScope, MCP_SCOPES } from "@/lib/scopes";
 import { fetchPageHead, scoreHead, auditSite } from "@/lib/seo";
 import { defineBlock, deleteBlock, listBlocks } from "@/lib/blocks";
 import { configureInbound, disableInbound } from "@/lib/inbound";
@@ -1700,6 +1701,10 @@ export interface ToolContext {
   /** TOK-1: the calling mcp token's row id — stamped as parentage on mints so a
    * leaked token's descendants revoke with it. Absent only in legacy callers. */
   callerTokenId?: string;
+  /** MT-1/D2: the calling token's granted scopes. **undefined or null = FULL
+   * ACCESS** (a pre-scopes token, or a caller that predates this field) — the
+   * grandfather path, so nothing changes for existing credentials. */
+  callerScopes?: string[] | null;
 }
 
 export async function callTool(
@@ -1709,6 +1714,22 @@ export async function callTool(
   ctx: ToolContext,
 ): Promise<ToolResult> {
   try {
+    // MT-1/D2 — the single authorization decision, at the one choke point every
+    // tool passes through (same philosophy as A1's mustCollection: one line
+    // that serves all 60). `callerScopes` undefined/null = grandfathered full
+    // access, so this is inert for every token minted before scopes existed.
+    // The refusal NAMES the missing scope — an agent can report exactly what it
+    // needs instead of guessing which capability it lacks.
+    const scopeCheck = checkToolScope(name, ctx.callerScopes ?? null);
+    if (!scopeCheck.allowed) {
+      return err(
+        `this token lacks the "${scopeCheck.needed}" scope, which "${name}" requires ` +
+          `(${MCP_SCOPES[scopeCheck.needed!]}). The token grants: ` +
+          `${(ctx.callerScopes ?? []).join(", ") || "nothing"}. ` +
+          `Ask the operator to re-issue it with the scope, or use a token that has it.`,
+        "E_SCOPE",
+      );
+    }
     switch (name) {
       case "list_connectors": {
         // F5: expose only caller-relevant, non-sensitive config per type — never

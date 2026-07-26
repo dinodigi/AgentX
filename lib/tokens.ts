@@ -21,6 +21,9 @@ export function hashToken(raw: string): string {
 
 export interface TokenInfo {
   projectId: string;
+  /** MT-1/D2: granted capability subset. **null = full access** (grandfathered
+   * — every token minted before scopes existed). Enforced in callTool. */
+  scopes: string[] | null;
   /** This token's row id — TOK-1 stamps it as `mintedByTokenId` on anything it
    * mints, so a leaked token's descendants are identifiable (and cascade-revoked
    * with it). Never leaves the server as part of an auth answer. */
@@ -56,6 +59,8 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
           tokenId: projectTokens.id,
           projectId: projectTokens.projectId,
           scope: projectTokens.scope,
+          scopes: projectTokens.scopes,
+          expiresAt: projectTokens.expiresAt,
           env: projectTokens.env,
           projectStatus: projects.status,
           plan: projects.plan,
@@ -67,6 +72,19 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
         .where(eq(projectTokens.tokenHash, hash))
         .limit(1);
       if (!rows[0]) return null;
+      // D1/D2 — EXPIRY. `expiresAt = null` means non-expiring, which is every
+      // legacy token, so this is inert until something issues a dated one
+      // (DX-6 consent tokens will). An expired token resolves to null, i.e.
+      // exactly like an unknown token: no oracle telling a holder that their
+      // credential merely lapsed.
+      //
+      // NOTE the cache interaction: resolveToken is cached for 5 minutes, so a
+      // token can survive up to that long past its expiry on an instance that
+      // already resolved it. Acceptable for the same reason the revoke path
+      // accepts it — the TTL is the cross-instance backstop — but it means
+      // expiry is "within 5 minutes of", not "to the second". Do not use this
+      // for anything needing hard cutoffs.
+      if (rows[0].expiresAt && new Date(rows[0].expiresAt).getTime() <= Date.now()) return null;
       // Cache-miss path = first sighting in ≥TTL — cheap last-used heartbeat.
       void db
         .update(projectTokens)
@@ -78,15 +96,19 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
       return {
         tokenId: r.tokenId,
         projectId: r.projectId,
+        scopes: (r.scopes as string[] | null) ?? null,
         scope: r.scope as TokenInfo["scope"],
         env: r.env,
         projectStatus: r.projectStatus,
         billing: (paid && !r.billingExempt && r.billingStatus === "canceled" ? "canceled" : "ok") as TokenInfo["billing"],
       };
     },
-    // v6: value shape gained `tokenId` (TOK-1) — never serve a cached v5 shape,
-    // which would leave mints with no parentage to stamp.
-    ["token-v6", hash],
+    // v7: value shape gained `scopes` (MT-1/D2). The bump is load-bearing — a
+    // cached v6 shape has NO `scopes` key, which `?? null` would read as
+    // grandfathered FULL ACCESS. Serving a stale entry would silently ignore a
+    // scoped token's limits for up to the 5-minute TTL. Never reuse a key
+    // across a shape change that an absent field would misinterpret.
+    ["token-v7", hash],
     // TTL as defense-in-depth: a token revoked outside the app (script, other
     // instance) dies within 5 minutes even if no revalidateTag fires.
     { tags: ["project-tokens"], revalidate: 300 },
