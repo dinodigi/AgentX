@@ -8,7 +8,8 @@
 
 | # | File | Why |
 |---|---|---|
-| 1 | **[CONNECTION.md](CONNECTION.md)** | **The contract.** The two surfaces, the JSON-RPC shape, tokens today vs after OAuth, the build loop, **project provisioning (§8 — XVibe cannot create projects today)**, **sign-in across domains (§9)**, and the boundary rules. Start here. |
+| 0 | **[SETUP.md](SETUP.md)** | **Do this first — ~3 min, operator only.** Create the `XVibe Dev` project, mint the mcp token, and run the six calls that prove the integration end-to-end. |
+| 1 | **[CONNECTION.md](CONNECTION.md)** | **The contract.** The two surfaces, the JSON-RPC shape, tokens today vs after OAuth, the build loop, **where business logic goes (§8)**, **provisioning (§9 — XVibe cannot create projects)**, **sign-in across domains (§10)**, and the boundary rules. |
 | 2 | [XVIBE-PLAN.md](XVIBE-PLAN.md) | The product plan: the static-heads boundary, the phases, what is deliberately out of scope, and the open questions. |
 | 3 | [prototype.html](prototype.html) | Working interactive prototype — open it in a browser. Chat → agent builds → live preview → publish. The north-star screen for Phase 1. |
 | 4 | [DESIGN-RELATIONSHIP.md](DESIGN-RELATIONSHIP.md) | How XVibe should look *relative to* Pluggie — siblings, not twins — and why the studio and the apps it builds must look different. |
@@ -25,9 +26,10 @@ that calls Pluggie's delivery API for everything dynamic. XVibe never executes
 tenant code and never touches Pluggie's database or source directly.
 
 **Phase 1** is reachable from inside Pluggie — a "Build & deploy" button in a
-project — so the session carries and no new signup or provisioning is needed.
-**Phase 2** adds a standalone front door. Keep the entry point swappable and
-Phase 2 is an addition, not a rebuild.
+project — so no new signup and no provisioning are needed. (Sign-in carries
+only if the studio is served on a `pluggie.app` subdomain; a different domain
+needs its own answer — CONNECTION.md §10.) **Phase 2** adds a standalone front
+door. Keep the entry point swappable and Phase 2 is an addition, not a rebuild.
 
 ## You are not blocked on anything
 
@@ -40,14 +42,21 @@ from one function, and swap to OAuth later as a one-function change.
 1. **XVibe cannot create Pluggie projects.** No API, no MCP tool — project
    creation is a Clerk-gated server action today. Phase 1 works *inside a
    project the user already made*. Building the provisioning API is Phase 2
-   Pluggie-side work. (CONNECTION.md §8)
+   Pluggie-side work. (CONNECTION.md §10)
 2. **A Pluggie sign-in does NOT carry to `xvibe.app`.** Clerk cookies are
    domain-scoped. Phase 1's cheap answer is to serve the studio on a
    `pluggie.app` subdomain; `xvibe.app` with its own accounts is Phase 2.
-   (CONNECTION.md §9)
+   (CONNECTION.md §10)
 3. **One XVibe app = one Pluggie project = a billing consequence** past the
    single free sandbox per workspace. Out of scope today (no real users), but
    it shapes Phase 2.
+4. **Business logic does NOT go in the frontend.** Pluggie already runs a great
+   deal of it declaratively (workflows, access rules, computed fields, events,
+   scheduled mutations). A rule in the browser is a suggestion — anyone can
+   bypass it. And unlike a Pluggie tenant, an XVibe user has **no server** to
+   overflow into, so an inexpressible rule has nowhere safe to land: say so and
+   `send_feedback` rather than quietly implementing it client-side.
+   (CONNECTION.md §8)
 
 ## Ground rules worth memorising
 

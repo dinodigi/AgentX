@@ -169,7 +169,43 @@ re-report, but say so if they bite harder than expected:
 - **Two read planes disagree** — the ~15s delivery convergence + `publicFilter`
   asymmetry (§4).
 
-## 8. Project provisioning — XVibe canNOT create projects today
+## 8. Where business logic goes (read before writing any rule)
+
+An app's rules have **three** possible homes. Choosing wrong is the most
+expensive mistake available in this architecture, because the wrong choice
+still *looks* like it works.
+
+| Home | Handles | Trusted? | Available in Phase 1 |
+|---|---|---|---|
+| **Pluggie, declaratively** | access rules · workflows + per-transition actions · computed fields · constraints (unique/requiredIf/pattern) · events (webhook/email, `when`, delayed) · scheduled mutations · checkout · `publicFilter` gating | ✅ server-enforced at the write choke point | ✅ **yes, today** |
+| **The generated frontend** | UI state, routing, display formatting, cosmetic validation | ❌ **anyone can bypass it** | ✅ yes — but this is presentation, not rules |
+| **Custom server code** | bespoke computation: quote engines, scoring, multi-API reconciliation | ✅ | ❌ **no home in Phase 1** |
+
+**The rule: business logic belongs in the first row.** A great deal already
+works with no code anywhere — no-double-book slots, lead lifecycles, approval
+workflows that email on transition, nightly sweeps that expire stale holds.
+Reach for `define_collection`'s declarative features *before* writing app code.
+
+⚠️ **The failure mode to guard against.** When a rule will not fit the
+declarative vocabulary, a Pluggie tenant with their own server writes a
+before-write hook — the logic leaves Pluggie's guarantees but stays secure.
+**An XVibe user has no server.** So the pressure goes to the browser, where a
+"rule" is merely a suggestion. A pricing calculation or an eligibility check
+living in React is not enforcement.
+
+**What to do instead, in order:**
+
+1. Re-model it declaratively — computed fields, a workflow transition, a
+   `when` clause, and constraints cover more than they first appear to.
+2. If it truly does not fit: **say so to the user** rather than silently
+   implementing it client-side, and **call `send_feedback`** describing the
+   rule you could not express. Inexpressible-rule reports are the highest-value
+   signal Pluggie receives — they are the leading indicator for Phase 3's
+   Worker runtime.
+3. Only put it in the frontend if it is genuinely cosmetic (formatting,
+   optimistic UI, a friendlier error before the server's own rejection).
+
+## 9. Project provisioning — XVibe canNOT create projects today
 
 **Verified 2026-07-25.** There is **no API and no MCP tool** that creates a
 Pluggie project. `createProject` exists only as a Clerk-session-gated Next.js
@@ -198,7 +234,7 @@ consequence the moment a user builds a second app. Billing is deliberately out
 of scope right now (operator decision — no real users yet), but the *shape* of
 that decision belongs in Phase 2's design, not after it.
 
-## 9. Sign-in and domains — the cross-domain problem, honestly
+## 10. Sign-in and domains — the cross-domain problem, honestly
 
 **Correction to an earlier claim:** entering XVibe from inside Pluggie does
 *not* automatically carry the session if XVibe is on a different domain. Clerk
@@ -224,7 +260,7 @@ the agent may do) are separate problems.** Even in option A, the builder agent
 still authenticates to Pluggie with an mcp token server-side. Solving the
 domain question does not solve the token question, and vice versa.
 
-## 10. First 30 minutes (suggested)
+## 11. First 30 minutes (suggested)
 
 1. Mint an mcp token on a **throwaway** Pluggie project (not a client project).
 2. `POST /api/mcp` with `tools/list` — confirm 60 tools.
