@@ -169,7 +169,62 @@ re-report, but say so if they bite harder than expected:
 - **Two read planes disagree** — the ~15s delivery convergence + `publicFilter`
   asymmetry (§4).
 
-## 8. First 30 minutes (suggested)
+## 8. Project provisioning — XVibe canNOT create projects today
+
+**Verified 2026-07-25.** There is **no API and no MCP tool** that creates a
+Pluggie project. `createProject` exists only as a Clerk-session-gated Next.js
+**server action** (`app/admin/new/actions.ts`), and its own comment says
+creation *"stays operator-only until B3 attaches billing to this exact seam."*
+There is no `create_project` in the 60-tool MCP surface.
+
+**What that means concretely:**
+
+- **Phase 1: the project already exists.** The user creates it in the Pluggie
+  admin the normal way, then clicks "Build & deploy" from inside it. **XVibe
+  never provisions anything** — it is handed a project id and works in it. This
+  is not a limitation to route around; it is the phase boundary.
+- **Phase 2 needs this built** (P2.2 in XVIBE-PLAN): "create a project in this
+  user's workspace, provision its database, issue a scoped token" + the delete
+  path. It is real Pluggie-side work, currently unbuilt, and it lands on the
+  same workspace/token machinery as MT-1.
+- **Deletion already cascades correctly** — deleting a project wipes its
+  content through the FK cascades (verified). So Phase 2's delete path is
+  mostly plumbing, not new semantics.
+
+⚠️ **Constraint that will bite in Phase 2 planning:** a workspace gets **one
+free sandbox project**; beyond that, projects are paid plans (`byo` /
+`managed`). "One XVibe app = one Pluggie project" therefore has a billing
+consequence the moment a user builds a second app. Billing is deliberately out
+of scope right now (operator decision — no real users yet), but the *shape* of
+that decision belongs in Phase 2's design, not after it.
+
+## 9. Sign-in and domains — the cross-domain problem, honestly
+
+**Correction to an earlier claim:** entering XVibe from inside Pluggie does
+*not* automatically carry the session if XVibe is on a different domain. Clerk
+sessions live in cookies scoped to a domain — a `pluggie.app` session is not
+visible to `xvibe.app`. Plan accordingly.
+
+Three ways to resolve it, cheapest first:
+
+| Option | How | Cost | Best for |
+|---|---|---|---|
+| **A. Same-site subdomain** | serve the studio at `studio.pluggie.app`; cookies scoped to `.pluggie.app` are shared | ~zero auth work | **Phase 1** |
+| **B. Clerk satellite domains** | register `xvibe.app` as a satellite of the `pluggie.app` primary — Clerk supports multi-domain apps explicitly | config + some wiring | wanting xvibe.app branding early |
+| **C. XVibe's own accounts + OAuth** | XVibe becomes a normal OAuth client of Pluggie (D3); its users are its own | most work, needs D3 | **Phase 2** (standalone front door) |
+
+**Recommendation: A for Phase 1, C for Phase 2.** Option A makes the entire
+auth problem disappear while the product is still being proven, and it costs
+nothing to move later because the entry point is designed swappable
+(XVIBE-PLAN's load-bearing rule). Reach for B only if `xvibe.app` branding is
+needed before Phase 2 — it is a real, supported path, just not free.
+
+Note the interaction with §3: **auth (who the human is) and the MCP token (what
+the agent may do) are separate problems.** Even in option A, the builder agent
+still authenticates to Pluggie with an mcp token server-side. Solving the
+domain question does not solve the token question, and vice versa.
+
+## 10. First 30 minutes (suggested)
 
 1. Mint an mcp token on a **throwaway** Pluggie project (not a client project).
 2. `POST /api/mcp` with `tools/list` — confirm 60 tools.
