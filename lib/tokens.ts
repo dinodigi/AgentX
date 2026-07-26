@@ -264,6 +264,40 @@ export async function listDeliveryTokens(projectId: string): Promise<DeliveryTok
   }));
 }
 
+/**
+ * DX-6 / D3 — mint the access token an OAuth consent authorized.
+ *
+ * Deliberately NOT a new credential type: it is a normal mcp-scoped
+ * `project_tokens` row, so it inherits everything already built — hashed at
+ * rest, scope-enforced in callTool (D2), expiry-enforced in resolveToken (D1),
+ * visible and revocable in the console, and cascade-revocable via parentage.
+ *
+ * `mintedByTokenId` is null: a human consented, no token was its parent. That
+ * is also why an OAuth token is NOT cascade-revoked by revoking some other
+ * token — its authority came from a person, and only a person withdraws it.
+ */
+export async function issueOauthAccessToken(input: {
+  projectId: string;
+  scopes: string[];
+  ttlDays: number;
+  label: string;
+}): Promise<{ token: string; tokenId: string }> {
+  const raw = generateToken();
+  const [row] = await db
+    .insert(projectTokens)
+    .values({
+      projectId: input.projectId,
+      tokenHash: hashToken(raw),
+      scope: "mcp",
+      label: input.label,
+      scopes: input.scopes,
+      expiresAt: new Date(Date.now() + input.ttlDays * 24 * 60 * 60 * 1000),
+    })
+    .returning({ id: projectTokens.id });
+  revalidatePath(`/admin/${input.projectId}/settings`);
+  return { token: raw, tokenId: row.id };
+}
+
 export async function revokeDeliveryTokenViaMcp(
   projectId: string,
   tokenId: string,

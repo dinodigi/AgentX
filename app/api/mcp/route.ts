@@ -63,13 +63,32 @@ export async function POST(req: NextRequest) {
   // the API (these fire before the JSON-RPC body is read, so no request id).
   const authErr = (error: string, code: string, status = 401) =>
     Response.json({ error, code }, { status });
+
+  /**
+   * DX-6 / D3 — RFC 9728 5.1. A 401 from an MCP server MUST point at the
+   * protected-resource metadata; this header is the entire bootstrap for
+   * "connect with a URL". A client with no credential calls us, reads this,
+   * discovers the authorization server, and starts the flow — no human copying
+   * a token out of a console.
+   */
+  const unauthorized = (error: string, code: string) =>
+    Response.json(
+      { error, code },
+      {
+        status: 401,
+        headers: {
+          "www-authenticate":
+            `Bearer realm="pluggie", resource_metadata="${publicOrigin(req)}/.well-known/oauth-protected-resource"`,
+        },
+      },
+    );
   const token = bearerFrom(req.headers.get("authorization"));
   if (!token) {
-    return authErr("missing bearer token", "E_AUTH");
+    return unauthorized("missing bearer token", "E_AUTH");
   }
   const info = await resolveToken(token);
   if (!info) {
-    return authErr("invalid project token", "E_AUTH");
+    return unauthorized("invalid project token", "E_AUTH");
   }
   if (info.scope !== "mcp") {
     return authErr(

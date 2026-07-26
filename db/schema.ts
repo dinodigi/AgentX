@@ -426,7 +426,8 @@ export type PlatformEventType =
   | "unsuspend"
   | "support_access"
   | /** TOK-1: a delivery token minted over MCP (never the token value — id + label only). */ "token_mint"
-  | /** TOK-1: a delivery token revoked over MCP; note records any cascade. */ "token_revoke";
+  | /** TOK-1: a delivery token revoked over MCP; note records any cascade. */ "token_revoke"
+  | /** DX-6: a human approved an OAuth client for this project, with scopes. */ "oauth_grant";
 
 export const platformEvents = pgTable(
   "platform_events",
@@ -573,6 +574,63 @@ export const platformSettings = pgTable("platform_settings", {
 /** Track C: operator-authored platform notices ("delivery tokens now required
  * on /api/v1") surfaced ONCE per project via the get_project_info briefing —
  * the "first agent to connect gets told" channel. */
+/**
+ * DX-6 / D3 — OAuth clients, registered dynamically (RFC 7591).
+ *
+ * The MCP spec expects clients to self-register without human pre-provisioning:
+ * a client cannot know every MCP server in advance, and manual registration is
+ * the friction that kills adoption. Registration is therefore OPEN — anyone may
+ * create a client id. That is safe because a client id grants nothing on its
+ * own: every token still requires a human to authenticate with Clerk, pick a
+ * project, and approve scopes on the consent screen.
+ *
+ * Public clients only (no client_secret). MCP clients are native/CLI apps that
+ * cannot keep a secret, which is exactly why PKCE is mandatory.
+ */
+export const oauthClients = pgTable("oauth_clients", {
+  /** The issued client_id (opaque, unguessable). */
+  id: text("id").primaryKey(),
+  /** Exact-match allowlist — the open-redirect defense. Never pattern-matched. */
+  redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+  /** Shown on the consent screen so a human knows what they are authorizing. */
+  clientName: text("client_name"),
+  clientUri: text("client_uri"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+/**
+ * Authorization codes — single-use, short-lived, PKCE-bound.
+ *
+ * Stored HASHED for the same reason tokens are: a leaked database read must not
+ * yield a usable credential. `usedAt` makes replay detectable rather than merely
+ * unlikely.
+ */
+export const oauthCodes = pgTable(
+  "oauth_codes",
+  {
+    /** sha256 of the raw code. */
+    codeHash: text("code_hash").primaryKey(),
+    clientId: text("client_id").notNull(),
+    /** Must match the token request's redirect_uri exactly (OAuth 2.1). */
+    redirectUri: text("redirect_uri").notNull(),
+    /** PKCE: the S256 challenge. Plain is not accepted. */
+    codeChallenge: text("code_challenge").notNull(),
+    /** RFC 8707 audience binding — the MCP server this code may mint a token for. */
+    resource: text("resource"),
+    /** What the human approved on the consent screen. */
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    scopes: jsonb("scopes").$type<string[]>().notNull(),
+    /** Clerk user id of the approver — the audit answer to "who consented?". */
+    approvedBy: text("approved_by").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (t) => [index("oauth_codes_expiry_idx").on(t.expiresAt)],
+);
+
 export const platformNotices = pgTable("platform_notices", {
   id: uuid("id").primaryKey().defaultRandom(),
   message: text("message").notNull(),
