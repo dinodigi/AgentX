@@ -246,6 +246,35 @@ const RESOLUTIONS = {
       "accessNote returned at define time now spell out which half governs which verb, rather than " +
       "telling you the write rule wins.",
   },
+
+  // --- CP6: schema mutation ergonomics (commit f5a99f7) ---------------------
+  "9c2333cb": {
+    disposition: "SHIPPED",
+    ref: "f5a99f7",
+    note:
+      "define_collection now takes `addFields` — append without re-sending the whole shape. You " +
+      "framed this as verbosity; it was worse than that, and thank you for the report, because " +
+      "chasing it found a real lost update. Re-sending every field is a read-modify-write, so two " +
+      "agents adding different fields race and the loser's field silently vanishes while BOTH " +
+      "report success. A test with two concurrent adders reproduced it. Resolving against a fresh " +
+      "read only narrowed the window, and verify-after-write did not help either (each racer can " +
+      "verify before the other's write lands), so the WRITE itself now carries an " +
+      "optimistic-concurrency guard: the upsert applies only if the collection has not changed, " +
+      "and a conflict re-resolves and retries rather than overwriting. `fields` still means the " +
+      "whole declarative shape, and mixing the two is refused rather than silently merged.",
+  },
+  "1c10d760": {
+    disposition: "SHIPPED",
+    ref: "f5a99f7",
+    note:
+      "Raised 100 → 500, so your 3.1k-lead import is 7 calls instead of ~31. Worth saying why it " +
+      "was 100: that number was never the database's limit. Bulk creates are bounded by the " +
+      "beforeCreate HOOK budget, and that has its own separately computed cap — so a collection " +
+      "with no hook was paying a cost it does not incur. The new ceiling is asserted end-to-end " +
+      "with a real 500-row batch rather than assumed, since a cap nobody exercises is a cap nobody " +
+      "trusts. Collections WITH a beforeCreate hook are still capped by the consult budget, which " +
+      "is the constraint that actually exists.",
+  },
 };
 
 const stamp = (r) =>
