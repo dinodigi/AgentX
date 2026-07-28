@@ -219,6 +219,33 @@ const RESOLUTIONS = {
       "fixed-width canonical UTC ISO — text order and chronological order are the same order. " +
       "Filtering and sorting both use it; a test asserts the plan, not just the index's existence.",
   },
+
+  // --- CP5/A5: publicWrite composes with access.write (commit 8d63719) ------
+  e0b6eb32: {
+    disposition: "SHIPPED",
+    ref: "8d63719",
+    note:
+      "They compose now. publicWrite governs the ANONYMOUS POST; access.write governs PATCH/DELETE " +
+      "— so the anonymous-intake / claim-gated-triage desk is ONE collection, no split needed. " +
+      "gateMutate is untouched, so nothing became mutable that was not already. Two calls worth " +
+      "flagging: a signed-in user who misses the claim may still POST, attributed to them (refusing " +
+      "would be theatre — they can drop the token and post anonymously, which is strictly more " +
+      "permissive), but an INVALID token still 401s, because a broken credential is not the same as " +
+      "no credential. publicWrite still cannot combine with an owner or org scope: an anonymous row " +
+      "has no verified identity, so it would be orphaned — invisible to owner-scoped reads and " +
+      "unmutatable — and that is now refused at define time rather than stored silently.",
+  },
+  "16d745d3": {
+    disposition: "SHIPPED",
+    ref: "8d63719",
+    note:
+      "Your reading of the docs was right and the behavior was wrong. A tokenless POST returned 401 " +
+      "because any non-none access.write REPLACED the anonymous path; it now COMPOSES with it, so " +
+      "publicWrite means what it says while access.write gates PATCH/DELETE. The docs that " +
+      "contradicted this moved with the code — both define_collection's description and the " +
+      "accessNote returned at define time now spell out which half governs which verb, rather than " +
+      "telling you the write rule wins.",
+  },
 };
 
 const stamp = (r) =>
