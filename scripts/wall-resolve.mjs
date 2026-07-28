@@ -190,6 +190,35 @@ const RESOLUTIONS = {
       "really exists (a gate refusal, never a 405) so we have not taught the client to lie in the " +
       "other direction.",
   },
+
+  // --- CP4/A3: indexed date fields (commit 2dfa814) -------------------------
+  "0a5ce08c": {
+    disposition: "SHIPPED",
+    ref: "2dfa814",
+    note:
+      "Supported now — and you were right that the suggested workaround had no substitute. " +
+      "The old rejection was technically correct and wrongly concluded: Postgres does refuse a " +
+      "::timestamptz expression index (STABLE cast), but it refuses ::timestamp too, and the raw " +
+      "TEXT it does allow turns out to be exact rather than approximate. Every date write is " +
+      "stored as a fixed-width canonical UTC ISO string, and fixed-width ISO sorts " +
+      "lexicographically exactly as it sorts chronologically. An EXPLAIN test asserts the planner " +
+      "really uses it — index scan, range as an Index Cond, and no separate sort step — because " +
+      "otherwise `indexed: true` would be a lie that looks like a feature. Existing values are " +
+      "canonicalized to UTC when the index is added, so rows imported in another offset sort " +
+      "correctly too.",
+  },
+  "34acd74d": {
+    disposition: "SHIPPED",
+    ref: "2dfa814",
+    note:
+      "Shipped — you and a second reporter six days apart made the same case, that published_at " +
+      "is the canonical sort key for content and starts_at/ends_at the canonical scheduling " +
+      "filter, so there was nothing else to index instead. `indexed: true` now works on date " +
+      "fields. The index is on the raw text rather than a cast (Postgres refuses BOTH " +
+      "::timestamptz and ::timestamp in an index expression), which is exact because writes store " +
+      "fixed-width canonical UTC ISO — text order and chronological order are the same order. " +
+      "Filtering and sorting both use it; a test asserts the plan, not just the index's existence.",
+  },
 };
 
 const stamp = (r) =>
