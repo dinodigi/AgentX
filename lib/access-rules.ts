@@ -58,9 +58,9 @@ export function orgClaimValue(user: EndUser, claim: string): string | null {
   return typeof v === "string" && v !== "" ? v : null;
 }
 
-const toList = <T>(rule: T | T[]): T[] => (Array.isArray(rule) ? rule : [rule]);
+export const toList = <T>(rule: T | T[]): T[] => (Array.isArray(rule) ? rule : [rule]);
 
-function isClaimRule(p: unknown): p is ClaimRule {
+export function isClaimRule(p: unknown): p is ClaimRule {
   return typeof p === "object" && p !== null && "claim" in p && "equals" in p;
 }
 

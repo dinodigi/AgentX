@@ -436,6 +436,14 @@ export async function checkConnectorHealth(
 ): Promise<{ ok: boolean; detail: string }> {
   let ok = false;
   let detail = "";
+  // E1: did the probe reach a VERDICT, or did it fail to run? Only a verdict is
+  // worth persisting. A thrown probe (DNS, timeout, egress blip) says nothing
+  // about the connector — recording it as `error` turns a momentary blip into a
+  // durable red badge that the briefing then reports as current truth. Exactly
+  // that happened: r2/clerk/resend (the three probes that make outbound HTTP
+  // calls) all flipped to error together while R2 was demonstrably serving,
+  // and neon (a direct DB connection) did not.
+  let reachedVerdict = true;
   try {
     if (type === "neon") {
       // The tenant DB is healthy iff it connects AND reports the expected
@@ -514,13 +522,19 @@ export async function checkConnectorHealth(
       }
     }
   } catch (e) {
-    detail = e instanceof Error ? e.message : String(e);
+    reachedVerdict = false;
+    detail = `could not complete the check: ${e instanceof Error ? e.message : String(e)} — the stored status is unchanged, since a probe that failed to RUN says nothing about the connector`;
   }
-  await db
-    .update(projectConnectors)
-    .set({ status: ok ? "connected" : "error", updatedAt: new Date() })
-    .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, type)));
-  revalidateTag(tag(projectId));
+  // A failed probe run leaves the stored verdict alone. The caller still learns
+  // it failed (ok:false + detail), so the admin UI reports it honestly; what it
+  // must not do is overwrite a known-good status with an unknown.
+  if (reachedVerdict) {
+    await db
+      .update(projectConnectors)
+      .set({ status: ok ? "connected" : "error", updatedAt: new Date() })
+      .where(and(eq(projectConnectors.projectId, projectId), eq(projectConnectors.type, type)));
+    revalidateTag(tag(projectId));
+  }
   return { ok, detail };
 }
 

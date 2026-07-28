@@ -19,9 +19,36 @@ export interface Briefing {
   updates: { plugin: string; from: string | null; to: string; note?: string }[];
   notices: { message: string; severity: string; at: string }[];
   health: {
-    connectors: { type: string; status: string }[];
+    /**
+     * E1 — `checkedAt` is load-bearing, not decoration.
+     *
+     * `status` is the verdict of the LAST PROBE, not a live reading. A probe
+     * that threw — a network blip, an 8s timeout — persists `error` until
+     * someone re-tests, and the briefing then reports that stale verdict as if
+     * it were current truth. A reporter hit exactly this: r2/clerk/resend all
+     * read `error` while `upload_asset` succeeded and the returned public URL
+     * served HTTP 200. The three that failed are the three whose probes make
+     * OUTBOUND HTTP calls; neon, which connects to the database directly, was
+     * unaffected — a transient egress failure, recorded permanently.
+     *
+     * Carrying the timestamp lets a reader tell "broken now" from "failed a
+     * probe hours ago", which is the whole difference.
+     */
+    connectors: { type: string; status: string; checkedAt: string | null }[];
     failedDeliveries24h: number;
   };
+}
+
+/** "3h ago" / "2d ago" — coarse on purpose; the point is staleness, not precision. */
+function relativeAge(iso: string): string | null {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const min = Math.floor(ms / 60000);
+  if (min < 2) return "just now";
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  return `${Math.floor(hr / 24)}d ago`;
 }
 
 /** major-version bump = review-first (semver-ish; non-numeric compares lax). */
@@ -76,9 +103,26 @@ export async function buildBriefing(projectId: string): Promise<Briefing> {
   await controlDb.update(projects).set({ briefingSeenAt: new Date() }).where(eq(projects.id, projectId));
 
   // Health: connector states + failed webhook deliveries in the last 24h.
-  const connectorHealth = connectors.map((c) => ({ type: c.type, status: c.status }));
+  // E1: `updatedAt` is when the row last changed, and testConnector stamps it on
+  // every probe — so for a row sitting at `error` it IS the failed-probe time.
+  // (Rotating a secret also bumps it, but that path writes `connected`, so it
+  // can never make a stale error look fresh.)
+  const connectorHealth = connectors.map((c) => ({
+    type: c.type,
+    status: c.status,
+    checkedAt: c.updatedAt ? new Date(c.updatedAt).toISOString() : null,
+  }));
   for (const c of connectorHealth) {
-    if (c.status === "error") attention.push(`connector "${c.type}" is in error — test it in the admin Connectors tab`);
+    if (c.status !== "error") continue;
+    // Say what we actually know — a probe failed at a time — instead of
+    // asserting a live fault we have not observed. The old copy ("is in error")
+    // sent a reporter hunting a broken R2 connector that was serving fine.
+    const ago = c.checkedAt ? relativeAge(c.checkedAt) : null;
+    attention.push(
+      ago
+        ? `connector "${c.type}" FAILED ITS LAST CHECK ${ago} — that is a point-in-time probe, not a live reading, so it may be working now; re-test it in the admin Connectors tab to refresh the verdict`
+        : `connector "${c.type}" failed its last check — re-test it in the admin Connectors tab`,
+    );
   }
   const [{ count: failed }] = (await controlDb
     .select({ count: sql<number>`count(*)::int` })

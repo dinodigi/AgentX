@@ -1,5 +1,6 @@
 import type { Collection } from "@/db/schema";
 import { fieldLocalized, type FieldDef } from "@/lib/field-types";
+import { toList, isClaimRule } from "@/lib/access-rules";
 
 /**
  * get_client_code generator: a typed, dependency-free TS client for the
@@ -88,7 +89,14 @@ function plan(c: Collection): CollectionPlan {
     ownerField: c.access?.ownerField ?? null,
     canRead: publicFieldDefs.length > 0,
     canCreate,
-    canMutate: write === "owner",
+    // E2 — the GENERATOR was wrong, not the docs. `gateMutate` allows PATCH and
+    // DELETE for "owner" (own rows) OR any matching claim rule (staff write on
+    // ANY row), and `write` may be a LIST of presets. `write === "owner"`
+    // matched neither a claim rule nor `["owner", {claim…}]`, so a staff-write
+    // collection generated a client with no update()/remove() at all — the
+    // endpoints existed and worked, but the typed client denied they did.
+    // Derived through the gate's OWN helpers so the two cannot drift apart.
+    canMutate: toList(write).some((w) => w === "owner" || isClaimRule(w)),
     canUpload: canCreate && c.fields.some((f) => f.type === "asset"),
     needsUser: (c.access?.read ?? "public") !== "public" || write !== "none",
   };
