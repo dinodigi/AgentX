@@ -3,6 +3,7 @@ import { accessSchema } from "@/lib/access-rules";
 import { FIELD_TYPE_SPECS, COMMON_FIELD_CONFIG } from "@/lib/field-types";
 import {
   getCollectionFresh,
+  SchemaConflictError,
   listCollectionsFresh,
   listCollectionNamesFresh,
   defineCollection,
@@ -493,7 +494,18 @@ export const TOOL_DEFS: ToolDef[] = [
       properties: {
         name: { type: "string", description: "snake_case slug, unique in the project" },
         displayName: { type: "string" },
-        fields: { type: "array", items: { type: "object" } },
+        fields: {
+          type: "array",
+          items: { type: "object" },
+          description:
+            "the collection's WHOLE field list (declarative — omitted fields are DROPPED). Required when creating.",
+        },
+        addFields: {
+          type: "array",
+          items: { type: "object" },
+          description:
+            "APPEND fields to an existing collection, leaving the rest untouched. Use this instead of re-sending `fields` when you only want to add: re-sending is a read-modify-write, so two agents adding different fields race and one field silently vanishes. Resolved against the CURRENT stored fields at write time. Mutually exclusive with `fields`; errors if a name already exists.",
+        },
         publicWrite: { type: "boolean", description: "allow public POST submissions (forms)" },
         webhookUrl: { type: "string", description: "fired on public-write submissions" },
         publicFilter: {
@@ -700,7 +712,7 @@ export const TOOL_DEFS: ToolDef[] = [
         },
         confirm: { type: "boolean", description: "required to apply destructive schema changes" },
       },
-      required: ["name", "fields"],
+      required: ["name"],
       additionalProperties: false,
     },
   },
@@ -1162,7 +1174,7 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "bulk_create_entries",
     description:
-      "Create up to 100 entries in one call (use for seeding). Each item is a BARE field object " +
+      "Create up to 500 entries in one call (use for seeding and imports). Each item is a BARE field object " +
       "({title:\"x\"}), NOT create_entry's {collection,data:{…}} wrapper — but a wrapped item is " +
       "unwrapped for you rather than failing, so carrying create_entry's shape across works. " +
       "Each item is validated like " +
@@ -1177,7 +1189,7 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: {
         collection: { type: "string" },
-        entries: { type: "array", items: { type: "object" }, maxItems: 100 },
+        entries: { type: "array", items: { type: "object" }, maxItems: 500 },
         allowExplicitWorkflowState: {
           type: "boolean",
           description: "migration/import only — accept explicit workflow states (audit-stamped)",
@@ -1593,7 +1605,11 @@ const writeHookSchema = z.object({
 const defineArgs = z.object({
   name: z.string(),
   displayName: z.string().optional(),
-  fields: z.array(z.any()),
+  // `fields` is the declarative whole-shape input; `addFields` is the additive
+  // one. Exactly one is required — enforced in the handler so the message can
+  // explain the choice rather than reading as a schema error.
+  fields: z.array(z.any()).optional(),
+  addFields: z.array(z.any()).optional(),
   publicWrite: z.boolean().optional(),
   webhookUrl: z.string().url().optional(),
   publicFilter: z.array(whereItemSchema).optional(),
@@ -2259,21 +2275,97 @@ export async function callTool(
 
       case "define_collection": {
         const a = defineArgs.parse(rawArgs);
-        const result = await defineCollection(projectId, {
-          name: a.name,
-          displayName: a.displayName,
-          fields: a.fields as never,
-          publicWrite: a.publicWrite,
-          webhookUrl: a.webhookUrl,
-          publicFilter: a.publicFilter,
-          access: a.access,
-          events: a.events,
-          workflow: a.workflow as never,
-          checkout: a.checkout as never,
-          hooks: a.hooks as never,
-          renames: a.renames,
-          confirm: a.confirm,
-        });
+
+        /**
+         * Additive field op. `define_collection` is declarative — it takes the
+         * WHOLE field list — so adding one field meant reading every existing
+         * field and sending them all back. That is not just typing: it is a
+         * read-modify-write, and two agents adding different fields to the same
+         * collection race, with the loser's field silently vanishing.
+         *
+         * `addFields` closes the window by resolving against the CURRENT stored
+         * fields here, immediately before the write, instead of against a copy
+         * the caller fetched at some earlier point.
+         */
+        if (a.addFields && a.fields) {
+          return err(
+            "pass either fields (the whole shape, declarative) or addFields (append only) — not both",
+            "E_VALIDATION",
+          );
+        }
+        if (!a.addFields && !a.fields) {
+          return err("define_collection needs fields (the whole shape) or addFields (append only)", "E_VALIDATION");
+        }
+        const fields = a.fields;
+
+        const runDefine = (f: unknown[], expectUpdatedAt?: Date) =>
+          defineCollection(projectId, {
+            name: a.name,
+            displayName: a.displayName,
+            fields: f as never,
+            publicWrite: a.publicWrite,
+            webhookUrl: a.webhookUrl,
+            publicFilter: a.publicFilter,
+            access: a.access,
+            events: a.events,
+            workflow: a.workflow as never,
+            checkout: a.checkout as never,
+            hooks: a.hooks as never,
+            renames: a.renames,
+            confirm: a.confirm,
+            ...(expectUpdatedAt ? { expectUpdatedAt } : {}),
+          });
+
+        let result;
+        if (a.addFields) {
+          /**
+           * Append under an optimistic-concurrency guard.
+           *
+           * A fresh read alone only NARROWS the lost-update window — a test with
+           * two concurrent adders caught both reporting success with one field
+           * gone. Verify-after-write does not rescue it either: each racer can
+           * verify before the other's write lands, see its own field, and stop.
+           * So the write itself carries the guard (`expectUpdatedAt`), and a
+           * conflict means nothing was applied and the whole resolve is redone
+           * against the new state. Bounded — an unbounded retry against a
+           * hostile writer is a spin, not a fix.
+           */
+          let lastErr;
+          for (let attempt = 0; attempt < 4; attempt++) {
+            const current = await getCollectionFresh(projectId, a.name);
+            if (!current) {
+              return err(
+                `no collection "${a.name}" — addFields extends an existing collection; use fields to create one`,
+                "E_NOT_FOUND",
+              );
+            }
+            const existing = new Set(current.fields.map((f) => f.name));
+            const clash = (a.addFields as { name?: string }[]).find((f) => f.name && existing.has(f.name));
+            if (clash) {
+              return err(
+                `field "${clash.name}" already exists on "${a.name}" — addFields only appends; use fields to change an existing field`,
+                "E_VALIDATION",
+              );
+            }
+            try {
+              result = await runDefine([...current.fields, ...a.addFields], current.updatedAt ?? undefined);
+              break;
+            } catch (e) {
+              if (!(e instanceof SchemaConflictError)) throw e;
+              lastErr = e;
+            }
+          }
+          if (!result) {
+            return err(
+              `"${a.name}" is being changed concurrently — retry the addFields call`,
+              "E_CONFLICT",
+            );
+          }
+          void lastErr;
+        } else {
+          result = await runDefine(fields!);
+        }
+
         if (!result.applied) {
           return ok({
             requiresConfirmation: true,
@@ -2693,7 +2785,7 @@ export async function callTool(
         const a = z
           .object({
             collection: z.string(),
-            entries: z.array(z.record(z.unknown())).max(100),
+            entries: z.array(z.record(z.unknown())).max(500),
             allowExplicitWorkflowState: z.boolean().optional(),
           })
           .parse(rawArgs);

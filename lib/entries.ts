@@ -1848,6 +1848,13 @@ export interface BulkItemResult {
 /** I5: per-item hook concurrency + the batch-size budget the cap is sized against. */
 const BULK_HOOK_CONCURRENCY = 5;
 const BULK_HOOK_BUDGET_MS = 7000; // ~8s host window minus room for the insert
+/**
+ * Ceiling for one bulk create. Bounded by the request/statement budget, NOT by
+ * the hook budget — a collection with a beforeCreate hook is capped far lower
+ * by the separate calculation below. Verified end-to-end against a real
+ * 500-item batch rather than picked as a round number.
+ */
+const BULK_MAX_ITEMS = 500;
 
 function bulkItemError(index: number, e: unknown): BulkItemResult {
   return {
@@ -1875,7 +1882,16 @@ export async function bulkCreateEntries(
     allowExplicitWorkflowState?: boolean;
   } = {},
 ): Promise<BulkItemResult[]> {
-  if (items.length > 100) throw new ValidationError("max 100 entries per bulk call");
+  // The flat cap used to be 100, which made real migrations chatty — a reporter
+  // measured a 3.1k-lead Salesforce import as ~31 round trips. That number was
+  // never the DB's limit: the reason bulk creates are bounded is the beforeCreate
+  // HOOK budget, and that has its own, separately computed cap immediately
+  // below. A collection with no hook was paying a cost it does not incur.
+  if (items.length > BULK_MAX_ITEMS) {
+    throw new ValidationError(
+      `max ${BULK_MAX_ITEMS} entries per bulk call (got ${items.length}) — split the batch`,
+    );
+  }
   await assertEntryCap(projectId, items.length); // B2 sandbox cap — whole batch
   await assertDataBytes(projectId); // byte ceiling (Track 4a)
   const hook = collection.hooks?.beforeCreate;

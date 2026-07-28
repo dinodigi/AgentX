@@ -31,6 +31,18 @@ describe("A3 — indexed date fields", () => {
     });
     assert.ok(r.ok, `indexed:true on a date must now be accepted: ${r.errorText}`);
     cid = await collectionId(p.id, "posts");
+    // Seed enough rows that the planner picks this index on COST, not because
+    // we disabled its alternatives. At three rows every plan is nearly free and
+    // a generic collection-index scan plus a sort is perfectly reasonable — so
+    // a plan assertion there tests the statistics, not the feature.
+    await mcp(p.mcpToken, "bulk_create_entries", {
+      collection: "posts",
+      entries: Array.from({ length: 400 }, (_, i) => ({
+        title: `seed ${i}`,
+        published_at: new Date(Date.UTC(2020, 0, 1 + i)).toISOString(),
+      })),
+    });
+    await sql`ANALYZE entries`;
   });
   after(() => p.destroy());
 
@@ -45,7 +57,9 @@ describe("A3 — indexed date fields", () => {
   it("it is a TEXT index — a cast expression would have been refused outright", async () => {
     const [row] = await sql`
       SELECT indexdef FROM pg_indexes
-      WHERE tablename = 'entries' AND indexdef ILIKE '%published_at%' LIMIT 1`;
+      WHERE tablename = 'entries'
+        AND indexdef ILIKE '%published_at%'
+        AND indexdef LIKE ${"%" + cid + "%"} LIMIT 1`;
     assert.ok(row, "the index must be present");
     assert.doesNotMatch(row.indexdef, /timestamptz|::timestamp/, "a cast index cannot be created at all");
   });
@@ -57,17 +71,24 @@ describe("A3 — indexed date fields", () => {
     // index USABLE for the predicate the query layer emits? (SET LOCAL inside a
     // transaction — neon's HTTP driver gives each query its own session, so a
     // bare SET would silently apply to nothing.)
+    // Scope to THIS run's collection. Earlier runs leave their own partial
+    // indexes behind, so an unordered LIMIT 1 over pg_indexes picks an
+    // arbitrary one — possibly for a dropped collection — and the assertion
+    // becomes a coin flip.
+    const scoped = cid;
     const [row] = await sql`
       SELECT indexdef FROM pg_indexes
-      WHERE tablename = 'entries' AND indexdef ILIKE '%published_at%' LIMIT 1`;
-    const scoped = row.indexdef.match(/collection_id = '([^']+)'/)?.[1];
-    assert.ok(scoped, "the filter index must be partial, scoped to its collection");
+      WHERE tablename = 'entries'
+        AND indexdef ILIKE '%published_at%'
+        AND indexdef LIKE ${"%" + cid + "%"} LIMIT 1`;
+    assert.ok(row, `no filter index for collection ${cid}`);
+    assert.match(row.indexdef, /collection_id = '/, "the filter index must be partial, scoped to its collection");
 
     const explain =
       `EXPLAIN SELECT id FROM entries WHERE collection_id='${scoped}' ` +
       `AND (data->>'published_at') > '2026-02-01T00:00:00.000Z' ORDER BY (data->>'published_at')`;
     const res = await sql.transaction([sql("SET LOCAL enable_seqscan = off"), sql(explain)]);
-    const plan = res[1].map((r) => r["QUERY PLAN"]).join("\n");
+    const plan = (res[res.length - 1] ?? []).map((r) => r["QUERY PLAN"]).join("\n");
 
     assert.match(plan, /Index Scan using entries_fx_/, `expected an index scan, got:\n${plan}`);
     assert.match(plan, /Index Cond:.*published_at/, "the range predicate must be an INDEX COND, not a filter");
@@ -91,20 +112,36 @@ describe("A3 — indexed date fields", () => {
     }
     const q = await mcp(p.mcpToken, "query_entries", {
       collection: "posts",
+      // Restrict to the probe rows: the collection also carries 400 seed rows
+      // (there to give the planner a cost-based reason to use the index), and
+      // they would otherwise fill the first page.
+      where: [{ field: "title", op: "in", value: ["first", "second", "third"] }],
       orderBy: { field: "published_at", dir: "asc" },
     });
     assert.ok(q.ok, q.errorText);
-    assert.deepEqual(q.value.entries.map((e) => e.data.title), ["first", "second", "third"]);
+    // The collection also carries seed rows, so assert the RELATIVE order of
+    // the three that matter rather than the whole list.
+    const order = q.value.entries
+      .map((e) => e.data.title)
+      .filter((t) => ["first", "second", "third"].includes(t));
+    assert.deepEqual(order, ["first", "second", "third"]);
   });
 
   it("a range filter written in another offset still selects the right rows", async () => {
     // 2026-02-01T00:00:00+00:00 expressed as a +05:00 wall clock.
     const q = await mcp(p.mcpToken, "query_entries", {
       collection: "posts",
-      where: [{ field: "published_at", op: "gt", value: "2026-02-01T05:00:00+05:00" }],
+      where: [
+        { field: "published_at", op: "gt", value: "2026-02-01T05:00:00+05:00" },
+        { field: "title", op: "in", value: ["first", "second", "third"] },
+      ],
     });
     assert.ok(q.ok, q.errorText);
-    assert.deepEqual(q.value.entries.map((e) => e.data.title).sort(), ["second", "third"]);
+    const hit = q.value.entries
+      .map((e) => e.data.title)
+      .filter((t) => ["first", "second", "third"].includes(t))
+      .sort();
+    assert.deepEqual(hit, ["second", "third"]);
   });
 
   it("the indexed and UNINDEXED paths agree exactly", async () => {

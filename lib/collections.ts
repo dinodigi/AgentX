@@ -127,10 +127,30 @@ export async function getCollectionFresh(
   return rows[0] ? revive(rows[0]) : null;
 }
 
+/** The optimistic-concurrency guard fired: re-read and retry. */
+export class SchemaConflictError extends Error {
+  constructor(public readonly collection: string) {
+    super(`"${collection}" changed concurrently — re-read and retry`);
+    this.name = "SchemaConflictError";
+  }
+}
+
 export interface DefineCollectionInput {
   name: string;
   displayName?: string;
   fields: FieldDef[];
+  /**
+   * Optimistic-concurrency guard. When set, the write applies ONLY if the
+   * collection's `updatedAt` still equals this value; otherwise it throws
+   * SchemaConflictError and nothing is written.
+   *
+   * Exists for the additive-field path, where a plain read-modify-write loses
+   * a concurrent adder's field: two callers read the same list, each appends
+   * its own, and the second write erases the first while BOTH report success.
+   * Verify-and-retry does not rescue it either — each racer can verify before
+   * the other's write lands, see its own field, and stop.
+   */
+  expectUpdatedAt?: Date;
   publicWrite?: boolean;
   webhookUrl?: string | null;
   /**
@@ -1332,6 +1352,9 @@ export async function defineCollection(
     .values(values)
     .onConflictDoUpdate({
       target: [collections.projectId, collections.name],
+      ...(input.expectUpdatedAt
+        ? { setWhere: eq(collections.updatedAt, input.expectUpdatedAt) }
+        : {}),
       set: {
         displayName: values.displayName,
         fields: values.fields,
@@ -1347,6 +1370,10 @@ export async function defineCollection(
       },
     })
     .returning();
+
+  // setWhere failed => zero rows => somebody else wrote first. Nothing has been
+  // applied, so this is safe to retry.
+  if (!row) throw new SchemaConflictError(input.name);
 
   if (!current) {
     await syncUniqueIndexes(projectId, row.id, [], fields);

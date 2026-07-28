@@ -540,7 +540,15 @@ Create or update a collection (a data model). `fields` is an array of field defs
       "type": "array",
       "items": {
         "type": "object"
-      }
+      },
+      "description": "the collection's WHOLE field list (declarative — omitted fields are DROPPED). Required when creating."
+    },
+    "addFields": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "APPEND fields to an existing collection, leaving the rest untouched. Use this instead of re-sending `fields` when you only want to add: re-sending is a read-modify-write, so two agents adding different fields race and one field silently vanishes. Resolved against the CURRENT stored fields at write time. Mutually exclusive with `fields`; errors if a name already exists."
     },
     "publicWrite": {
       "type": "boolean",
@@ -934,8 +942,7 @@ Create or update a collection (a data model). `fields` is an array of field defs
     }
   },
   "required": [
-    "name",
-    "fields"
+    "name"
   ],
   "additionalProperties": false
 }
@@ -2127,7 +2134,7 @@ Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggreg
 
 ## `bulk_create_entries`
 
-Create up to 100 entries in one call (use for seeding). Each item is a BARE field object ({title:"x"}), NOT create_entry's {collection,data:{…}} wrapper — but a wrapped item is unwrapped for you rather than failing, so carrying create_entry's shape across works. Each item is validated like create_entry; returns per-item results so you can fix only the failures. A beforeCreate hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the consults fit the host budget (ceil(n/5)×timeout), and an over-cap batch is refused with a 'split the batch' hint. allowExplicitWorkflowState is the MIGRATION escape hatch: load historical records at their real workflow states instead of being forced to `initial` (imports/backfills only; audit-stamped).
+Create up to 500 entries in one call (use for seeding and imports). Each item is a BARE field object ({title:"x"}), NOT create_entry's {collection,data:{…}} wrapper — but a wrapped item is unwrapped for you rather than failing, so carrying create_entry's shape across works. Each item is validated like create_entry; returns per-item results so you can fix only the failures. A beforeCreate hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the consults fit the host budget (ceil(n/5)×timeout), and an over-cap batch is refused with a 'split the batch' hint. allowExplicitWorkflowState is the MIGRATION escape hatch: load historical records at their real workflow states instead of being forced to `initial` (imports/backfills only; audit-stamped).
 
 **Input schema:**
 
@@ -2143,7 +2150,7 @@ Create up to 100 entries in one call (use for seeding). Each item is a BARE fiel
       "items": {
         "type": "object"
       },
-      "maxItems": 100
+      "maxItems": 500
     },
     "allowExplicitWorkflowState": {
       "type": "boolean",
