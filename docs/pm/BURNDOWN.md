@@ -91,6 +91,23 @@ nothing.
    many items — far better than interrupting per item.
 4. **Checkpoint → push.** Then repeat.
 5. **Reconcile.** `npm run pm` after each checkpoint; the number must go down.
+   It prints progress two ways, and the gap between them is the point:
+
+   ```
+   FEEDBACK WALL   ███████░░░░░░░░░░░░░  34% by effort
+                   14/32 items closed (44% by count) · 34/99 effort points
+   ```
+
+   **By count flatters us.** The cheap items were batched first on purpose, so
+   counting alone would make the burn-down look like it stalls later when it is
+   really just meeting the bigger work. **By effort is the number to quote** —
+   it weights each item by its `(S)`/`(M)`/`(L)` tag in [QUEUE.md](QUEUE.md).
+   An open item with no tag counts as `(M)`, never zero: an untagged item must
+   not be free. A duplicate report of a fix already counted is `(S)`, since it
+   closes with the same commit.
+
+   The backlog reports separately at 0% until CP10 — folding 44 untriaged items
+   into one headline number would be a guess wearing a percentage.
 
 ## Definition of done for the burn-down
 

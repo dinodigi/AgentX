@@ -27,7 +27,7 @@ function replaceBlock(doc, name, body) {
 
 // ── 1. Feedback wall ──────────────────────────────────────────────────────
 const open = await sql`
-  SELECT f.category, f.summary, f.status, f.created_at, p.name AS project
+  SELECT f.id, f.category, f.summary, f.status, f.created_at, p.name AS project
   FROM platform_feedback f LEFT JOIN projects p ON p.id = f.project_id
   WHERE f.status IN ('new','planned')
     AND (p.name IS NULL OR p.name NOT ILIKE 'smoke%')
@@ -112,7 +112,50 @@ doc = replaceBlock(doc, "WALL", wall);
 doc = replaceBlock(doc, "BACKLOG", backlogBlock);
 writeFileSync(BOARD, doc);
 
+// ── burn-down progress ────────────────────────────────────────────────────
+// Two numbers, because one would mislead. COUNT flatters us — the cheap items
+// were batched first on purpose. EFFORT is the honest one: it weights each item
+// by the size tagged in QUEUE.md, so the percentage does not appear to stall
+// later when the burn-down is really just meeting the bigger work.
+const WEIGHT = { S: 1, M: 3, L: 8 };
+const queueDoc = readFileSync(new URL("../docs/pm/QUEUE.md", import.meta.url), "utf8");
+const sizeBlock = queueDoc.match(/<!-- SIZES([\s\S]*?)-->/);
+const sizes = new Map();
+if (sizeBlock) {
+  for (const [, id, sz] of sizeBlock[1].matchAll(/([0-9a-f]{8})\s+([SML])\b/g)) {
+    sizes.set(id, WEIGHT[sz]);
+  }
+}
+
+// Anything tagged but no longer open has been closed. An open item with no tag
+// is counted at M rather than skipped — an untagged item must never be free.
+const openIds = new Set(open.map((o) => String(o.id).slice(0, 8)));
+let doneEffort = 0;
+let openEffort = 0;
+let doneCount = 0;
+for (const [id, w] of sizes) {
+  if (openIds.has(id)) { openEffort += w; } else { doneEffort += w; doneCount++; }
+}
+for (const o of open) {
+  if (!sizes.has(String(o.id).slice(0, 8))) openEffort += WEIGHT.M;
+}
+const totalEffort = doneEffort + openEffort;
+const totalCount = doneCount + open.length;
+const pct = (a, b) => (b === 0 ? 100 : Math.round((a / b) * 100));
+
+const bar = (p) => "█".repeat(Math.round(p / 5)).padEnd(20, "░");
+
 console.log(
   `pm: refreshed ${BOARD} — wall ${open.length} open (${repeats} repeat theme[s]), ` +
     `backlog ${bl.length} unshipped (${high.length} high)`,
+);
+console.log("");
+console.log(`  FEEDBACK WALL   ${bar(pct(doneEffort, totalEffort))}  ${pct(doneEffort, totalEffort)}% by effort`);
+console.log(`                  ${doneCount}/${totalCount} items closed (${pct(doneCount, totalCount)}% by count) · ${doneEffort}/${totalEffort} effort points`);
+console.log(`  BACKLOG         ${bar(0)}  not yet triaged — ${bl.length} items await CP10`);
+console.log("");
+console.log(
+  `  Remaining wall work is ${openEffort} points across ${open.length} items ` +
+    `(avg ${(openEffort / Math.max(open.length, 1)).toFixed(1)} vs ${(doneEffort / Math.max(doneCount, 1)).toFixed(1)} for what is done) ` +
+    `— the rest is heavier, by design.`,
 );

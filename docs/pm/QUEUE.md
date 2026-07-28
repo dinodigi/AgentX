@@ -10,6 +10,28 @@ already shipped and still reading `new`).
 
 ⚑ = blocked on an operator decision. Everything else I drive.
 
+**Effort sizes** — `(S)`=1, `(M)`=3, `(L)`=8, parsed by `npm run pm` to compute
+progress. A raw item count would flatter us: the cheap items were deliberately
+batched first, so counting alone makes the burn-down look like it stalls later
+when it is really just meeting the bigger work. A duplicate report of a fix
+already counted elsewhere is `(S)` — it closes with the same commit, so charging
+full effort twice would inflate the total.
+
+<!-- SIZES
+16d745d3 S   2bdec2b0 S   2684fec0 L   8570cb24 M   73a14ef7 M   de626cb6 S
+1c10d760 S   42a6d515 S   0a5ce08c L   66d1cbd9 S   9c2333cb M   e0b6eb32 M
+eff3e105 L   0ceec805 L   a1fb8001 M   34acd74d S   cbf4db8f L   6809681c M
+a61039c4 M   75f9f4f7 S   e9628701 M   9c61bc7a S   95b660d1 M   74e7016d S
+d128f35a M   ad690ade M   4fae3449 M   5e8146d8 S   1a24b96b M   4847bc14 M
+58aaca1e M   921f9ec7 M
+-->
+
+## CP-extra — carried in from triage
+
+| Item | Disposition | |
+|---|---|---|
+| `2bdec2b0` (S) — unauthenticated GET on an access-ruled collection returns 404, not 401 | 🔨 SHIP | **reproduce first.** `93-fresh-reads` already asserts anonymous callers get a bare 401 with no collection names leaked, so this may be fixed or may be a different path. Non-enumeration is the constraint either way. |
+
 ---
 
 ## CP2 — Papercuts (Track B + the `ne` surprise) — SHIPPED 0dbf3ff
