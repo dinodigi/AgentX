@@ -80,21 +80,19 @@ unrelated testers hit.
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=51 · new=6 · planned=10 · reviewed=2_
+_Wall totals: done=53 · new=5 · planned=9 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_16 open (6 new, 10 planned) · 0 theme(s) reported more than once · snapshot 2026-07-28 17:58Z_
+_14 open (5 new, 9 planned) · 0 theme(s) reported more than once · snapshot 2026-07-28 20:38Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
-| ⬜ | 07-26 | xvibe | limitation | A collection cannot combine anonymous form intake (publicWrite POST) with claim-gated d… |
 | ⬜ | 07-26 | xvibe | idea | XVibe-class static apps need an edge proxy solely to hold the delivery token — a browse… |
 | ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
 | ⬜ | 07-26 | jabed test | limitation | publicFilter cannot express relative time, so "serve this row only while now is between… |
 | ⬜ | 07-26 | jabed test | limitation | Array fields cannot be filtered on the delivery API, so a tag archive has to fetch ever… |
 | ⬜ | 07-26 | jabed test | idea | Workflow transitions gate on ACTOR but not on row state, so "you may not launch a campa… |
-| 🗓️ | 07-18 | CSLP | friction | Docs say publicWrite POST is 'anonymous', but a truly tokenless POST returns 401 E_AUTH… |
 | 🗓️ | 07-18 | CSLP | friction | Unauthenticated GET on an access-ruled collection returns 404 E_NOT_FOUND instead of 40… |
 | 🗓️ | 07-18 | CSLP | limitation | No date bucketing and no second groupBy dimension - by-month pipeline, closed volume by… |
 | 🗓️ | 07-18 | CSLP | limitation | No counting/capacity constraint: unique gives exactly-one-per-key, but 'max N rows per … |
@@ -109,7 +107,7 @@ _16 open (6 new, 10 planned) · 0 theme(s) reported more than once · snapshot 2
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_44 unshipped (10 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_45 unshipped (10 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
 **These are NOT started.** A sprint is a commitment; this is a list. High priority only:
 
@@ -126,7 +124,7 @@ _44 unshipped (10 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md
 | 📥 | **WP-3** | Fix the hooks×bulk contract contradiction: `define_collection.hooks` says bulk is "refus |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 34 at M/L priority._
+_…plus 35 at M/L priority._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)
