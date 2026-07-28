@@ -159,6 +159,37 @@ const RESOLUTIONS = {
       'fail-closed meaning, which publicFilter depends on. SQL and the in-memory matcher are ' +
       'tested against each other, since a divergence would match in lists but fail single-entry gates.',
   },
+
+  // --- CP3: the two open bugs (commit 65fa439) -----------------------------
+  "58aaca1e": {
+    disposition: "SHIPPED",
+    ref: "65fa439",
+    note:
+      "You were right, and the evidence you supplied is what proved it — upload_asset succeeding " +
+      "while the badge said error was the whole case. Root cause was not a broken probe but a " +
+      "category error: the health check persists a POINT-IN-TIME probe as durable state, and a " +
+      "probe that THREW (DNS, timeout, egress blip) wrote 'error' permanently until someone " +
+      "re-tested. Your timeline confirms it: those connectors were created 01:11-01:16, you filed " +
+      "at 01:42, and they were not touched again until 03:26 — which is when they went green. The " +
+      "three that failed are exactly the three whose probes make OUTBOUND HTTP calls; neon, a " +
+      "direct DB connection, was unaffected. Two fixes: a probe that fails to RUN no longer " +
+      "overwrites the stored verdict (an unknown must not replace a known-good), and health now " +
+      "carries checkedAt, so the notice reads 'FAILED ITS LAST CHECK 3h ago — may be working now' " +
+      "instead of asserting a live fault we never observed.",
+  },
+  "921f9ec7": {
+    disposition: "SHIPPED",
+    ref: "65fa439",
+    note:
+      "You asked whether the generator or the docs was wrong. It was the GENERATOR. gateMutate " +
+      "allows PATCH/DELETE for 'owner' OR any matching claim rule (staff write on any row), and " +
+      "access.write may be a LIST — but the generator tested write === 'owner', which matched " +
+      "neither a lone claim rule nor ['owner', {claim}]. The endpoints existed and worked the " +
+      "whole time; the typed client simply denied they did. canMutate is now derived through the " +
+      "gate's OWN helpers so the two cannot drift apart again, and a test confirms the PATCH route " +
+      "really exists (a gate refusal, never a 405) so we have not taught the client to lie in the " +
+      "other direction.",
+  },
 };
 
 const stamp = (r) =>

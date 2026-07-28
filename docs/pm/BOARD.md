@@ -80,17 +80,15 @@ unrelated testers hit.
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=47 · new=9 · planned=11 · reviewed=2_
+_Wall totals: done=49 · new=7 · planned=11 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_20 open (9 new, 11 planned) · 1 theme(s) reported more than once · snapshot 2026-07-28 08:29Z_
+_18 open (7 new, 11 planned) · 1 theme(s) reported more than once · snapshot 2026-07-28 09:39Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
-| ⬜ | 07-26 | xvibe | bug | briefing.health reports r2/clerk/resend connectors as "error" on project xvibe while R2… |
 | ⬜ | 07-26 | xvibe | limitation | A collection cannot combine anonymous form intake (publicWrite POST) with claim-gated d… |
-| ⬜ | 07-26 | xvibe | friction | get_client_code generated no update()/remove() methods for a collection whose access.wr… |
 | ⬜ | 07-26 | xvibe | idea | XVibe-class static apps need an edge proxy solely to hold the delivery token — a browse… |
 | ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
 | ⬜ | 07-26 | jabed test | limitation | publicFilter cannot express relative time, so "serve this row only while now is between… |
