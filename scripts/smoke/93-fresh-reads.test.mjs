@@ -162,3 +162,64 @@ describe("verifyConnection probe targeting (friction C2 follow-up)", () => {
     assert.match(r.value.code, /connected and authenticated — but the probe collection no longer exists/);
   });
 });
+
+// Field-signal sprint A2 + A4 — both from repeat reports.
+describe("convergence honesty + stateless transport (A2/A4)", () => {
+  let p;
+
+  before(async () => {
+    await ensureServer();
+    p = await createEphemeralProject("a2-a4");
+    await mcp(p.mcpToken, "define_collection", {
+      name: "posts",
+      fields: [{ name: "title", label: "T", type: "text", required: true, publicRead: true }],
+    });
+  });
+  after(() => p.destroy());
+
+  it("A2: entry writes carry a convergence note naming BOTH timing and visibility", async () => {
+    // The gap jabed lost time to: define_collection explained itself, entry
+    // writes said nothing, so a 15s delay read as a bug.
+    const created = await mcp(p.mcpToken, "create_entry", {
+      collection: "posts",
+      data: { title: "convergence" },
+    });
+    assert.ok(created.ok, created.errorText);
+    assert.match(created.value.convergence, /15s/, "names the timing gap");
+    assert.match(created.value.convergence, /publicFilter/, "names the VISIBILITY gap too");
+
+    const updated = await mcp(p.mcpToken, "update_entry", {
+      collection: "posts",
+      id: created.value.id,
+      data: { title: "still converging" },
+    });
+    assert.match(updated.value.convergence, /15s/);
+
+    const deleted = await mcp(p.mcpToken, "delete_entry", { collection: "posts", id: created.value.id });
+    assert.match(deleted.value.convergence, /15s/);
+  });
+
+  it("A4: get_project_info documents the stateless transport", async () => {
+    const info = await mcp(p.mcpToken, "get_project_info", {});
+    const t = info.value.deliveryApi.statelessTransport;
+    assert.ok(t, "three testers discovered this by probing — it must be documented");
+    assert.match(t, /NO initialize handshake/i);
+    assert.match(t, /session id/i);
+    assert.match(t, /result\.content\[0\]\.text/, "tells them how to read a result");
+  });
+
+  it("A4: and the claim is TRUE — a bare tools/call works with no handshake", async () => {
+    // Documenting something false would be worse than documenting nothing.
+    const res = await fetch(`${process.env.SMOKE_BASE ?? "http://localhost:3000"}/api/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${p.mcpToken}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "tools/call",
+        params: { name: "count_entries", arguments: { collection: "posts" } },
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(!body.result?.isError, "a first-contact tools/call must succeed");
+  });
+});

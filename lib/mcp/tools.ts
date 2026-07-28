@@ -1713,6 +1713,27 @@ export interface ToolContext {
   callerScopes?: string[] | null;
 }
 
+/**
+ * A2 — the convergence contract for ENTRY writes.
+ *
+ * `define_collection` already returned a convergence note; entry mutations
+ * returned nothing, so the ~15s gap after a write read as a bug rather than a
+ * documented property. A field report (jabed, 2026-07-26) lost debugging time
+ * to exactly that: publish over MCP, read back over delivery, get an empty
+ * array, start hunting a publicFilter misconfiguration that did not exist.
+ *
+ * Both halves matter and the second is the one nobody expects: the surfaces
+ * disagree on TIMING (~15s cache) *and* on VISIBILITY (delivery enforces
+ * publicFilter and access rules; MCP reads do not). A row can therefore be
+ * permanently invisible to delivery while being perfectly readable over MCP.
+ *
+ * Kept to one line — it rides on every entry write, so verbosity is a real
+ * token cost for an agent doing bulk work.
+ */
+const ENTRY_CONVERGENCE =
+  "visible to MCP reads immediately; the delivery API converges within ~15s AND applies " +
+  "publicFilter/access rules, so a row can be readable here yet absent there";
+
 export async function callTool(
   projectId: string,
   name: string,
@@ -2150,6 +2171,21 @@ export async function callTool(
               "token reads/writes published content at {deliveryBase} (public API your site/app uses). " +
               "A delivery token on the MCP endpoint (or vice versa) is rejected with E_SCOPE — mint the " +
               "right scope in Settings → Tokens.",
+            // A4 — THREE independent testers (Hatchly, Fatsoz 2026-07-20,
+            // jabed 2026-07-26) each discovered this by PROBING the endpoint,
+            // and each called it a significant integration advantage. One
+            // avoided adopting the MCP SDK entirely and wrote a 40-line fetch
+            // client instead. Undocumented advantages that people pay to
+            // discover are just friction wearing a compliment.
+            statelessTransport:
+              "SERVER-SIDE INTEGRATION: {mcpEndpoint} is STATELESS. A bare JSON-RPC POST works with " +
+              "NO initialize handshake and NO session id — {jsonrpc:'2.0',id:1,method:'tools/call'," +
+              "params:{name,arguments}} with an Authorization: Bearer header is the whole protocol. " +
+              "You do NOT need the MCP SDK or a persistent transport, which matters in serverless " +
+              "route handlers where nothing survives between invocations. Use this for privileged " +
+              "writes the delivery API cannot do (workflow transitions, non-public reads, atomic " +
+              "increments). Tool results come back as JSON text in result.content[0].text; errors " +
+              "set result.isError with a stable E_* code. Rate limit: 300 calls/min/project.",
             batch:
               "POST {deliveryBase}/batch { queries: [{collection, params?}, ...] } (max 10) answers " +
               "several reads in ONE round trip — params = the same keys as the list GET's query " +
@@ -2314,14 +2350,14 @@ export async function callTool(
           actor: a.allowExplicitWorkflowState ? { type: "mcp", explicitWorkflowState: true } : { type: "mcp" },
           allowExplicitWorkflowState: a.allowExplicitWorkflowState,
         });
-        return ok({ id: e.id, data: e.data });
+        return ok({ id: e.id, data: e.data, convergence: ENTRY_CONVERGENCE });
       }
 
       case "update_entry": {
         const a = updateArgs.parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         const e = await updateEntry(projectId, c, a.id, a.data, { type: "mcp" });
-        return ok({ id: e.id, data: e.data });
+        return ok({ id: e.id, data: e.data, convergence: ENTRY_CONVERGENCE });
       }
 
       case "update_entry_if": {
@@ -2360,7 +2396,7 @@ export async function callTool(
         const a = updateArgs.omit({ data: true }).parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         await deleteEntry(c, a.id, { type: "mcp" });
-        return ok({ deleted: a.id });
+        return ok({ deleted: a.id, convergence: ENTRY_CONVERGENCE });
       }
 
       case "list_trash": {

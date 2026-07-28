@@ -524,7 +524,7 @@
           },
           "workflow": {
             "type": "object",
-            "description": "declarative state machine over ONE enum field: {field, initial, transitions:[{from: state|state[], to: state, actors?: (mcp|admin|delivery)[], actions?: [event action]}]}. initial is enforced on EVERY create path (including bulk_create_entries and public/delivery writes — an explicit non-initial value is rejected; for MIGRATIONS, create_entry/bulk_create_entries accept allowExplicitWorkflowState:true to load historical records at their real states, audit-stamped). The field then moves ONLY via a declared transition; an illegal move is rejected with the allowed targets, and a target no transition reaches from the current state conflicts. Transitions are ACTOR-GATED — by default only mcp and admin may transition; add 'delivery' to a transition's actors to let end users drive it (e.g. an owner cancelling their own request). NOTE: 'admin' includes client-role members in v1. Overlapping (from,to) pairs are rejected at define time so every move resolves one transition. A matched transition fires its actions as an entry.transitioned event (webhook/email, immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
+            "description": "declarative state machine over ONE enum field: {field, initial, transitions:[{from: state|state[], to: state, actors?: (mcp|admin|delivery)[], actions?: [event action]}]}. initial is enforced on EVERY create path (including bulk_create_entries and public/delivery writes — an explicit non-initial value is rejected; for MIGRATIONS, create_entry/bulk_create_entries accept allowExplicitWorkflowState:true to load historical records at their real states, audit-stamped). The field then moves ONLY via a declared transition; an illegal move is rejected with the allowed targets, and a target no transition reaches from the current state conflicts. Transitions are ACTOR-GATED. Actors: 'mcp' (agents with an mcp token) · 'operator' (workspace members + platform operators — THIS is staff) · 'client' (invited project-role members) · 'delivery' (end users on the public API) · 'admin' (DEPRECATED alias meaning operator OR client). Default is ['mcp','admin']. ⚠️ IF YOU WANT STAFF-ONLY, USE 'operator' — NOT 'admin'. 'admin' means anyone acting through the project admin UI, INCLUDING invited client-role members, so actors:['mcp','admin'] is NOT an authorization boundary against your own clients. Two independent integrators read it that way and were wrong. Add 'delivery' to let end users drive a transition (e.g. an owner cancelling their own request). Overlapping (from,to) pairs are rejected at define time so every move resolves one transition. A matched transition fires its actions as an entry.transitioned event (webhook/email, immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
             "properties": {
               "field": {
                 "type": "string",
@@ -551,6 +551,8 @@
                         "type": "string",
                         "enum": [
                           "mcp",
+                          "operator",
+                          "client",
                           "admin",
                           "delivery"
                         ]

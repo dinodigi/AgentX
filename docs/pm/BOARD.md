@@ -17,9 +17,9 @@ unrelated testers hit.
 | ID | Item | State | Note |
 |---|---|---|---|
 | A1 | `admin` workflow actor silently includes client-role members | ✅ | Shipped — `operator`/`client` split, `admin` kept as a permissive alias so no live workflow tightens. 3 tests. |
-| A2 | Two read planes disagree; only schema returns a convergence note | ⬜ | Hatchly + jabed + our own G2. Cheap half: add the note to entry writes. |
+| A2 | Two read planes disagree; only schema returns a convergence note | ✅ | Hatchly + jabed + our own G2. Cheap half: add the note to entry writes. |
 | A3 | `indexed` rejected on date fields | ⬜ | Fatsoz + jabed. `published_at` has no substitute. |
-| A4 | Stateless MCP-over-HTTP undocumented | ⬜ | **3 reporters.** Cheapest item on the board. |
+| A4 | Stateless MCP-over-HTTP undocumented | ✅ | **3 reporters.** Cheapest item on the board. |
 | A5 | Anonymous intake cannot coexist with gated writes | ⬜ | CSLP + xvibe. Most common shape on the platform needs 2 collections. |
 
 ### B · Cheap ergonomics
