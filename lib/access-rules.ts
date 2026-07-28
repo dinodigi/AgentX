@@ -207,6 +207,26 @@ export async function gateCreate(
     return denied(403, "public write is not enabled for this collection");
   }
 
+  /**
+   * A5 — publicWrite and access.write COMPOSE; they used to replace each other.
+   *
+   * Any non-`none` write rule sent a tokenless POST to requireUser and a 401,
+   * so "anonymous form in, staff triage desk" — the single most common shape on
+   * the platform — forced splitting one collection into two. Two reporters hit
+   * it independently. Now: publicWrite governs the ANONYMOUS create, and
+   * access.write governs authenticated creates and every PATCH/DELETE
+   * (gateMutate is untouched, so nothing becomes mutable that was not).
+   *
+   * Org stays excluded: an org-scoped row needs a claim to attribute it to, and
+   * define-time already bars org + anonymous write. Fail-closed by omission.
+   *
+   * An INVALID token still 401s rather than silently downgrading to anonymous —
+   * presenting a broken credential is not the same as presenting none, and
+   * masking it would hide real auth bugs from the caller.
+   */
+  const anonymousIntake = Boolean(collection.publicWrite) && !org;
+  if (anonymousIntake && !userToken) return { ok: true, user: null };
+
   const auth = await requireUser(projectId, collection, userToken);
   if (!auth.ok) return auth.gate;
   const user = auth.user;
@@ -220,6 +240,12 @@ export async function gateCreate(
     (p) => p === "authenticated" || p === "owner" || (isClaimRule(p) && claimMatches(user, p)),
   );
   if (passed) return { ok: true, user };
+  // A5: on a publicWrite collection, refusing a signed-in user who misses the
+  // claim would be security theatre — they can drop the token and post
+  // anonymously, which is strictly more permissive. So allow it, but ATTRIBUTED
+  // (user, not null) so ownerField is still stamped: making someone
+  // de-authenticate to succeed would lose the attribution we actually want.
+  if (anonymousIntake) return { ok: true, user };
   return accessDenied(presets, user);
 }
 

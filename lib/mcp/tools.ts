@@ -515,10 +515,13 @@ export const TOOL_DEFS: ToolDef[] = [
             "owner/authenticated need ownerField (a text field, auto-stamped from the JWT sub — never " +
             'client-set); claim rules don\'t. write:"owner" enables PATCH/DELETE of OWN rows; a matching ' +
             "claim-write is staff write (mutate ANY row). " +
-            "INTERACTION with publicWrite: access.read coexists with publicWrite (anonymous POST keeps " +
-            "working; reads become gated) — but a non-none access.write REPLACES the anonymous path " +
-            "(POST then requires X-User-Token; the response carries an accessNote saying so). For an " +
-            '"anyone submits, only staff read" inbox: publicWrite:true + access.read only. ' +
+            "INTERACTION with publicWrite: they COMPOSE, per verb. publicWrite governs the ANONYMOUS " +
+            "POST; access.write governs PATCH/DELETE (and what a signed-in creator is attributed as). " +
+            'So the classic "anyone submits, only staff triage" desk is ONE collection: publicWrite:true ' +
+            '+ write:{claim:"role",equals:"staff"} — no need to split intake from the queue. ' +
+            "To close anonymous submission, set publicWrite:false. NOTE: publicWrite cannot combine with " +
+            "an owner scope or org — an anonymous row has no verified identity to attribute, so it would " +
+            "be orphaned; that combination is refused at define time. " +
             "org:{claim,field} scopes EVERY read/write to the user's org: field (a text field) is " +
             "stamped from the JWT claim on create and stripped from PATCH bodies; rows are invisible " +
             "to other orgs and to tokens lacking the claim (fail-closed 403). org can't combine with " +

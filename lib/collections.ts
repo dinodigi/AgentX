@@ -242,10 +242,18 @@ async function validateAccessAndEvents(
     // create. Such a create has no verified identity, so it can never be
     // attributed to an owner or org — reject the combo at define time rather
     // than silently storing a client-chosen (forgeable) identity value.
-    const anonWrite = writeList.length === 1 && writeList[0] === "none" && publicWrite === true;
+    // A5: publicWrite now opens an anonymous create path REGARDLESS of
+    // access.write — the two compose rather than replace each other — so this
+    // bar must fire whenever publicWrite is on, not only when write is exactly
+    // "none". Otherwise publicWrite + write:"owner" would quietly produce
+    // owner-LESS rows: stampIdentity strips the field it cannot verify, so they
+    // are invisible to owner-scoped reads and unmutatable forever. Not a
+    // forgery risk, but a silent data trap, which is what this gate exists to
+    // stop. (Checked against live data first — no collection uses the combo.)
+    const anonWrite = publicWrite === true;
     if (anonWrite && (readList.includes("owner") || writeList.includes("owner"))) {
       throw new ValidationError(
-        'owner-scoped collections cannot accept anonymous writes: an anonymous create cannot be attributed to an owner (the client would control ownerField). Set access.write to "authenticated" or "owner" (or a claim rule), or drop owner/publicWrite',
+        'owner-scoped collections cannot accept anonymous writes: an anonymous create cannot be attributed to an owner (the client would control ownerField), so the row would be orphaned — invisible to owner-scoped reads and permanently unmutatable. Either drop publicWrite and use access.write "authenticated"/"owner", or drop the owner scope and gate mutations with a claim rule (publicWrite + a claim write is the anonymous-intake/staff-triage shape)',
       );
     }
     // F3: org row scoping — every row carries the user's org claim, fail-closed.
@@ -1412,18 +1420,23 @@ export async function defineCollection(
   // in the response instead of letting the integrator discover it via 401s.
   const writeRules = input.access?.write;
   const writeList = writeRules === undefined ? ["none"] : Array.isArray(writeRules) ? writeRules : [writeRules];
-  const anonymousDisabled = (input.publicWrite ?? false) && !(writeList.length === 1 && writeList[0] === "none");
+  // A5: publicWrite + a write rule is no longer a conflict to warn about — the
+  // two COMPOSE. It is still worth saying out loud, because which half governs
+  // which verb is the thing authors get wrong.
+  const composedWrite = (input.publicWrite ?? false) && !(writeList.length === 1 && writeList[0] === "none");
   return {
     applied: true,
     collection: row,
     diff,
     ...(constraintWarnings.length > 0 ? { constraintWarnings } : {}),
-    ...(anonymousDisabled
+    ...(composedWrite
       ? {
           accessNote:
-            "publicWrite + access.write: identity-gated write rules REPLACE the anonymous submission path — " +
-            "POST now requires X-User-Token. For anonymous forms, drop access.write (access.read alone keeps " +
-            "anonymous submissions working).",
+            "publicWrite + access.write COMPOSE: anonymous POST stays open (publicWrite governs it), while " +
+            "PATCH/DELETE require access.write — this is the 'anyone submits, only staff triage' shape. A " +
+            "signed-in user who does not meet access.write may still POST (they could drop the token and " +
+            "post anonymously anyway), but their row is attributed to them. To close anonymous submission, " +
+            "set publicWrite:false.",
         }
       : {}),
   };

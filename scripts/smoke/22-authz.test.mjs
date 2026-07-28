@@ -457,7 +457,13 @@ describe("authz: Phase-12 review regressions", () => {
     assert.equal(anon.status, 201, JSON.stringify(anon.json));
   });
 
-  it("publicWrite + non-none access.write: define says so out loud (accessNote) and POST requires identity", async () => {
+  // A5 (2026-07-28): this used to assert that a non-none access.write REPLACED
+  // the anonymous path, and that a tokenless POST 401'd. Two field reporters
+  // independently showed that rule forced "public form in, staff triage desk" —
+  // the most common shape on the platform — to be split across two collections.
+  // publicWrite and access.write now COMPOSE, per verb, so the contract this
+  // test pins has deliberately changed.
+  it("publicWrite + non-none access.write: define says so out loud (accessNote) and anonymous POST still works", async () => {
     const d = await mcp(p.mcpToken, "define_collection", {
       name: "inbox_gated",
       publicWrite: true,
@@ -468,9 +474,15 @@ describe("authz: Phase-12 review regressions", () => {
       access: { read: "authenticated", write: "authenticated", ownerField: "owner" },
     });
     assert.ok(d.ok, d.errorText);
-    assert.match(d.value.accessNote ?? "", /REPLACE the anonymous/i, "define must surface the interaction");
+    assert.match(d.value.accessNote ?? "", /COMPOSE/i, "define must surface WHICH half governs which verb");
     const anon = await delivery(p.deliveryToken, "/inbox_gated", { method: "POST", body: { message: "x" } });
-    assert.equal(anon.status, 401);
+    assert.ok([200, 201].includes(anon.status), `anonymous intake must survive a write rule: ${anon.status}`);
+    // ...and the read side is still gated, which is the half that must NOT
+    // move. The exact refusal code is the route's business (401/403/404 all
+    // encode "not for you"); what matters is that widening WRITE did not widen
+    // READ.
+    const anonRead = await delivery(p.deliveryToken, "/inbox_gated");
+    assert.notEqual(anonRead.status, 200, "read:authenticated must still require a user token");
   });
 });
 

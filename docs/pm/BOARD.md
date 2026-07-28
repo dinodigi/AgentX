@@ -80,11 +80,11 @@ unrelated testers hit.
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=49 · new=7 · planned=11 · reviewed=2_
+_Wall totals: done=51 · new=6 · planned=10 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_18 open (7 new, 11 planned) · 1 theme(s) reported more than once · snapshot 2026-07-28 17:43Z_
+_16 open (6 new, 10 planned) · 0 theme(s) reported more than once · snapshot 2026-07-28 17:58Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
@@ -92,7 +92,6 @@ _18 open (7 new, 11 planned) · 1 theme(s) reported more than once · snapshot 2
 | ⬜ | 07-26 | xvibe | idea | XVibe-class static apps need an edge proxy solely to hold the delivery token — a browse… |
 | ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
 | ⬜ | 07-26 | jabed test | limitation | publicFilter cannot express relative time, so "serve this row only while now is between… |
-| ⬜ | 07-26 | jabed test | limitation | indexed is rejected on date fields, but published_at is the canonical sort key for any … |
 | ⬜ | 07-26 | jabed test | limitation | Array fields cannot be filtered on the delivery API, so a tag archive has to fetch ever… |
 | ⬜ | 07-26 | jabed test | idea | Workflow transitions gate on ACTOR but not on row state, so "you may not launch a campa… |
 | 🗓️ | 07-18 | CSLP | friction | Docs say publicWrite POST is 'anonymous', but a truly tokenless POST returns 401 E_AUTH… |
@@ -103,7 +102,6 @@ _18 open (7 new, 11 planned) · 1 theme(s) reported more than once · snapshot 2
 | 🗓️ | 07-18 | CSLP | limitation | No SMS connector (Twilio etc.) although the countryside_crm baseline ships text_opt_in … |
 | 🗓️ | 07-18 | CSLP | friction | 100 rows/call makes real migrations chatty (3.1k-lead Salesforce import = ~31 sequentia… |
 | 🗓️ | 07-19 | CSLP | idea | countryside_crm ships tools:[] — building a full CRM on it meant re-implementing every … |
-| 🗓️ | 07-20 | Fatsoz | limitation | `indexed` is rejected on date fields, so the most natural sort/filter dimension for eve… |
 | 🗓️ | 07-23 | Codex-test | idea | Add a browser-safe public-read mode for public collections. |
 | 🗓️ | 07-24 | Hatchly | limitation | define_collection has no additive field op — adding one field requires re-sending the w… |
 <!-- END:WALL -->
