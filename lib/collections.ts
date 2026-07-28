@@ -172,7 +172,14 @@ export interface DefineCollectionInput {
    * Declared field renames: data is backfilled (old key moved to the new key),
    * so a rename never strands entries the way drop+add would. Types must match.
    */
-  renames?: { from: string; to: string }[];
+  /**
+   * `{from, to}` renames a FIELD. `{field, from, to}` renames one ENUM OPTION
+   * inside that field — the option-level migration that did not exist, which
+   * meant changing an option silently orphaned every row still holding the old
+   * value: the row keeps a value the enum no longer permits, so it fails
+   * validation on the next save and no longer matches a filter on either name.
+   */
+  renames?: { from: string; to: string; field?: string }[];
   /** G4: a state machine over one enum field — initial enforced on create,
    * actor-gated transitions the only way it moves. */
   workflow?: Collection["workflow"] | null;
@@ -586,10 +593,13 @@ export interface SchemaDiff {
 export function diffFields(
   oldFields: FieldDef[],
   newFields: FieldDef[],
-  renames: { from: string; to: string }[] = [],
+  renames: { from: string; to: string; field?: string }[] = [],
 ): Omit<SchemaDiff, "affectedEntries"> {
-  const renameFroms = new Set(renames.map((r) => r.from));
-  const renameTos = new Set(renames.map((r) => r.to));
+  // Option renames (`field` set) rename a VALUE, not a key — they must not
+  // suppress add/remove detection for fields of the same name.
+  const fieldRenames = renames.filter((r) => !r.field);
+  const renameFroms = new Set(fieldRenames.map((r) => r.from));
+  const renameTos = new Set(fieldRenames.map((r) => r.to));
   const oldByName = new Map(oldFields.map((f) => [f.name, f]));
   const newNames = new Set(newFields.map((f) => f.name));
   const added = newFields
@@ -601,14 +611,14 @@ export function diffFields(
   const retyped = newFields
     .filter((f) => oldByName.has(f.name) && oldByName.get(f.name)!.type !== f.type)
     .map((f) => ({ field: f.name, from: oldByName.get(f.name)!.type, to: f.type }));
-  return { added, removed, retyped, renamed: renames };
+  return { added, removed, retyped, renamed: fieldRenames };
 }
 
 /** A rename must move an existing field to a same-typed new field, cleanly. */
 function validateRenames(
   current: Collection | undefined,
   newFields: FieldDef[],
-  renames: { from: string; to: string }[],
+  renames: { from: string; to: string; field?: string }[],
 ): void {
   if (renames.length === 0) return;
   if (!current) {
@@ -616,6 +626,39 @@ function validateRenames(
   }
   const seen = new Set<string>();
   for (const r of renames) {
+    if (r.field) {
+      // ENUM OPTION rename: the field itself must exist on both sides and stay
+      // an enum; `from` must be a CURRENT option and `to` a NEW one. Validated
+      // strictly, because a typo here rewrites stored values.
+      const oldF = current.fields.find((f) => f.name === r.field);
+      const newF = newFields.find((f) => f.name === r.field);
+      if (!oldF || oldF.type !== "enum") {
+        throw new ValidationError(
+          `renames: "${r.field}" is not an existing enum field of "${current.name}" — an option rename needs one`,
+        );
+      }
+      if (!newF || newF.type !== "enum") {
+        throw new ValidationError(
+          `renames: "${r.field}" must still be an enum field in the new definition`,
+        );
+      }
+      if (!(oldF.options ?? []).includes(r.from)) {
+        throw new ValidationError(
+          `renames: "${r.from}" is not a current option of "${r.field}" — options: ${(oldF.options ?? []).join(", ")}`,
+        );
+      }
+      if (!(newF.options ?? []).includes(r.to)) {
+        throw new ValidationError(
+          `renames: "${r.to}" must be an option of "${r.field}" in the NEW definition — options: ${(newF.options ?? []).join(", ")}`,
+        );
+      }
+      if ((newF.options ?? []).includes(r.from)) {
+        throw new ValidationError(
+          `renames: "${r.from}" is still an option of "${r.field}" — remove it from options (its rows move to "${r.to}")`,
+        );
+      }
+      continue;
+    }
     if (seen.has(r.from) || seen.has(r.to)) {
       throw new ValidationError(`renames: "${r.from}" → "${r.to}" overlaps another rename`);
     }
@@ -1394,6 +1437,22 @@ export async function defineCollection(
   // that needs a rename concurrent with a same-collection restore and is fixed
   // by re-saving the row. Do schema renames when the project is quiescent.
   for (const r of renames) {
+    if (r.field) {
+      // ENUM OPTION rename: rewrite the VALUE in place, leaving the key alone.
+      // Without this an option change orphaned every row still holding the old
+      // value — it stayed stored, but the enum no longer permitted it, so the
+      // row failed validation on its next save and matched a filter on neither
+      // the old name nor the new one. Live AND trash, so a restore does not
+      // resurrect a value the schema rejects.
+      for (const table of [sql`entries`, sql`entries_trash`]) {
+        await tdb.execute(
+          sql`UPDATE ${table}
+              SET data = jsonb_set(data, ARRAY[${r.field}]::text[], to_jsonb(${r.to}::text))
+              WHERE collection_id = ${row.id} AND data->>${r.field} = ${r.from}`,
+        );
+      }
+      continue;
+    }
     await tdb.execute(
       sql`UPDATE entries
           SET data = (data - ${r.from}::text) || jsonb_build_object(${r.to}::text, data->${r.from}::text)

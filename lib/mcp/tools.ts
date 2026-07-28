@@ -484,6 +484,8 @@ export const TOOL_DEFS: ToolDef[] = [
       "constraintWarnings[] (violation counts) — old rows stay readable, new writes must comply. " +
       "To RENAME a field, pass renames: [{from, to}] with the new name in fields — entry " +
       "data is backfilled, no confirm needed; without renames a rename is a destructive drop+add. " +
+      "To rename an ENUM OPTION, pass renames: [{field, from, to}] with the new option in that " +
+      "field's options — same deal, and WITHOUT it every row holding the old value is orphaned. " +
       "localized:true (text/richtext, needs set_locales) stores {locale: value} variant maps — " +
       "not for unique/searchable/computed/labelField/email-template fields; see list_field_types. " +
       "LOCALIZING a populated field wraps existing values under the default locale (immediate, " +
@@ -702,7 +704,7 @@ export const TOOL_DEFS: ToolDef[] = [
         renames: {
           type: "array",
           description:
-            "declared field renames; data moves from → to (same type, to must be in fields)",
+            "declared renames, applied as a data migration. {from,to} renames a FIELD (same type; `to` must appear in fields). {field,from,to} renames one ENUM OPTION inside that field — required when changing an option, because without it every row still holding the old value is orphaned: the value stays stored but the enum no longer permits it, so the row fails validation on its next save and matches a filter on neither name. Live rows and trash are both migrated.",
           items: {
             type: "object",
             properties: { from: { type: "string" }, to: { type: "string" } },
@@ -1621,7 +1623,7 @@ const defineArgs = z.object({
       deleted: z.array(eventActionSchema).optional(),
     })
     .optional(),
-  renames: z.array(z.object({ from: z.string(), to: z.string() })).optional(),
+  renames: z.array(z.object({ from: z.string(), to: z.string(), field: z.string().optional() })).optional(),
   workflow: z
     .object({
       field: z.string(),

@@ -146,3 +146,125 @@ describe("bulk_create_entries cap — 100 was the hook budget, not the DB's", ()
     assert.match(r.errorText, /500/);
   });
 });
+
+describe("enum option renames — the migration that did not exist", () => {
+  let p;
+
+  before(async () => {
+    await ensureServer();
+    p = await createEphemeralProject("enum-rename");
+    await mcp(p.mcpToken, "define_collection", {
+      name: "deals",
+      fields: [
+        { name: "title", label: "T", type: "text", required: true },
+        { name: "stage", label: "S", type: "enum", options: ["lead", "qualified", "won"] },
+      ],
+    });
+    await mcp(p.mcpToken, "bulk_create_entries", {
+      collection: "deals",
+      entries: [
+        { title: "a", stage: "lead" },
+        { title: "b", stage: "lead" },
+        { title: "c", stage: "won" },
+      ],
+    });
+  });
+  after(() => p.destroy());
+
+  const redefine = (options, renames, confirm) =>
+    mcp(p.mcpToken, "define_collection", {
+      name: "deals",
+      fields: [
+        { name: "title", label: "T", type: "text", required: true },
+        { name: "stage", label: "S", type: "enum", options },
+      ],
+      ...(renames ? { renames } : {}),
+      ...(confirm ? { confirm: true } : {}),
+    });
+
+  it("THE FIX: an option rename migrates the rows holding the old value", async () => {
+    const r = await redefine(
+      ["prospect", "qualified", "won"],
+      [{ field: "stage", from: "lead", to: "prospect" }],
+    );
+    assert.ok(r.ok, r.errorText);
+    const q = await mcp(p.mcpToken, "query_entries", {
+      collection: "deals",
+      where: [{ field: "stage", op: "eq", value: "prospect" }],
+    });
+    assert.equal(q.value.entries.length, 2, "both 'lead' rows must now read 'prospect'");
+    // ...and the migrated rows are VALID — the orphaning symptom was that they
+    // failed validation on their next save.
+    const one = q.value.entries[0];
+    const upd = await mcp(p.mcpToken, "update_entry", {
+      collection: "deals", id: one.id, data: { title: "a2" },
+    });
+    assert.ok(upd.ok, `a migrated row must still save: ${upd.errorText}`);
+  });
+
+  it("untouched options are left alone", async () => {
+    const q = await mcp(p.mcpToken, "query_entries", {
+      collection: "deals",
+      where: [{ field: "stage", op: "eq", value: "won" }],
+    });
+    assert.equal(q.value.entries.length, 1);
+  });
+
+  it("renaming to an option that is not in the new definition is refused", async () => {
+    const r = await redefine(
+      ["prospect", "qualified", "won"],
+      [{ field: "stage", from: "prospect", to: "nonexistent" }],
+    );
+    assert.equal(r.ok, false);
+    assert.match(r.errorText, /must be an option/);
+  });
+
+  it("renaming FROM a non-option is refused — a typo must not rewrite values", async () => {
+    const r = await redefine(
+      ["prospect", "qualified", "won", "lost"],
+      [{ field: "stage", from: "nope", to: "lost" }],
+    );
+    assert.equal(r.ok, false);
+    assert.match(r.errorText, /not a current option/);
+  });
+
+  it("keeping the old option alongside the new one is refused as ambiguous", async () => {
+    const r = await redefine(
+      ["prospect", "qualified", "won", "closed"],
+      [{ field: "stage", from: "prospect", to: "closed" }],
+    );
+    assert.equal(r.ok, false);
+    assert.match(r.errorText, /still an option/);
+  });
+
+  it("an option rename is not mistaken for a field rename", async () => {
+    // The diff must still see `stage` as an unchanged field, not a drop+add —
+    // otherwise the destructive-change gate would fire on a safe migration.
+    const r = await redefine(
+      ["prospect", "qualified", "closed"],
+      [{ field: "stage", from: "won", to: "closed" }],
+    );
+    assert.ok(r.ok, `an option rename must not read as destructive: ${r.errorText}`);
+    const q = await mcp(p.mcpToken, "query_entries", {
+      collection: "deals",
+      where: [{ field: "stage", op: "eq", value: "closed" }],
+    });
+    assert.equal(q.value.entries.length, 1);
+  });
+
+  it("field renames still work — the two forms coexist", async () => {
+    await mcp(p.mcpToken, "define_collection", {
+      name: "cards",
+      fields: [{ name: "old_name", label: "O", type: "text", required: true }],
+    });
+    await mcp(p.mcpToken, "create_entry", { collection: "cards", data: { old_name: "kept" } });
+    const r = await mcp(p.mcpToken, "define_collection", {
+      name: "cards",
+      fields: [{ name: "new_name", label: "N", type: "text", required: true }],
+      renames: [{ from: "old_name", to: "new_name" }],
+    });
+    assert.ok(r.ok, r.errorText);
+    const q = await mcp(p.mcpToken, "query_entries", { collection: "cards" });
+    assert.equal(q.value.entries[0].data.new_name, "kept");
+  });
+});
