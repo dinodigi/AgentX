@@ -79,6 +79,16 @@ npm run verify
 **Rule: every checkpoint ends pushed.** A green gate that isn't pushed bought
 nothing.
 
+**Never pipe the gate into `tail` before `&&`.** In a pipeline the shell reports
+`tail`'s exit code, not the gate's — so a FAILED gate reads as success and the
+`&& git push` fires anyway. This has now happened twice (once with
+`npm run verify | tail -25`, once with the checkpoint gate). Capture the log and
+read the real status instead:
+
+```bash
+npm run checkpoint > /tmp/gate.log 2>&1; echo "EXIT=$?"; tail -5 /tmp/gate.log
+```
+
 ## The loop
 
 1. **Triage** — everything gets a disposition. Once, up front, then only for new
