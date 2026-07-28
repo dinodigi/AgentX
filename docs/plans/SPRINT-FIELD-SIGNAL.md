@@ -34,7 +34,14 @@
   `operator` ≠ `client`, keeping `admin` as a deprecated alias that still means
   both, so no live workflow changes behavior on deploy. Loud copy in the tool
   description either way.
-- ⬜ **A2 — Two read planes disagree, and only schema says so.**
+- ✅ **A2 — Two read planes disagree, and only schema says so.** **SHIPPED
+  2026-07-26**: `create_entry` / `update_entry` / `delete_entry` now return a
+  `convergence` note covering BOTH halves — the ~15s timing gap **and** the
+  visibility gap (delivery applies `publicFilter`/access rules, MCP reads do
+  not). The second is the one nobody expects: a row can be readable over MCP
+  yet *permanently* absent from delivery. Kept to one line — it rides every
+  write, so verbosity is a real token cost for bulk work. *The other half —
+  measuring a lower cache TTL — stays open.*
   Hatchly 07-24 + jabed 07-26 (+ our own G2). MCP reads are fresh; the delivery
   API converges ~15s later **and** enforces `publicFilter`, so a just-published
   row is briefly invisible to its own author.
@@ -52,7 +59,12 @@
   key for content; `starts_at`/`ends_at` are the canonical filter for scheduling.
   *Fix:* support `indexed` on date fields (an expression index over the
   normalized instant), or state plainly that it will not be supported and why.
-- ⬜ **A4 — Stateless MCP-over-HTTP is undocumented.**
+- ✅ **A4 — Stateless MCP-over-HTTP is undocumented.** **SHIPPED 2026-07-26**:
+  `get_project_info` now carries `deliveryApi.statelessTransport` — no
+  handshake, no session id, the exact JSON-RPC shape, where results and errors
+  live, and the rate limit. A test asserts the **claim is true** (a
+  first-contact `tools/call` succeeds), because documenting something false
+  would be worse than documenting nothing.
   **THREE reporters** — Hatchly, Fatsoz 07-20, jabed 07-26 — each discovered by
   *probing* that `tools/call` works with no handshake and no session id, and
   each called it a significant integration advantage. jabed avoided adopting the
