@@ -110,7 +110,16 @@ const WHERE_CLAUSE_JSON = {
         "field — ops are type-checked against the target field; on MCP the target is read like " +
         "any MCP read (publicFilter/access do not apply)",
     },
-    op: { type: "string", enum: ["eq", "ne", "contains", "gt", "lt", "in", "exists"] },
+    op: {
+      type: "string",
+      enum: ["eq", "ne", "neOrUnset", "contains", "gt", "lt", "in", "exists"],
+      description:
+        "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for " +
+        "\"different OR not set\", which is what exclusion filters almost always mean: " +
+        '{field:"email_opt_out",op:"neOrUnset",value:true} excludes opted-out rows AND keeps ' +
+        "rows that never set the flag. Reaching for `ne` there silently drops every row with " +
+        "the field unset.",
+    },
     value: { description: "scalar, or string[] for op 'in'" },
   },
   required: ["field", "op", "value"],
@@ -786,6 +795,10 @@ export const TOOL_DEFS: ToolDef[] = [
       "E_CONFLICT whose message names the cause — an if-clause that didn't hold, the increment " +
       "field being unset, or the increment breaching min/max. Re-read and retry. Book-a-seat: " +
       '{if:[{field:"seats",op:"gt",value:0}], increment:{field:"seats",by:-1}}. ' +
+      "COUNTERS: pass increment.startingFrom to treat an UNSET field as that value in the same " +
+      'statement — {increment:{field:"views",by:1,startingFrom:0}} sets views=1 on the first call ' +
+      "and needs no seed. Do NOT seed with update_entry first: that read-then-seed pattern races, " +
+      "and two callers can both seed and silently lose one count. " +
       "Does NOT run before-write hooks OR recompute computed fields — its value is a single atomic " +
       "statement with no pre-read, which a synchronous external consult (or a source-diff) would defeat. " +
       "Localized fields are rejected here (no in-statement variant merge) — use update_entry.",
@@ -801,6 +814,11 @@ export const TOOL_DEFS: ToolDef[] = [
           properties: {
             field: { type: "string", description: "number field" },
             by: { type: "number", description: "delta; negative to decrement" },
+            startingFrom: {
+              type: "number",
+              description:
+                "treat an UNSET field as this value, atomically — the counter idiom. Without it an unset field conflicts, and seeding it first races.",
+            },
           },
           required: ["field", "by"],
           additionalProperties: false,
@@ -970,8 +988,13 @@ export const TOOL_DEFS: ToolDef[] = [
               if: { type: "array", items: WHERE_ITEM_JSON, description: "update_if only: CAS conditions" },
               increment: {
                 type: "object",
-                description: "update_if only: atomic {field, by} increment",
-                properties: { field: { type: "string" }, by: { type: "number" } },
+                description:
+                  "update_if only: atomic {field, by} increment. startingFrom treats an unset field as that value (the counter idiom — seeding first races).",
+                properties: {
+                  field: { type: "string" },
+                  by: { type: "number" },
+                  startingFrom: { type: "number" },
+                },
                 required: ["field", "by"],
                 additionalProperties: false,
               },
@@ -1136,7 +1159,10 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "bulk_create_entries",
     description:
-      "Create up to 100 entries in one call (use for seeding). Each item is validated like " +
+      "Create up to 100 entries in one call (use for seeding). Each item is a BARE field object " +
+      "({title:\"x\"}), NOT create_entry's {collection,data:{…}} wrapper — but a wrapped item is " +
+      "unwrapped for you rather than failing, so carrying create_entry's shape across works. " +
+      "Each item is validated like " +
       "create_entry; returns per-item results so you can fix only the failures. A beforeCreate " +
       "hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/" +
       "E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the " +
@@ -2367,7 +2393,7 @@ export async function callTool(
             id: z.string(),
             if: z.array(whereItemSchema).optional(),
             data: z.record(z.unknown()).optional(),
-            increment: z.object({ field: z.string(), by: z.number() }).optional(),
+            increment: z.object({ field: z.string(), by: z.number(), startingFrom: z.number().optional() }).optional(),
           })
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
@@ -2473,7 +2499,7 @@ export async function callTool(
                   data: z.record(z.unknown()).optional(),
                   ref: z.string().optional(),
                   if: z.array(whereItemSchema).optional(),
-                  increment: z.object({ field: z.string(), by: z.number() }).optional(),
+                  increment: z.object({ field: z.string(), by: z.number(), startingFrom: z.number().optional() }).optional(),
                 }),
               )
               .min(1)
@@ -2669,10 +2695,34 @@ export async function callTool(
           })
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
+
+        // B1 — shape asymmetry. This tool takes BARE objects while its sibling
+        // create_entry takes {collection, data:{…}}. A field reporter carried
+        // the sibling's shape across and all 14 items failed, with an error
+        // that led on "key: Required" — a downstream symptom of the wrapper,
+        // never naming the wrapper itself.
+        //
+        // So accept both. An item is treated as wrapped only when it is
+        // UNAMBIGUOUS: it has a `data` object and every other key is one of the
+        // wrapper's own. That rules out a collection which legitimately has a
+        // field called `data`, whose items must keep working untouched.
+        const WRAPPER_KEYS = new Set(["data", "collection", "allowExplicitWorkflowState"]);
+        const hasOwnDataField = c.fields.some((f) => f.name === "data");
+        const items = a.entries.map((item) => {
+          if (hasOwnDataField) return item;
+          const keys = Object.keys(item);
+          const wrapped =
+            item.data !== null &&
+            typeof item.data === "object" &&
+            !Array.isArray(item.data) &&
+            keys.every((k) => WRAPPER_KEYS.has(k));
+          return wrapped ? (item.data as Record<string, unknown>) : item;
+        });
+
         const results = await bulkCreateEntries(
           projectId,
           c,
-          a.entries,
+          items,
           // #12: audit-stamp the escape hatch (see create_entry).
           a.allowExplicitWorkflowState ? { type: "mcp", explicitWorkflowState: true } : { type: "mcp" },
           { allowExplicitWorkflowState: a.allowExplicitWorkflowState },

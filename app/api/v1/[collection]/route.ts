@@ -5,7 +5,7 @@ import { rateLimit } from "@/lib/ratelimit";
 import { searchEntriesPage, publicSearchableFields } from "@/lib/search";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
-import { gateRead, gateCreate, stampIdentity, checkFieldWrites } from "@/lib/access-rules";
+import { gateRead, gateCreate, stampIdentity, checkFieldWrites, fieldWriteError } from "@/lib/access-rules";
 import {
   createEntry,
   queryEntries,
@@ -385,7 +385,7 @@ export async function POST(
     if (blocked.length > 0) {
       return deliveryError(
         403,
-        `fields [${blocked.join(", ")}] are not writable via the delivery API here — remove them or sign in with the required role`,
+        fieldWriteError(collection, blocked),
       );
     }
   }

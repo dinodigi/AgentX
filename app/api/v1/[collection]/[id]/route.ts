@@ -14,7 +14,7 @@ import {
 } from "@/lib/entries";
 import type { ConstraintIssue } from "@/lib/validation";
 import { matchesClauses } from "@/lib/query";
-import { gateRead, gateMutate, stampedIdentityFields, checkFieldWrites } from "@/lib/access-rules";
+import { gateRead, gateMutate, stampedIdentityFields, checkFieldWrites, fieldWriteError } from "@/lib/access-rules";
 import { getLocales, hasLocalizedFields, localizeView } from "@/lib/locales";
 import { rateLimit } from "@/lib/ratelimit";
 import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
@@ -187,7 +187,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     if (blocked.length > 0) {
       return err(
         403,
-        `fields [${blocked.join(", ")}] are not writable via the delivery API here — remove them or sign in with the required role`,
+        fieldWriteError(collection, blocked),
       );
     }
   }

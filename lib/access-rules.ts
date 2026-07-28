@@ -333,6 +333,35 @@ function publicFilterFields(collection: Collection): Set<string> {
  *  - F4: `writableBy` "none" is barred entirely; a claim rule needs a matching
  *    verified user.
  */
+/**
+ * B4 — the message for a blocked field write.
+ *
+ * The old copy said "remove them or sign in with the required role", which
+ * names something that does not exist: the gate is a CLAIM match
+ * (`writableBy: {claim, equals}`) or a flat `"none"`, never a role. A caller
+ * reading it goes looking for a roles system and finds nothing.
+ *
+ * A field reporter filed this as MCP-path errors borrowing delivery wording.
+ * That half did not reproduce — `writableBy` is enforced ONLY on the delivery
+ * path (an MCP token is an authoring credential and never reaches this gate),
+ * so the wording was already correct for its one surface. The vagueness was
+ * real regardless, so it is fixed here on its own merits: say per field whether
+ * it is permanently server-only or needs a specific claim.
+ */
+export function fieldWriteError(collection: Collection, blocked: string[]): string {
+  const detail = blocked.map((name) => {
+    const f = collection.fields.find((x) => x.name === name);
+    const w = f?.writableBy;
+    if (w === "none") return `${name} (server-only — never writable through this API)`;
+    if (w && typeof w === "object") {
+      const want = Array.isArray(w.equals) ? w.equals.join(" or ") : w.equals;
+      return `${name} (needs claim ${w.claim}=${want} on your end-user token)`;
+    }
+    return name;
+  });
+  return `these fields are not writable here: ${detail.join("; ")} — omit them from the body, or present a token carrying the required claim`;
+}
+
 export function checkFieldWrites(
   collection: Collection,
   user: EndUser | null,

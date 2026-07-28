@@ -97,6 +97,68 @@ const RESOLUTIONS = {
       "wrote a 40-line fetch client. `get_project_info` now spells out the " +
       "stateless contract, and a test holds it honest.",
   },
+
+  // --- CP2: the Track B papercuts (commit CP2SHA) --------------------------
+  d128f35a: {
+    disposition: 'SHIPPED', ref: 'CP2SHA',
+    note:
+      "bulk_create_entries now accepts create_entry's {collection, data:{...}} wrapper and " +
+      'unwraps it per item, so carrying the sibling shape across works instead of failing all 14. ' +
+      'It is only unwrapped when UNAMBIGUOUS — an item whose keys are all wrapper keys, and never ' +
+      'for a collection that has its own field called "data", because silently discarding a real ' +
+      'payload would be worse than the error we removed. The tool description now states the ' +
+      'expected shape up front rather than leaving it to be inferred.',
+  },
+  ad690ade: {
+    disposition: 'SHIPPED', ref: 'CP2SHA',
+    note:
+      'Optional relation/asset (and every other optional) sub-field inside a typed block or group ' +
+      'now treats explicit null as absent, so an editor emitting null for "nothing selected" just ' +
+      'works. Inside a block element null can only mean "nothing here" — the value is replaced ' +
+      'wholesale, so there is no explicit-unset semantic to collide with, unlike a top-level field ' +
+      'on a partial update where null still means unset. REQUIRED sub-fields still reject null: ' +
+      'that is a real error, not a papercut.',
+  },
+  '4fae3449': {
+    disposition: 'SHIPPED', ref: 'CP2SHA',
+    note:
+      'The entry id is now a filterable virtual field, so where:[{field:"id",op:"in",value:[...]}] fetches ' +
+      'a known set in ONE call instead of N. eq/ne/in only — "contains" on a uuid is a substring ' +
+      'scan that looks like it works, and "exists" is meaningless on a primary key. A collection ' +
+      'that defines its own "id" field still wins, so nothing can be shadowed, and the ' +
+      '"unknown field" error now lists id among the valid ones.',
+  },
+  '5e8146d8': {
+    disposition: 'ANSWERED', ref: 'CP2SHA',
+    note:
+      'VERDICT CORRECTION, and thank you — the fix is real but the diagnosis was not. We could not ' +
+      'reproduce the MCP half: writableBy is enforced ONLY on the delivery path, because an MCP ' +
+      'token is an authoring credential that never reaches that gate. So the wording was already ' +
+      'correct for its one surface. Your underlying point held anyway: "sign in with the required ' +
+      'role" named something that does not exist — the gate is a CLAIM match, not a role. The ' +
+      'message now says, per field, whether it is permanently server-only or which claim it needs.',
+  },
+  '1a24b96b': {
+    disposition: 'SHIPPED', ref: 'CP2SHA',
+    note:
+      'increment now takes startingFrom: {field:"views",by:1,startingFrom:0} sets views=1 on the ' +
+      'first call with no seed. You were right that this mattered beyond ergonomics — the ' +
+      'seed-then-increment workaround races, and two callers can both observe "unset", both seed, ' +
+      'and silently lose one count. A test fires ten concurrent first-increments and demands ' +
+      'exactly 10. A bounds failure on a first increment is also no longer misreported as ' +
+      '"field is not set", which used to send you straight back to seeding.',
+  },
+  '4847bc14': {
+    disposition: 'SHIPPED', ref: 'CP2SHA',
+    note:
+      'You suggested a first-class op or a docs callout; you get the op. "neOrUnset" means ' +
+      '"different OR not set" — {field:"email_opt_out",op:"neOrUnset",value:true} is the whole ' +
+      'compliance filter. It earned code rather than documentation precisely because of your use ' +
+      'case: forgetting the second clause of the anyOf idiom silently INCLUDES rows you must ' +
+      'exclude, which is a wrong answer that looks like a working query. "ne" keeps its ' +
+      'fail-closed meaning, which publicFilter depends on. SQL and the in-memory matcher are ' +
+      'tested against each other, since a divergence would match in lists but fail single-entry gates.',
+  },
 };
 
 const stamp = (r) =>

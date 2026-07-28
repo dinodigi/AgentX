@@ -11,7 +11,7 @@ import { ValidationError } from "./validation";
  * exist, use an operator that doesn't fit the type, or inject anything.
  */
 
-export const WHERE_OPS = ["eq", "ne", "contains", "gt", "lt", "in", "exists"] as const;
+export const WHERE_OPS = ["eq", "ne", "neOrUnset", "contains", "gt", "lt", "in", "exists"] as const;
 export type WhereOp = (typeof WHERE_OPS)[number];
 
 export interface WhereClause {
@@ -35,25 +35,42 @@ export interface OrderByClause {
 
 /** Which operators make sense per primitive. */
 const OPS_BY_TYPE: Record<FieldDef["type"], WhereOp[]> = {
-  text: ["eq", "ne", "contains", "in", "exists"],
+  text: ["eq", "ne", "neOrUnset", "contains", "in", "exists"],
   richtext: ["contains", "exists"],
-  number: ["eq", "ne", "gt", "lt", "exists"],
-  boolean: ["eq", "ne", "exists"],
-  date: ["eq", "ne", "gt", "lt", "exists"],
-  enum: ["eq", "ne", "in", "exists"],
-  asset: ["eq", "ne", "exists"],
-  relation: ["eq", "ne", "in", "exists"],
+  number: ["eq", "ne", "neOrUnset", "gt", "lt", "exists"],
+  boolean: ["eq", "ne", "neOrUnset", "exists"],
+  date: ["eq", "ne", "neOrUnset", "gt", "lt", "exists"],
+  enum: ["eq", "ne", "neOrUnset", "in", "exists"],
+  asset: ["eq", "ne", "neOrUnset", "exists"],
+  relation: ["eq", "ne", "neOrUnset", "in", "exists"],
   // Structured fields aren't filterable/sortable — no ops means any where/orderBy
   // on a group/array is rejected with a clear message (v1 scope guard).
   group: [],
   array: [],
 };
 
+/**
+ * B3 — `id` is a COLUMN on entries, not a key inside `data`, so it was absent
+ * from the schema field list and every where/orderBy on it was rejected with
+ * "unknown field id". That made the most ordinary query there is — fetch these
+ * three rows by id — impossible without N round trips.
+ *
+ * It is exposed as a virtual text field. `contains` is deliberately not offered
+ * (substring matching a uuid is a footgun, not a feature); eq/ne/in cover the
+ * real use, and `exists` is meaningless on a primary key.
+ *
+ * A collection MAY define its own field called `id`; a real field always wins,
+ * so this can never shadow existing data.
+ */
+const VIRTUAL_ID: FieldDef = { name: "id", label: "ID", type: "text" } as FieldDef;
+const ID_OPS: WhereOp[] = ["eq", "ne", "in"];
+
 function fieldOrThrow(fields: FieldDef[], name: string, context: string): FieldDef {
   const f = fields.find((x) => x.name === name);
   if (!f) {
+    if (name === "id") return VIRTUAL_ID;
     throw new ValidationError(
-      `${context}: unknown field "${name}" — valid fields: ${fields.map((x) => x.name).join(", ")}`,
+      `${context}: unknown field "${name}" — valid fields: ${[...fields.map((x) => x.name), "id"].join(", ")}`,
     );
   }
   // J4: a localized value is a {locale: string} map — no single SQL accessor
@@ -69,6 +86,21 @@ function fieldOrThrow(fields: FieldDef[], name: string, context: string): FieldD
 /** JSONB text accessor for a field, cast per type where needed. `dataCol` lets
  *  a related-filter subquery read the ALIASED target's data column. */
 export function accessor(field: FieldDef, dataCol: AnyColumn | SQL = entries.data): SQL {
+  // B3: the virtual id reads the COLUMN, never data->>'id'. Cast to text so it
+  // compares against the string ids callers actually hold.
+  //
+  // It is only meaningful against the primary `entries` row. A gate clause
+  // compiled over an ALIASED table (a target's publicFilter inside an EXISTS)
+  // would otherwise silently emit the OUTER table's id and quietly return the
+  // wrong rows — so that combination is refused rather than guessed at.
+  if (field === VIRTUAL_ID) {
+    if (dataCol !== entries.data) {
+      throw new ValidationError(
+        `where: "id" refers to the entry's own id and cannot be used inside a related-collection gate — filter the relation field itself instead`,
+      );
+    }
+    return sql`${entries.id}::text`;
+  }
   const raw = sql`${dataCol}->>${field.name}`;
   switch (field.type) {
     case "number":
@@ -175,12 +207,14 @@ function compileScalarClause(
   lhs: SQL,
   allowedOps?: Set<WhereOp>,
 ): SQL {
-  const ops = allowedOps
-    ? OPS_BY_TYPE[f.type].filter((o) => allowedOps.has(o))
-    : OPS_BY_TYPE[f.type];
+  // B3: the virtual id is text-shaped but not a text field — it takes eq/ne/in
+  // only. `contains` on a uuid invites a substring scan that looks like it
+  // works; `exists` is always true on a primary key.
+  const base = f === VIRTUAL_ID ? ID_OPS : OPS_BY_TYPE[f.type];
+  const ops = allowedOps ? base.filter((o) => allowedOps.has(o)) : base;
   if (!ops.includes(clause.op)) {
     throw new ValidationError(
-      `where: op "${clause.op}" not valid for ${f.type} field "${f.name}" — allowed: ${ops.join(", ") || "(none)"}`,
+      `where: op "${clause.op}" not valid for ${f === VIRTUAL_ID ? "the entry id" : `${f.type} field "${f.name}"`} — allowed: ${ops.join(", ") || "(none)"}`,
     );
   }
   if (clause.op === "in") {
@@ -206,6 +240,22 @@ function compileScalarClause(
       if (f.type === "boolean") return sql`${lhs} != ${Boolean(clause.value)}`;
       if (f.type === "number") return sql`${lhs} != ${Number(clause.value)}`;
       return sql`${lhs} != ${String(clause.value)}`;
+    case "neOrUnset": {
+      // "different OR not set" — the exclusion idiom. `ne` alone is fail-closed
+      // (an unset field never matches), which is right for publicFilter but
+      // means every flag-exclusion query needs anyOf:[{ne},{exists:false}].
+      // A reporter hit this on email_opt_out compliance filtering, where
+      // forgetting the second clause silently INCLUDES rows you must exclude —
+      // a wrong answer that looks like a working query.
+      const probe = sql`${entries.data}->>${f.name}`;
+      const neq =
+        f.type === "boolean"
+          ? sql`${lhs} != ${Boolean(clause.value)}`
+          : f.type === "number"
+            ? sql`${lhs} != ${Number(clause.value)}`
+            : sql`${lhs} != ${String(clause.value)}`;
+      return sql`(${neq} OR ${probe} IS NULL)`;
+    }
     case "exists": {
       if (typeof clause.value !== "boolean") {
         throw new ValidationError(`where: op "exists" takes true or false (field "${f.name}")`);
@@ -353,6 +403,17 @@ function matchClause(
       case "ne": {
         // Mirror SQL exactly: unset never matches (fail-closed).
         if (v == null) return false;
+        if (f.type === "number") return Number(v) !== Number(c.value);
+        if (f.type === "boolean") return Boolean(v) !== Boolean(c.value);
+        if (f.type === "date") return Date.parse(String(v)) !== Date.parse(String(c.value));
+        return String(v) !== String(c.value);
+      }
+      case "neOrUnset": {
+        // Same as `ne` except an unset field MATCHES. Must mirror the SQL above
+        // exactly — a divergence here would make a clause match in list queries
+        // (SQL) but fail single-entry gates (JS), which is the worst kind of bug
+        // to chase.
+        if (v == null) return true;
         if (f.type === "number") return Number(v) !== Number(c.value);
         if (f.type === "boolean") return Boolean(v) !== Boolean(c.value);
         if (f.type === "date") return Date.parse(String(v)) !== Date.parse(String(c.value));

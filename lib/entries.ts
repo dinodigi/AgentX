@@ -834,8 +834,17 @@ export interface UpdateIfOpts {
   if?: WhereItem[];
   /** Ordinary validated patch (merged like update_entry). */
   data?: unknown;
-  /** Atomic increment computed in SQL from the old value — never read-modify-write. */
-  increment?: { field: string; by: number };
+  /**
+   * Atomic increment computed in SQL from the old value — never read-modify-write.
+   *
+   * `startingFrom` (B5) makes the FIRST increment atomic too. Without it an
+   * unset field refuses, and the obvious workaround — read, seed with
+   * update_entry, then increment — has a race that SILENTLY LOSES A COUNT: two
+   * callers both see "unset", both seed to 0, and one of the two +1s is
+   * overwritten by the other's seed. With it, the field's absence is treated as
+   * `startingFrom` inside the same statement, so there is no window to lose.
+   */
+  increment?: { field: string; by: number; startingFrom?: number };
   actor?: AuditActor;
 }
 
@@ -880,9 +889,17 @@ async function diagnoseCasFailure(
     projection[`if_${i}`] = sql<boolean>`(${p.sql})`;
   });
   if (opts.increment && incField) {
-    const { field, by } = opts.increment;
-    projection.exists = sql<boolean>`${entries.data} ? ${field}`;
-    const oldValue = sql`(${entries.data}->>${field})::numeric`;
+    const { field, by, startingFrom } = opts.increment;
+    // B5: `startingFrom` removes the existence guard from the UPDATE, so the
+    // diagnosis must drop it too — otherwise a bounds failure on a first
+    // increment would be reported as "field is not set", sending the caller to
+    // the exact seed-then-increment workaround this parameter exists to delete.
+    projection.exists =
+      startingFrom === undefined ? sql<boolean>`${entries.data} ? ${field}` : sql<boolean>`true`;
+    const oldValue =
+      startingFrom === undefined
+        ? sql`(${entries.data}->>${field})::numeric`
+        : sql`COALESCE((${entries.data}->>${field})::numeric, ${startingFrom}::numeric)`;
     if (incField.type === "number" && incField.min !== undefined) {
       projection.bmin = sql<boolean>`${oldValue} + ${by} >= ${incField.min}`;
     }
@@ -923,7 +940,7 @@ async function diagnoseCasFailure(
         ok: false,
         reason: "unset",
         current,
-        message: `increment: field "${field}" is not set on this entry — set it with update_entry first`,
+        message: `increment: field "${field}" is not set on this entry — pass startingFrom (e.g. startingFrom:0) to treat an unset field as that value atomically. Seeding it with update_entry first also works, but races: two callers can both seed and lose one count.`,
       };
     }
     if (row.parity === false) {
@@ -1002,6 +1019,19 @@ async function prepareUpdateIf(
     if (incField.integer && !Number.isInteger(by)) {
       throw new ValidationError(`increment: by must be a whole number for integer field "${field}"`);
     }
+    // B5: startingFrom becomes the stored value on the first increment, so it
+    // must satisfy the same field constraints any written value would.
+    const { startingFrom } = opts.increment;
+    if (startingFrom !== undefined) {
+      if (!Number.isFinite(startingFrom)) {
+        throw new ValidationError(`increment: startingFrom must be a finite number`);
+      }
+      if (incField.integer && !Number.isInteger(startingFrom)) {
+        throw new ValidationError(
+          `increment: startingFrom must be a whole number for integer field "${field}"`,
+        );
+      }
+    }
   }
   return { patch, incField };
 }
@@ -1075,11 +1105,17 @@ async function updateEntryIfCore(
   }
 
   if (opts.increment && incField && incField.type === "number") {
-    const { field, by } = opts.increment;
-    const oldValue = sql`(${entries.data}->>${field})::numeric`;
-    // The field must exist to increment, and the result must respect min/max —
-    // violations surface as a conflict, the book-a-seat semantic ("no seats").
-    conditions.push(sql`${entries.data} ? ${field}`);
+    const { field, by, startingFrom } = opts.increment;
+    // B5: with `startingFrom`, an absent key reads as that value INSIDE the same
+    // statement — so the first increment is atomic and no existence guard is
+    // needed. Without it the field must already exist.
+    const oldValue =
+      startingFrom === undefined
+        ? sql`(${entries.data}->>${field})::numeric`
+        : sql`COALESCE((${entries.data}->>${field})::numeric, ${startingFrom}::numeric)`;
+    // The result must respect min/max — violations surface as a conflict, the
+    // book-a-seat semantic ("no seats").
+    if (startingFrom === undefined) conditions.push(sql`${entries.data} ? ${field}`);
     if (incField.min !== undefined) conditions.push(sql`${oldValue} + ${by} >= ${incField.min}`);
     if (incField.max !== undefined) conditions.push(sql`${oldValue} + ${by} <= ${incField.max}`);
     // Legacy fractional values (pre-integer knob) conflict rather than

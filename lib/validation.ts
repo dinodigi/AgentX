@@ -835,13 +835,33 @@ function valueSchemaFor(field: FieldDef): z.ZodTypeAny {
   }
 }
 
+/**
+ * B2 — one OPTIONAL sub-field of a block or group.
+ *
+ * A block editor naturally emits `null` for "nothing selected" on a relation or
+ * asset control, and the strict schema answered `Expected string, received
+ * null` — which reads as a type error when the real instruction is "omit the
+ * key". It bit one reporter twice: once seeding, once in the editor they built.
+ *
+ * Inside a block or group element, `null` can only mean "nothing here" — the
+ * whole array/group value is replaced wholesale, so there is no explicit-unset
+ * semantic to collide with (unlike a TOP-LEVEL field on a partial update, where
+ * null genuinely means unset and must keep meaning that).
+ *
+ * So null normalises to absent. REQUIRED sub-fields still reject it — that is a
+ * real error, not a papercut.
+ */
+function subFieldSchema(sub: FieldDef): z.ZodTypeAny {
+  const sv = valueSchemaFor(sub);
+  if (sub.required) return sv;
+  return z.preprocess((v) => (v === null ? undefined : v), sv.optional());
+}
+
 /** One block element: { _type: <block name>, ...its fields' value schemas }. */
 function blockValueSchema(block: { name: string; fields: FieldDef[] }) {
   const shape: Record<string, z.ZodTypeAny> = { _type: z.literal(block.name) };
   for (const sub of block.fields) {
-    let sv = valueSchemaFor(sub);
-    if (!sub.required) sv = sv.optional();
-    shape[sub.name] = sv;
+    shape[sub.name] = subFieldSchema(sub);
   }
   return z.object(shape).strict();
 }
@@ -852,9 +872,8 @@ function blockValueSchema(block: { name: string; fields: FieldDef[] }) {
 function groupValueSchema(fields: FieldDef[]): z.ZodTypeAny {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const sub of fields) {
-    let sv = valueSchemaFor(sub);
-    if (!sub.required) sv = sv.optional();
-    shape[sub.name] = sv;
+    // B2: same null-as-absent rule as blocks — see subFieldSchema.
+    shape[sub.name] = subFieldSchema(sub);
   }
   return z.object(shape).strict();
 }

@@ -567,12 +567,14 @@ Create or update a collection (a data model). `fields` is an array of field defs
                 "enum": [
                   "eq",
                   "ne",
+                  "neOrUnset",
                   "contains",
                   "gt",
                   "lt",
                   "in",
                   "exists"
-                ]
+                ],
+                "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
               },
               "value": {
                 "description": "scalar, or string[] for op 'in'"
@@ -602,12 +604,14 @@ Create or update a collection (a data model). `fields` is an array of field defs
                       "enum": [
                         "eq",
                         "ne",
+                        "neOrUnset",
                         "contains",
                         "gt",
                         "lt",
                         "in",
                         "exists"
-                      ]
+                      ],
+                      "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
                     },
                     "value": {
                       "description": "scalar, or string[] for op 'in'"
@@ -1060,7 +1064,7 @@ Partially update one entry by id. Provided fields are validated and merged. Set 
 
 ## `update_entry_if`
 
-Atomic compare-and-set on one entry — conditions and change apply in ONE statement, so concurrent writers can't race between check and write. if: same clause shape as query_entries where, checked against the CURRENT row. data: ordinary validated patch (null = unset, like update_entry). increment: {field, by} computes new = old + by IN SQL (never read-modify-write); the field's min/max constraints guard the result automatically (integer fields also require a whole `by`, and a stored value that predates the integer knob conflicts rather than incrementing). A no-op returns a diagnosed failure: E_NOT_FOUND (no such entry), or E_CONFLICT whose message names the cause — an if-clause that didn't hold, the increment field being unset, or the increment breaching min/max. Re-read and retry. Book-a-seat: {if:[{field:"seats",op:"gt",value:0}], increment:{field:"seats",by:-1}}. Does NOT run before-write hooks OR recompute computed fields — its value is a single atomic statement with no pre-read, which a synchronous external consult (or a source-diff) would defeat. Localized fields are rejected here (no in-statement variant merge) — use update_entry.
+Atomic compare-and-set on one entry — conditions and change apply in ONE statement, so concurrent writers can't race between check and write. if: same clause shape as query_entries where, checked against the CURRENT row. data: ordinary validated patch (null = unset, like update_entry). increment: {field, by} computes new = old + by IN SQL (never read-modify-write); the field's min/max constraints guard the result automatically (integer fields also require a whole `by`, and a stored value that predates the integer knob conflicts rather than incrementing). A no-op returns a diagnosed failure: E_NOT_FOUND (no such entry), or E_CONFLICT whose message names the cause — an if-clause that didn't hold, the increment field being unset, or the increment breaching min/max. Re-read and retry. Book-a-seat: {if:[{field:"seats",op:"gt",value:0}], increment:{field:"seats",by:-1}}. COUNTERS: pass increment.startingFrom to treat an UNSET field as that value in the same statement — {increment:{field:"views",by:1,startingFrom:0}} sets views=1 on the first call and needs no seed. Do NOT seed with update_entry first: that read-then-seed pattern races, and two callers can both seed and silently lose one count. Does NOT run before-write hooks OR recompute computed fields — its value is a single atomic statement with no pre-read, which a synchronous external consult (or a source-diff) would defeat. Localized fields are rejected here (no in-statement variant merge) — use update_entry.
 
 **Input schema:**
 
@@ -1090,12 +1094,14 @@ Atomic compare-and-set on one entry — conditions and change apply in ONE state
                 "enum": [
                   "eq",
                   "ne",
+                  "neOrUnset",
                   "contains",
                   "gt",
                   "lt",
                   "in",
                   "exists"
-                ]
+                ],
+                "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
               },
               "value": {
                 "description": "scalar, or string[] for op 'in'"
@@ -1125,12 +1131,14 @@ Atomic compare-and-set on one entry — conditions and change apply in ONE state
                       "enum": [
                         "eq",
                         "ne",
+                        "neOrUnset",
                         "contains",
                         "gt",
                         "lt",
                         "in",
                         "exists"
-                      ]
+                      ],
+                      "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
                     },
                     "value": {
                       "description": "scalar, or string[] for op 'in'"
@@ -1168,6 +1176,10 @@ Atomic compare-and-set on one entry — conditions and change apply in ONE state
         "by": {
           "type": "number",
           "description": "delta; negative to decrement"
+        },
+        "startingFrom": {
+          "type": "number",
+          "description": "treat an UNSET field as this value, atomically — the counter idiom. Without it an unset field conflicts, and seeding it first races."
         }
       },
       "required": [
@@ -1433,12 +1445,14 @@ Apply up to 25 entry ops as ONE all-or-nothing batch (a single DB transaction). 
                       "enum": [
                         "eq",
                         "ne",
+                        "neOrUnset",
                         "contains",
                         "gt",
                         "lt",
                         "in",
                         "exists"
-                      ]
+                      ],
+                      "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
                     },
                     "value": {
                       "description": "scalar, or string[] for op 'in'"
@@ -1468,12 +1482,14 @@ Apply up to 25 entry ops as ONE all-or-nothing batch (a single DB transaction). 
                             "enum": [
                               "eq",
                               "ne",
+                              "neOrUnset",
                               "contains",
                               "gt",
                               "lt",
                               "in",
                               "exists"
-                            ]
+                            ],
+                            "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
                           },
                           "value": {
                             "description": "scalar, or string[] for op 'in'"
@@ -1501,12 +1517,15 @@ Apply up to 25 entry ops as ONE all-or-nothing batch (a single DB transaction). 
           },
           "increment": {
             "type": "object",
-            "description": "update_if only: atomic {field, by} increment",
+            "description": "update_if only: atomic {field, by} increment. startingFrom treats an unset field as that value (the counter idiom — seeding first races).",
             "properties": {
               "field": {
                 "type": "string"
               },
               "by": {
+                "type": "number"
+              },
+              "startingFrom": {
                 "type": "number"
               }
             },
@@ -1571,12 +1590,14 @@ List entries in a collection (relations resolved to {id,label}). Supports limit/
                 "enum": [
                   "eq",
                   "ne",
+                  "neOrUnset",
                   "contains",
                   "gt",
                   "lt",
                   "in",
                   "exists"
-                ]
+                ],
+                "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
               },
               "value": {
                 "description": "scalar, or string[] for op 'in'"
@@ -1606,12 +1627,14 @@ List entries in a collection (relations resolved to {id,label}). Supports limit/
                       "enum": [
                         "eq",
                         "ne",
+                        "neOrUnset",
                         "contains",
                         "gt",
                         "lt",
                         "in",
                         "exists"
-                      ]
+                      ],
+                      "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
                     },
                     "value": {
                       "description": "scalar, or string[] for op 'in'"
@@ -1766,12 +1789,14 @@ Keyword full-text search over every field marked searchable:true (INCLUDING non-
                 "enum": [
                   "eq",
                   "ne",
+                  "neOrUnset",
                   "contains",
                   "gt",
                   "lt",
                   "in",
                   "exists"
-                ]
+                ],
+                "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
               },
               "value": {
                 "description": "scalar, or string[] for op 'in'"
@@ -1801,12 +1826,14 @@ Keyword full-text search over every field marked searchable:true (INCLUDING non-
                       "enum": [
                         "eq",
                         "ne",
+                        "neOrUnset",
                         "contains",
                         "gt",
                         "lt",
                         "in",
                         "exists"
-                      ]
+                      ],
+                      "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
                     },
                     "value": {
                       "description": "scalar, or string[] for op 'in'"
@@ -1882,12 +1909,14 @@ Count entries in a collection, optionally with the same where filters as query_e
                 "enum": [
                   "eq",
                   "ne",
+                  "neOrUnset",
                   "contains",
                   "gt",
                   "lt",
                   "in",
                   "exists"
-                ]
+                ],
+                "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
               },
               "value": {
                 "description": "scalar, or string[] for op 'in'"
@@ -1917,12 +1946,14 @@ Count entries in a collection, optionally with the same where filters as query_e
                       "enum": [
                         "eq",
                         "ne",
+                        "neOrUnset",
                         "contains",
                         "gt",
                         "lt",
                         "in",
                         "exists"
-                      ]
+                      ],
+                      "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
                     },
                     "value": {
                       "description": "scalar, or string[] for op 'in'"
@@ -2016,12 +2047,14 @@ Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggreg
                 "enum": [
                   "eq",
                   "ne",
+                  "neOrUnset",
                   "contains",
                   "gt",
                   "lt",
                   "in",
                   "exists"
-                ]
+                ],
+                "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
               },
               "value": {
                 "description": "scalar, or string[] for op 'in'"
@@ -2051,12 +2084,14 @@ Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggreg
                       "enum": [
                         "eq",
                         "ne",
+                        "neOrUnset",
                         "contains",
                         "gt",
                         "lt",
                         "in",
                         "exists"
-                      ]
+                      ],
+                      "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset."
                     },
                     "value": {
                       "description": "scalar, or string[] for op 'in'"
@@ -2092,7 +2127,7 @@ Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggreg
 
 ## `bulk_create_entries`
 
-Create up to 100 entries in one call (use for seeding). Each item is validated like create_entry; returns per-item results so you can fix only the failures. A beforeCreate hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the consults fit the host budget (ceil(n/5)×timeout), and an over-cap batch is refused with a 'split the batch' hint. allowExplicitWorkflowState is the MIGRATION escape hatch: load historical records at their real workflow states instead of being forced to `initial` (imports/backfills only; audit-stamped).
+Create up to 100 entries in one call (use for seeding). Each item is a BARE field object ({title:"x"}), NOT create_entry's {collection,data:{…}} wrapper — but a wrapped item is unwrapped for you rather than failing, so carrying create_entry's shape across works. Each item is validated like create_entry; returns per-item results so you can fix only the failures. A beforeCreate hook runs PER ITEM (bounded concurrency; a rejected/failed item reports E_HOOK_REJECTED/E_HOOK_FAILED and is not inserted, others still insert) — the batch is capped so the consults fit the host budget (ceil(n/5)×timeout), and an over-cap batch is refused with a 'split the batch' hint. allowExplicitWorkflowState is the MIGRATION escape hatch: load historical records at their real workflow states instead of being forced to `initial` (imports/backfills only; audit-stamped).
 
 **Input schema:**
 
