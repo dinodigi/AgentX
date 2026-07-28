@@ -275,6 +275,24 @@ const RESOLUTIONS = {
       "trusts. Collections WITH a beforeCreate hook are still capped by the consult budget, which " +
       "is the constraint that actually exists.",
   },
+
+  // --- CP6 (3/3): enum option renames (commit 260e64b) ----------------------
+  "73a14ef7": {
+    disposition: "SHIPPED",
+    ref: "260e64b",
+    note:
+      "You called it exactly: renames covered field names only, so an option change was a silent " +
+      "data loss with no error anywhere. The rows kept the old value, the enum no longer permitted " +
+      "it, and each affected row then failed validation on its NEXT save while matching a filter " +
+      "on neither the old name nor the new one — the schema said one thing, the data said another, " +
+      "and nothing complained. renames now also takes {field, from, to}, rewriting the VALUE in " +
+      "place. Trash is migrated alongside live rows, or a restore would resurrect a value the " +
+      "schema rejects. Validation is deliberately strict, because a typo here rewrites stored " +
+      "data: the field must be an enum on both sides, `from` must be a current option, `to` must " +
+      "be one in the new definition, and keeping `from` in the new options is refused as ambiguous " +
+      "rather than guessed at. The schema diff also had to learn the difference, so a safe option " +
+      "migration no longer reads as a destructive field drop.",
+  },
 };
 
 const stamp = (r) =>
