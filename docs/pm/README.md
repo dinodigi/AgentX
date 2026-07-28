@@ -27,7 +27,13 @@ Four sources, and they are not equal:
 2. **Discovered while building** — the drift, the bugs found mid-task. Goes
    straight to a sprint or `BACKLOG.md`; never left in a chat log.
 3. **[../BACKLOG.md](../BACKLOG.md)** — ideas and parked decisions. Things we
-   have *not* started. Deliberately separate from in-flight work.
+   have *not* started. Deliberately separate from in-flight work, but **not
+   hidden**: `npm run pm` parses it and surfaces every high-priority unshipped
+   item into BOARD.md. The separation is conceptual (a sprint is a commitment,
+   the backlog is a list) — it is not an excuse to lose sight of it.
+   *It rots the same way the wall does:* on 2026-07-26 three HIGH items
+   (MT-1, OPS-4, DX-6) still read "not started" days after shipping. Mark items
+   shipped with a commit hash when a sprint closes.
 4. **Operator decisions** — direction changes, priorities, product calls.
    Recorded in the sprint doc so the reasoning survives.
 
