@@ -98,9 +98,9 @@ const RESOLUTIONS = {
       "stateless contract, and a test holds it honest.",
   },
 
-  // --- CP2: the Track B papercuts (commit CP2SHA) --------------------------
+  // --- CP2: the Track B papercuts (commit 0dbf3ff) --------------------------
   d128f35a: {
-    disposition: 'SHIPPED', ref: 'CP2SHA',
+    disposition: 'SHIPPED', ref: '0dbf3ff',
     note:
       "bulk_create_entries now accepts create_entry's {collection, data:{...}} wrapper and " +
       'unwraps it per item, so carrying the sibling shape across works instead of failing all 14. ' +
@@ -110,7 +110,7 @@ const RESOLUTIONS = {
       'expected shape up front rather than leaving it to be inferred.',
   },
   ad690ade: {
-    disposition: 'SHIPPED', ref: 'CP2SHA',
+    disposition: 'SHIPPED', ref: '0dbf3ff',
     note:
       'Optional relation/asset (and every other optional) sub-field inside a typed block or group ' +
       'now treats explicit null as absent, so an editor emitting null for "nothing selected" just ' +
@@ -120,7 +120,7 @@ const RESOLUTIONS = {
       'that is a real error, not a papercut.',
   },
   '4fae3449': {
-    disposition: 'SHIPPED', ref: 'CP2SHA',
+    disposition: 'SHIPPED', ref: '0dbf3ff',
     note:
       'The entry id is now a filterable virtual field, so where:[{field:"id",op:"in",value:[...]}] fetches ' +
       'a known set in ONE call instead of N. eq/ne/in only — "contains" on a uuid is a substring ' +
@@ -129,7 +129,7 @@ const RESOLUTIONS = {
       '"unknown field" error now lists id among the valid ones.',
   },
   '5e8146d8': {
-    disposition: 'ANSWERED', ref: 'CP2SHA',
+    disposition: 'ANSWERED', ref: '0dbf3ff',
     note:
       'VERDICT CORRECTION, and thank you — the fix is real but the diagnosis was not. We could not ' +
       'reproduce the MCP half: writableBy is enforced ONLY on the delivery path, because an MCP ' +
@@ -139,7 +139,7 @@ const RESOLUTIONS = {
       'message now says, per field, whether it is permanently server-only or which claim it needs.',
   },
   '1a24b96b': {
-    disposition: 'SHIPPED', ref: 'CP2SHA',
+    disposition: 'SHIPPED', ref: '0dbf3ff',
     note:
       'increment now takes startingFrom: {field:"views",by:1,startingFrom:0} sets views=1 on the ' +
       'first call with no seed. You were right that this mattered beyond ergonomics — the ' +
@@ -149,7 +149,7 @@ const RESOLUTIONS = {
       '"field is not set", which used to send you straight back to seeding.',
   },
   '4847bc14': {
-    disposition: 'SHIPPED', ref: 'CP2SHA',
+    disposition: 'SHIPPED', ref: '0dbf3ff',
     note:
       'You suggested a first-class op or a docs callout; you get the op. "neOrUnset" means ' +
       '"different OR not set" — {field:"email_opt_out",op:"neOrUnset",value:true} is the whole ' +

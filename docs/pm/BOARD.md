@@ -80,11 +80,11 @@ unrelated testers hit.
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=41 · new=12 · planned=14 · reviewed=2_
+_Wall totals: done=47 · new=9 · planned=11 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_26 open (12 new, 14 planned) · 1 theme(s) reported more than once · snapshot 2026-07-28 08:05Z_
+_20 open (9 new, 11 planned) · 1 theme(s) reported more than once · snapshot 2026-07-28 08:28Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
@@ -94,24 +94,18 @@ _26 open (12 new, 14 planned) · 1 theme(s) reported more than once · snapshot 
 | ⬜ | 07-26 | xvibe | idea | XVibe-class static apps need an edge proxy solely to hold the delivery token — a browse… |
 | ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
 | ⬜ | 07-26 | jabed test | limitation | publicFilter cannot express relative time, so "serve this row only while now is between… |
-| ⬜ | 07-26 | jabed test | friction | Relation and asset sub-fields inside typed blocks reject an explicit null — the key mus… |
 | ⬜ | 07-26 | jabed test | limitation | indexed is rejected on date fields, but published_at is the canonical sort key for any … |
-| ⬜ | 07-26 | jabed test | friction | bulk_create_entries takes bare objects while create_entry takes {collection, data:{...}… |
 | ⬜ | 07-26 | jabed test | limitation | Array fields cannot be filtered on the delivery API, so a tag archive has to fetch ever… |
 | ⬜ | 07-26 | jabed test | idea | Workflow transitions gate on ACTOR but not on row state, so "you may not launch a campa… |
-| ⬜ | 07-26 | jabed test | idea | update_entry_if increment refuses an unset field, so every counter needs a seed-or-fall… |
 | 🗓️ | 07-18 | CSLP | friction | Docs say publicWrite POST is 'anonymous', but a truly tokenless POST returns 401 E_AUTH… |
 | 🗓️ | 07-18 | CSLP | friction | Unauthenticated GET on an access-ruled collection returns 404 E_NOT_FOUND instead of 40… |
 | 🗓️ | 07-18 | CSLP | limitation | No date bucketing and no second groupBy dimension - by-month pipeline, closed volume by… |
 | 🗓️ | 07-18 | CSLP | limitation | No counting/capacity constraint: unique gives exactly-one-per-key, but 'max N rows per … |
 | 🗓️ | 07-18 | CSLP | limitation | Enum option renames have no mapped migration - renames:[] covers fields only, so renami… |
 | 🗓️ | 07-18 | CSLP | limitation | No SMS connector (Twilio etc.) although the countryside_crm baseline ships text_opt_in … |
-| 🗓️ | 07-18 | CSLP | friction | op 'ne' never matching unset fields is correct but surprising, and the anyOf:[{ne},{exi… |
 | 🗓️ | 07-18 | CSLP | friction | 100 rows/call makes real migrations chatty (3.1k-lead Salesforce import = ~31 sequentia… |
-| 🗓️ | 07-18 | CSLP | friction | Some MCP-path error hints use delivery-facing wording - e.g. writableBy rejections say … |
 | 🗓️ | 07-19 | CSLP | idea | countryside_crm ships tools:[] — building a full CRM on it meant re-implementing every … |
 | 🗓️ | 07-20 | Fatsoz | limitation | `indexed` is rejected on date fields, so the most natural sort/filter dimension for eve… |
-| 🗓️ | 07-20 | Hatchly | friction | query_entries rejects `id` in where clauses ("unknown field id"), so fetching one entry… |
 | 🗓️ | 07-23 | Codex-test | idea | Add a browser-safe public-read mode for public collections. |
 | 🗓️ | 07-24 | Hatchly | limitation | define_collection has no additive field op — adding one field requires re-sending the w… |
 <!-- END:WALL -->

@@ -4,7 +4,7 @@
 > Regenerate counts with `npm run pm`; dispositions are judgments and are
 > maintained by hand.
 
-**Wall: 26 open** (32 − 6 closed 07-28 with receipts: A1×2, A2×2, A4×2 were
+**Wall: 20 open** (32 − 6 closed 07-28 with receipts: A1×2, A2×2, A4×2 were
 already shipped and still reading `new`).
 **Backlog: 44 unshipped.**
 
@@ -12,7 +12,7 @@ already shipped and still reading `new`).
 
 ---
 
-## CP2 — Papercuts (Track B + the `ne` surprise)
+## CP2 — Papercuts (Track B + the `ne` surprise) — SHIPPED 0dbf3ff
 
 Six reports, all small, all in the same test surface — one gate, one push.
 
