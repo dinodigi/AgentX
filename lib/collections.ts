@@ -756,7 +756,13 @@ function filterIndexExpr(f: FieldDef): string {
     case "number":
       return `((${raw})::numeric)`;
     case "date":
-      return `((${raw})::timestamptz)`;
+      // A3: RAW TEXT, not a cast. Postgres refuses ::timestamptz AND ::timestamp
+      // in an index expression (both casts are STABLE — DateStyle/TimeZone
+      // dependent). Text is exact here because writes store fixed-width
+      // canonical UTC ISO, which sorts lexicographically = chronologically.
+      // `query.ts` compares indexed date fields as text against a canonicalized
+      // value so the planner can actually use this index.
+      return raw;
     case "boolean":
       return `((${raw})::boolean)`;
     default:
@@ -790,6 +796,32 @@ async function syncFilterIndexes(
   for (const [name, f] of newIdx) {
     const of = oldIdx.get(name);
     if (of && of.type === f.type) continue; // unchanged
+    // A3: a date index is a TEXT index, so it is only correct while every
+    // stored value is canonical UTC ISO. Writes have canonicalized since A5,
+    // but rows written before it (or imported) may carry another offset — and
+    // '2026-07-04T10:00+02:00' sorts nowhere near the same instant written as
+    // '...08:00:00.000Z'. Canonicalize first, exactly as the unique-index path
+    // does for the same reason. Unparseable values are left alone rather than
+    // destroyed; they sort as text, which is what they already did.
+    if (f.type === "date") {
+      try {
+        await tdb.execute(sql`
+          UPDATE entries
+          SET data = jsonb_set(
+            data, ARRAY[${name}]::text[],
+            to_jsonb(to_char((data->>${name})::timestamptz AT TIME ZONE 'UTC',
+                             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')))
+          WHERE collection_id = ${collectionId}
+            AND data ? ${name}
+            AND (data->>${name}) IS NOT NULL
+            AND (data->>${name}) !~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$'`);
+      } catch {
+        // A row whose value will not parse as a timestamp blocks the whole
+        // statement. The index is still correct for the canonical majority and
+        // the outliers keep their existing (text) ordering, so this must not
+        // fail the define.
+      }
+    }
     await tdb.execute(
       sql.raw(
         `CREATE INDEX IF NOT EXISTS "${filterIndexName(collectionId, name)}" ` +

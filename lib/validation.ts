@@ -411,17 +411,22 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
         message: "searchable is only valid on text/richtext fields",
       });
     }
-    if (f.indexed && (f.type === "richtext" || f.type === "group" || f.type === "array" || f.type === "date")) {
+    // A3: `indexed` on DATE fields is now supported. Postgres still refuses a
+    // ::timestamptz (or ::timestamp) expression index — both casts are STABLE,
+    // not IMMUTABLE, verified against PG18 — so the index is built on the RAW
+    // TEXT instead. That is exact rather than approximate: every date write is
+    // stored as `new Date(s).toISOString()`, a fixed-width canonical UTC ISO
+    // string, and fixed-width ISO sorts lexicographically exactly as it sorts
+    // chronologically. Two reporters needed this: published_at is the canonical
+    // sort key for content, starts_at/ends_at the canonical scheduling filter,
+    // and "index another dimension" has no substitute for either.
+    if (f.indexed && (f.type === "richtext" || f.type === "group" || f.type === "array")) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
           f.type === "richtext"
             ? "indexed is not valid on richtext — use searchable for full-text"
-            : f.type === "date"
-              ? // Postgres rejects a ::timestamptz expression index (the cast is
-                // STABLE, not IMMUTABLE) — was surfacing as E_INTERNAL at define.
-                "indexed is not supported on date fields yet — date filters run unindexed (fine at moderate scale); index a text/number/enum dimension instead"
-              : "indexed is not valid on group/array — nested content isn't filterable/sortable",
+            : "indexed is not valid on group/array — nested content isn't filterable/sortable",
       });
     }
     if (f.pattern !== undefined) {

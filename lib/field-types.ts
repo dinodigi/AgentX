@@ -301,8 +301,10 @@ export const COMMON_FIELD_CONFIG = [
   "publicRead?: boolean (delivery visibility)",
   "indexed?: boolean — build a DB index so FILTER/SORT by this field stays fast as the " +
     "collection grows. Set it on the fields you query by (status, category, price, date); NOT " +
-    "on everything (each index taxes writes). unique/searchable already imply an index. Invalid " +
-    "on richtext (use searchable) and group/array (nested content isn't queryable).",
+    "on everything (each index taxes writes). unique/searchable already imply an index. " +
+    "DATE fields are supported — index published_at for content ordering, starts_at/ends_at for " +
+    "scheduling windows; existing values are canonicalized to UTC when the index is added. " +
+    "Invalid on richtext (use searchable) and group/array (nested content isn't queryable).",
   'writableBy?: "none" | {claim, equals} — delivery-only write gate (admin/MCP unaffected). ' +
     "Use writableBy:'none' to lock an admin-only field on a publicWrite collection. " +
     "Fields referenced by the collection's publicFilter are auto-locked against anonymous writes.",

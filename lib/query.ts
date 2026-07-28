@@ -65,6 +65,29 @@ const OPS_BY_TYPE: Record<FieldDef["type"], WhereOp[]> = {
 const VIRTUAL_ID: FieldDef = { name: "id", label: "ID", type: "text" } as FieldDef;
 const ID_OPS: WhereOp[] = ["eq", "ne", "in"];
 
+/** A3: a date field whose index (and therefore comparison) is text-based. */
+const isIndexedDate = (f: FieldDef) => f.type === "date" && f.indexed === true;
+
+/**
+ * A3: a date comparison value in the SAME canonical form writes are stored in
+ * (`new Date(s).toISOString()`), so a text comparison is exact.
+ *
+ * An unparseable value throws rather than silently comparing as raw text — on
+ * the text path a garbage value would not error the way `::timestamptz` did, it
+ * would just quietly match the wrong rows, and a filter that returns a
+ * confidently wrong set is worse than one that fails.
+ */
+function canonicalDateValue(f: FieldDef, value: unknown): string {
+  const s = String(value);
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) {
+    throw new ValidationError(
+      `where: "${s}" is not a valid date for field "${f.name}" — use an ISO 8601 value like 2026-07-28T12:00:00Z`,
+    );
+  }
+  return new Date(t).toISOString();
+}
+
 function fieldOrThrow(fields: FieldDef[], name: string, context: string): FieldDef {
   const f = fields.find((x) => x.name === name);
   if (!f) {
@@ -106,7 +129,17 @@ export function accessor(field: FieldDef, dataCol: AnyColumn | SQL = entries.dat
     case "number":
       return sql`(${raw})::numeric`;
     case "date":
-      return sql`(${raw})::timestamptz`;
+      // A3: an INDEXED date compares as raw TEXT, because its index must be a
+      // text index (Postgres refuses a ::timestamptz expression index — the
+      // cast is STABLE). A ::timestamptz lhs here would make the planner ignore
+      // that index entirely, which would leave `indexed: true` a lie.
+      //
+      // This is not a second semantics for dates. Stored values are fixed-width
+      // canonical UTC ISO, and the comparison value is canonicalized to the
+      // same form below, so text ordering and instant ordering are the SAME
+      // ordering. The unindexed path keeps the cast because its values have not
+      // been backfilled and may carry a non-canonical offset.
+      return isIndexedDate(field) ? raw : sql`(${raw})::timestamptz`;
     case "boolean":
       return sql`(${raw})::boolean`;
     default:
@@ -228,18 +261,23 @@ function compileScalarClause(
       `where: op "${clause.op}" on "${f.name}" takes a single value, not an array — use op "in" for value lists`,
     );
   }
+  // A3: for an indexed date every comparison value is canonicalized to the
+  // stored form, so the text index applies and the answer is identical to the
+  // ::timestamptz path.
+  const rhs = (v: unknown): string => (isIndexedDate(f) ? canonicalDateValue(f, v) : String(v));
+
   switch (clause.op) {
     case "eq":
       if (f.type === "boolean") return sql`${lhs} = ${Boolean(clause.value)}`;
       if (f.type === "number") return sql`${lhs} = ${Number(clause.value)}`;
-      return sql`${lhs} = ${String(clause.value)}`;
+      return sql`${lhs} = ${rhs(clause.value)}`;
     case "ne":
       // SET AND different — an unset field never matches (SQL != excludes
       // NULL; fail-closed for publicFilter). "different OR unset" composes as
       // anyOf: [{ne}, {exists:false}].
       if (f.type === "boolean") return sql`${lhs} != ${Boolean(clause.value)}`;
       if (f.type === "number") return sql`${lhs} != ${Number(clause.value)}`;
-      return sql`${lhs} != ${String(clause.value)}`;
+      return sql`${lhs} != ${rhs(clause.value)}`;
     case "neOrUnset": {
       // "different OR not set" — the exclusion idiom. `ne` alone is fail-closed
       // (an unset field never matches), which is right for publicFilter but
@@ -253,7 +291,7 @@ function compileScalarClause(
           ? sql`${lhs} != ${Boolean(clause.value)}`
           : f.type === "number"
             ? sql`${lhs} != ${Number(clause.value)}`
-            : sql`${lhs} != ${String(clause.value)}`;
+            : sql`${lhs} != ${rhs(clause.value)}`;
       return sql`(${neq} OR ${probe} IS NULL)`;
     }
     case "exists": {
@@ -273,12 +311,16 @@ function compileScalarClause(
       return sql`${lhs} ILIKE ${"%" + needle + "%"} ESCAPE '\\'`;
     }
     case "gt":
-      return f.type === "number"
-        ? sql`${lhs} > ${Number(clause.value)}`
+      if (f.type === "number") return sql`${lhs} > ${Number(clause.value)}`;
+      // A3: no ::timestamptz on the indexed path — that cast is exactly what
+      // would stop the planner using the text index.
+      return isIndexedDate(f)
+        ? sql`${lhs} > ${rhs(clause.value)}`
         : sql`${lhs} > ${String(clause.value)}::timestamptz`;
     case "lt":
-      return f.type === "number"
-        ? sql`${lhs} < ${Number(clause.value)}`
+      if (f.type === "number") return sql`${lhs} < ${Number(clause.value)}`;
+      return isIndexedDate(f)
+        ? sql`${lhs} < ${rhs(clause.value)}`
         : sql`${lhs} < ${String(clause.value)}::timestamptz`;
     case "in": {
       const values = (clause.value as string[]).map((v) => sql`${String(v)}`);
