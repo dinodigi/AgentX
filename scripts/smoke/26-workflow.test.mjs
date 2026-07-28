@@ -208,4 +208,73 @@ describe("declarative workflows (G4)", () => {
     const again = await mcp(p.mcpToken, "update_entry_if", { collection: "requests", id, data: { status: "rejected" } });
     assert.ok(!again.ok || again.value?.ok === false, "approved→rejected is not declared");
   });
+
+  // A1 (2026-07-26): 'admin' was read as staff-only by TWO independent testers
+  // (CSLP 07-18, jabed 07-26) and never was — it includes invited client-role
+  // members. The vocabulary now distinguishes operator/client, with 'admin'
+  // kept as a permissive alias so no live workflow tightens on deploy.
+  it("A1: 'operator' and 'client' are accepted actor names; junk still is not", async () => {
+    const ok = await define({
+      field: "status",
+      initial: "draft",
+      transitions: [
+        { from: "draft", to: "submitted", actors: ["operator"] },
+        { from: "submitted", to: "approved", actors: ["mcp", "client"] },
+      ],
+    });
+    assert.ok(ok.ok, `operator/client must be valid actors: ${ok.errorText}`);
+
+    const bad = await define({
+      field: "status",
+      initial: "draft",
+      transitions: [{ from: "draft", to: "submitted", actors: ["staff"] }],
+    });
+    assert.equal(bad.ok, false);
+    // Zod's enum check fires before the workflow validator, and its message is
+    // the better one — it enumerates every legal actor.
+    assert.match(bad.errorText, /operator/, bad.errorText);
+    assert.match(bad.errorText, /client/, bad.errorText);
+  });
+
+  it("A1: 'admin' stays permissive — an mcp actor is unaffected by the new names", async () => {
+    // The grandfather guarantee: a workflow written the old way keeps working.
+    const def = await define({
+      field: "status",
+      initial: "draft",
+      transitions: [{ from: "draft", to: "submitted", actors: ["mcp", "admin"] }],
+    });
+    assert.ok(def.ok, def.errorText);
+    const created = await mcp(p.mcpToken, "create_entry", {
+      collection: "requests",
+      data: { title: "grandfathered", status: "draft" },
+    });
+    assert.ok(created.ok, created.errorText);
+    const moved = await mcp(p.mcpToken, "update_entry", {
+      collection: "requests",
+      id: created.value.id,
+      data: { status: "submitted" },
+    });
+    assert.ok(moved.ok, `an existing actors:['mcp','admin'] workflow must still work: ${moved.errorText}`);
+  });
+
+  it("A1: a staff-only gate refuses the delivery actor", async () => {
+    // operator-gated means end users cannot drive it, which is the whole point.
+    const def = await define({
+      field: "status",
+      initial: "draft",
+      transitions: [{ from: "draft", to: "submitted", actors: ["operator"] }],
+    });
+    assert.ok(def.ok, def.errorText);
+    const created = await mcp(p.mcpToken, "create_entry", {
+      collection: "requests",
+      data: { title: "staff only", status: "draft" },
+    });
+    const blocked = await mcp(p.mcpToken, "update_entry", {
+      collection: "requests",
+      id: created.value.id,
+      data: { status: "submitted" },
+    });
+    assert.equal(blocked.ok, false, "mcp is NOT in ['operator'] — the gate must hold");
+    assert.match(blocked.errorText, /permitted actors: operator/, blocked.errorText);
+  });
 });

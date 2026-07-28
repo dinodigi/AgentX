@@ -9,6 +9,7 @@ import { getCollection } from "@/lib/collections";
 import { getProjectRole, getViewer } from "@/lib/access";
 import { createEntry, updateEntry, deleteEntry, ValidationError } from "@/lib/entries";
 import { coerceFormData } from "@/lib/admin-form";
+import type { AuditActor } from "@/db/schema";
 import { getLocales } from "@/lib/locales";
 
 /**
@@ -16,6 +17,27 @@ import { getLocales } from "@/lib/locales";
  * Bound in the page as saveEntry.bind(null, projectId, collectionName, entryId).
  * Returns { error } on validation failure; redirects to the entry list on success.
  */
+/**
+ * A1 — the admin-surface actor, carrying WHICH identity acted.
+ *
+ * Every write from this surface used to stamp a bare `{type:"admin"}`, which
+ * made an invited client-role member indistinguishable from staff — both in the
+ * audit trail and, worse, at the workflow gate. Two testers independently read
+ * `actors:["mcp","admin"]` as staff-only; it never was.
+ *
+ * `getProjectRole` already draws exactly the line we need (workspace member /
+ * platform operator → "operator"; per-project share → "client"), so this is
+ * only a matter of carrying it through.
+ */
+async function adminActor(projectId: string): Promise<AuditActor> {
+  const [viewer, role] = await Promise.all([getViewer(), getProjectRole(projectId)]);
+  return {
+    type: "admin",
+    ...(viewer?.userId ? { userId: viewer.userId } : {}),
+    ...(role ? { role } : {}),
+  };
+}
+
 export async function saveEntry(
   projectId: string,
   collectionName: string,
@@ -42,8 +64,7 @@ export async function saveEntry(
   }
   const data = coerceFormData(collection.fields, formData, wrapLocale);
 
-  const viewer = await getViewer();
-  const actor = { type: "admin" as const, userId: viewer?.userId };
+  const actor = await adminActor(projectId);
 
   try {
     if (entryId) {
@@ -122,7 +143,7 @@ export async function deleteEntryAction(
   if (!collection) return { error: "collection not found" };
 
   const viewer = await getViewer();
-  await deleteEntry(collection, entryId, { type: "admin", userId: viewer?.userId });
+  await deleteEntry(collection, entryId, await adminActor(projectId));
   redirect(`/admin/${projectId}/${collectionName}`);
 }
 
@@ -139,7 +160,7 @@ export async function restoreEntryAction(
   const viewer = await getViewer();
   try {
     const { restoreEntry } = await import("@/lib/trash");
-    await restoreEntry(projectId, collection, entryId, { type: "admin", userId: viewer?.userId });
+    await restoreEntry(projectId, collection, entryId, await adminActor(projectId));
   } catch (e) {
     if (e instanceof ValidationError) return { error: e.message };
     return { error: "could not restore entry" };
@@ -162,7 +183,7 @@ export async function purgeEntryAction(
     const { purgeEntry } = await import("@/lib/trash");
     await purgeEntry(projectId, collection, entryId, {
       confirm: true,
-      actor: { type: "admin", userId: viewer?.userId },
+      actor: await adminActor(projectId),
     });
   } catch (e) {
     if (e instanceof ValidationError) return { error: e.message };
@@ -185,10 +206,7 @@ export async function restoreVersionAction(
   const viewer = await getViewer();
   try {
     const { restoreEntryVersion } = await import("@/lib/entries");
-    await restoreEntryVersion(projectId, collection, entryId, versionId, {
-      type: "admin",
-      userId: viewer?.userId,
-    });
+    await restoreEntryVersion(projectId, collection, entryId, versionId, await adminActor(projectId));
   } catch (e) {
     if (e instanceof ValidationError) return { error: e.message };
     return { error: "could not restore version" };

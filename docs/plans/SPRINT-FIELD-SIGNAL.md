@@ -18,7 +18,7 @@
 
 ## Track A — Reported independently by 2+ testers (do these first)
 
-- ⬜ **A1 — `admin` workflow actor silently includes client-role members.**
+- ✅ **A1 — `admin` workflow actor silently includes client-role members.** **SHIPPED 2026-07-26.** `WorkflowActor` gains `operator` (workspace members + platform operators — real staff) and `client` (invited project members); `admin` is kept as a DEPRECATED permissive alias meaning either, so every existing `actors:['mcp','admin']` workflow behaves identically on deploy — asserted by test. `AuditActor.admin` now carries `role`, so the audit trail can finally answer "was that staff?". The admin write path stamps it via `getProjectRole`, which already drew exactly the right line. Asymmetry is deliberate: `admin` accepts operator+client, but `operator` does NOT accept a bare `admin`, so a staff-only gate is real. Tool description rewritten with the warning in capitals. 12/12 workflow suite.
   🔴 **The only item here that is security-shaped, and it has now been reported
   TWICE, 8 days apart** (CSLP 07-18: *"workflow actors are too coarse"*; jabed
   07-26: *"deserves far more prominence than a parenthetical, or its own

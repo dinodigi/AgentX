@@ -16,7 +16,7 @@ unrelated testers hit.
 
 | ID | Item | State | Note |
 |---|---|---|---|
-| A1 | `admin` workflow actor silently includes client-role members | ⬜ | 🔴 Only security-shaped item. CSLP 07-18 **+** jabed 07-26. Verified in code. |
+| A1 | `admin` workflow actor silently includes client-role members | ✅ | Shipped — `operator`/`client` split, `admin` kept as a permissive alias so no live workflow tightens. 3 tests. |
 | A2 | Two read planes disagree; only schema returns a convergence note | ⬜ | Hatchly + jabed + our own G2. Cheap half: add the note to entry writes. |
 | A3 | `indexed` rejected on date fields | ⬜ | Fatsoz + jabed. `published_at` has no substitute. |
 | A4 | Stateless MCP-over-HTTP undocumented | ⬜ | **3 reporters.** Cheapest item on the board. |

@@ -53,7 +53,26 @@ export type EventAction =
 
 /** Which surfaces may drive a transition. delivery (end users) is excluded by
  * default — the flagship approval flow is secure unless a transition opts in. */
-export type WorkflowActor = "mcp" | "admin" | "delivery";
+/**
+ * Who may drive a transition.
+ *
+ * ⚠️ **`admin` does NOT mean staff.** It means "someone acting through the
+ * project admin UI", which includes **client-role members** you invited. Two
+ * independent testers read `actors: ["mcp","admin"]` as an authorization
+ * boundary and were wrong (CSLP 2026-07-18, jabed 2026-07-26) — the word
+ * "gated" invites exactly that reading.
+ *
+ * So the vocabulary now distinguishes them:
+ *  - `operator` — workspace members and platform operators. **This is "staff".**
+ *  - `client`   — project members with the client role (invited collaborators).
+ *  - `admin`    — DEPRECATED alias meaning operator OR client. Kept because
+ *                 every existing workflow says it, and changing its meaning
+ *                 would silently tighten live projects on deploy. Prefer
+ *                 `operator` for anything that is genuinely staff-only.
+ *  - `mcp`      — agents holding an mcp-scoped token (server-side).
+ *  - `delivery` — end users on the public API. Never included by default.
+ */
+export type WorkflowActor = "mcp" | "operator" | "client" | "admin" | "delivery";
 
 /** One edge of a state machine: from → to, actor-gated, firing optional actions. */
 export interface WorkflowTransition {
@@ -752,7 +771,11 @@ export type AuditActor =
   // schedule: this mutation was performed by a declarative scheduled mutation
   // (AUTO-1) — the value is the schedule's name, so sweeps are audit-traceable.
   | { type: "mcp"; explicitWorkflowState?: true; schedule?: string }
-  | { type: "admin"; userId?: string }
+  // A1: `role` records WHICH admin-surface identity acted — an operator
+  // (workspace member) or an invited client-role member. Without it the audit
+  // trail cannot answer "was that staff?", and the workflow gate cannot tell
+  // them apart. Absent on pre-A1 rows, which resolve as the permissive `admin`.
+  | { type: "admin"; userId?: string; role?: "operator" | "client" }
   | { type: "delivery"; userSub?: string }
   | { type: "inbound" } // 2b: an inbound-email → collection route (trusted, secret-gated)
   | { type: "unknown" };

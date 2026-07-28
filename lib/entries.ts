@@ -255,7 +255,14 @@ export interface EmitDescriptor {
 /** Map an AuditActor to a workflow actor, or undefined for an unknown surface
  * (which then may NOT drive a transition — fail-closed). */
 function workflowActor(actor: AuditActor): WorkflowActor | undefined {
-  return actor.type === "mcp" || actor.type === "admin" || actor.type === "delivery" ? actor.type : undefined;
+  if (actor.type === "mcp" || actor.type === "delivery") return actor.type;
+  if (actor.type === "admin") {
+    // A1: resolve the admin surface to WHO actually acted. `role` is stamped by
+    // the admin write path; its absence means a pre-A1 caller, which resolves
+    // to the permissive `admin` so nothing changes for them.
+    return actor.role === "operator" ? "operator" : actor.role === "client" ? "client" : "admin";
+  }
+  return undefined;
 }
 
 /** Fire a matched transition's actions (deferred) as an entry.transitioned event. */

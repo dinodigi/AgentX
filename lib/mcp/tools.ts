@@ -573,9 +573,15 @@ export const TOOL_DEFS: ToolDef[] = [
             "historical records at their real states, audit-stamped). The field then " +
             "moves ONLY via a declared transition; an illegal move is rejected with the allowed " +
             "targets, and a target no transition reaches from the current state conflicts. " +
-            "Transitions are ACTOR-GATED — by default only mcp and admin may transition; add " +
-            "'delivery' to a transition's actors to let end users drive it (e.g. an owner cancelling " +
-            "their own request). NOTE: 'admin' includes client-role members in v1. Overlapping " +
+            "Transitions are ACTOR-GATED. Actors: 'mcp' (agents with an mcp token) · 'operator' " +
+            "(workspace members + platform operators — THIS is staff) · 'client' (invited " +
+            "project-role members) · 'delivery' (end users on the public API) · 'admin' " +
+            "(DEPRECATED alias meaning operator OR client). Default is ['mcp','admin']. " +
+            "⚠️ IF YOU WANT STAFF-ONLY, USE 'operator' — NOT 'admin'. 'admin' means anyone " +
+            "acting through the project admin UI, INCLUDING invited client-role members, so " +
+            "actors:['mcp','admin'] is NOT an authorization boundary against your own clients. " +
+            "Two independent integrators read it that way and were wrong. Add 'delivery' to let " +
+            "end users drive a transition (e.g. an owner cancelling their own request). Overlapping " +
             "(from,to) pairs are rejected at define time so every move resolves one transition. " +
             "A matched transition fires its actions as an entry.transitioned event (webhook/email, " +
             "immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
@@ -589,7 +595,7 @@ export const TOOL_DEFS: ToolDef[] = [
                 properties: {
                   from: { description: "state or state[]" },
                   to: { type: "string" },
-                  actors: { type: "array", items: { type: "string", enum: ["mcp", "admin", "delivery"] } },
+                  actors: { type: "array", items: { type: "string", enum: ["mcp", "operator", "client", "admin", "delivery"] } },
                   actions: { type: "array", items: { type: "object" } },
                 },
                 required: ["from", "to"],
@@ -1580,7 +1586,7 @@ const defineArgs = z.object({
           z.object({
             from: z.union([z.string(), z.array(z.string()).min(1)]),
             to: z.string(),
-            actors: z.array(z.enum(["mcp", "admin", "delivery"])).optional(),
+            actors: z.array(z.enum(["mcp", "operator", "client", "admin", "delivery"])).optional(),
             actions: z.array(eventActionSchema).optional(),
           }),
         )
