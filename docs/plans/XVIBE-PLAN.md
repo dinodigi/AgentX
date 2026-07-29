@@ -85,8 +85,24 @@ vanish:
 - ⬜ **P1.3 — builder-agent orchestration**: Claude API + MCP client of the
   current project; generates the frontend and calls `get_client_code`.
 - ⬜ **P1.4 — deploy control plane**: build → static bundle → R2 → CDN purge →
-  live at `<app>.xvibe.app`.
-- ⬜ **P1.5 — ⚑ `xvibe.app` DNS + a wildcard `*.xvibe.app` cert.**
+  live at `<app>.myxvibe.com`.
+- ⬜ **P1.5 — ⚑ `myxvibe.com` DNS + a wildcard `*.myxvibe.com` cert**, and a
+  **Public Suffix List submission for `myxvibe.com` on day one** (free, but it
+  takes weeks to reach browsers).
+
+> **CORRECTED 2026-07-29 — tenant apps do NOT live on `*.xvibe.app`.**
+> That would put mutually-untrusting tenant sites on the SAME registrable
+> domain as the XVibe control plane, so one tenant could set cookies on the
+> parent and an XSS on any deployed app would be within reach of the studio
+> itself. It is the exact hazard that keeps `github.io` off `github.com` and
+> `myshopify.com` off `shopify.com`. `xvibe.app` stays the STUDIO; deployed
+> apps get `*.myxvibe.com`, and the PSL entry is what actually enforces the
+> cookie boundary between them.
+>
+> Consequence for Plugster: every deployed app is then a distinct origin
+> calling `api.plugster.co` cross-origin, which is why **D3 (a browser-safe
+> delivery credential)** matters more under this split — the per-app edge proxy
+> that exists solely to hold a token becomes the default shape otherwise.
 
 ⚠️ **Design rule, load-bearing: keep the entry point SWAPPABLE.** Do not
 hardcode "the project always already exists." Phase 1 is door #1; Phase 2 adds
