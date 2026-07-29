@@ -2007,7 +2007,7 @@ Count entries in a collection, optionally with the same where filters as query_e
 
 ## `aggregate_entries`
 
-Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggregates: [{fn: count|sum|avg|min|max, field?}] (count takes no field; the rest need a number field). Optional groupBy on an enum or relation field (relation groups include the target's label). Same where vocabulary as query_entries (eq/ne/contains/gt/lt/in/exists + anyOf). Groups are capped at 500, largest first, with truncatedGroups: true when cut. Example: revenue by trip = {aggregates:[{fn:'sum',field:'price'}], groupBy:'trip'}.
+Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggregates: [{fn: count|sum|avg|min|max, field?}] (count takes no field; the rest need a number field). Optional groupBy on an enum or relation field, on a BUCKETED DATE ({field:'created_at',bucket:'month'} — the by-month report), or an ARRAY of up to two for a cross-tab like source x stage; each group then carries `keys` (per dimension) alongside `key` (the first). (relation groups include the target's label). Same where vocabulary as query_entries (eq/ne/contains/gt/lt/in/exists + anyOf). Groups are capped at 500, largest first, with truncatedGroups: true when cut. Example: revenue by trip = {aggregates:[{fn:'sum',field:'price'}], groupBy:'trip'}.
 
 **Input schema:**
 
@@ -2047,8 +2047,67 @@ Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggreg
       }
     },
     "groupBy": {
-      "type": "string",
-      "description": "enum or relation field"
+      "description": "an enum/relation field name, a bucketed date {field,bucket:\"day|week|month|quarter|year\"}, or an ARRAY of up to two for a cross-tab. A date REQUIRES a bucket — grouping raw timestamps makes one group per row, which then truncates into a report that looks complete and is not.",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string"
+            },
+            "bucket": {
+              "type": "string",
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "quarter",
+                "year"
+              ]
+            }
+          },
+          "required": [
+            "field"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "array",
+          "maxItems": 2,
+          "items": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "bucket": {
+                    "type": "string",
+                    "enum": [
+                      "day",
+                      "week",
+                      "month",
+                      "quarter",
+                      "year"
+                    ]
+                  }
+                },
+                "required": [
+                  "field"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      ]
     },
     "where": {
       "type": "array",

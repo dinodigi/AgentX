@@ -26,6 +26,8 @@ import {
   projectData,
   decodeCursor,
   aggregateEntries,
+  DATE_BUCKETS,
+  type GroupSpec,
   updateEntryIf,
   transact,
   TransactError,
@@ -1157,7 +1159,10 @@ export const TOOL_DEFS: ToolDef[] = [
     description:
       "Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggregates: " +
       "[{fn: count|sum|avg|min|max, field?}] (count takes no field; the rest need a number " +
-      "field). Optional groupBy on an enum or relation field (relation groups include the " +
+      "field). Optional groupBy on an enum or relation field, on a BUCKETED DATE " +
+      "({field:'created_at',bucket:'month'} — the by-month report), or an ARRAY of up to two for a " +
+      "cross-tab like source x stage; each group then carries `keys` (per dimension) alongside " +
+      "`key` (the first). (relation groups include the " +
       "target's label). Same where vocabulary as query_entries (eq/ne/contains/gt/lt/in/exists + anyOf). " +
       "Groups are capped at 500, largest first, with truncatedGroups: true when cut. " +
       "Example: revenue by trip = {aggregates:[{fn:'sum',field:'price'}], groupBy:'trip'}.",
@@ -1179,7 +1184,40 @@ export const TOOL_DEFS: ToolDef[] = [
             additionalProperties: false,
           },
         },
-        groupBy: { type: "string", description: "enum or relation field" },
+        groupBy: {
+          description:
+            "an enum/relation field name, a bucketed date {field,bucket:\"day|week|month|quarter|year\"}, or an ARRAY of up to two for a cross-tab. A date REQUIRES a bucket — grouping raw timestamps makes one group per row, which then truncates into a report that looks complete and is not.",
+          oneOf: [
+            { type: "string" },
+            {
+              type: "object",
+              properties: {
+                field: { type: "string" },
+                bucket: { type: "string", enum: [...DATE_BUCKETS] },
+              },
+              required: ["field"],
+              additionalProperties: false,
+            },
+            {
+              type: "array",
+              maxItems: 2,
+              items: {
+                oneOf: [
+                  { type: "string" },
+                  {
+                    type: "object",
+                    properties: {
+                      field: { type: "string" },
+                      bucket: { type: "string", enum: [...DATE_BUCKETS] },
+                    },
+                    required: ["field"],
+                    additionalProperties: false,
+                  },
+                ],
+              },
+            },
+          ],
+        },
         where: { type: "array", items: WHERE_ITEM_JSON },
       },
       required: ["collection", "aggregates"],
@@ -2774,7 +2812,19 @@ export async function callTool(
               )
               .min(1)
               .max(10),
-            groupBy: z.string().optional(),
+            // C3: a name, a {field,bucket} spec, or up to two of either.
+            groupBy: z
+              .union([
+                z.string(),
+                z.object({ field: z.string(), bucket: z.enum(DATE_BUCKETS).optional() }).strict(),
+                z.array(
+                  z.union([
+                    z.string(),
+                    z.object({ field: z.string(), bucket: z.enum(DATE_BUCKETS).optional() }).strict(),
+                  ]),
+                ),
+              ])
+              .optional(),
             where: z.array(whereItemSchema).optional(),
           })
           .parse(rawArgs);
@@ -2782,7 +2832,7 @@ export async function callTool(
         const relatedA = await collectRelatedTargets(projectId, c, a.where ?? [], "mcp");
         const result = await aggregateEntries(c, {
           aggregates: a.aggregates,
-          groupBy: a.groupBy,
+          groupBy: a.groupBy as GroupSpec | GroupSpec[] | undefined,
           where: a.where,
           related: relatedA,
         });
@@ -2796,10 +2846,12 @@ export async function callTool(
           return ok({ results: shape(result.groups[0].values) });
         }
         return ok({
-          groupBy: a.groupBy,
+          groupBy: a.groupBy as GroupSpec | GroupSpec[] | undefined,
           groups: result.groups.map((g) => ({
             key: g.key,
+            ...(g.keys && g.keys.length > 1 ? { keys: g.keys } : {}),
             ...(g.label !== undefined ? { label: g.label } : {}),
+            ...(g.labels && g.labels.length > 1 ? { labels: g.labels } : {}),
             results: shape(g.values),
           })),
           truncatedGroups: result.truncated,

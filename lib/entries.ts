@@ -2685,9 +2685,48 @@ export interface AggregateSpec {
 
 export const MAX_AGGREGATE_GROUPS = 500;
 
+/** C3: date bucket granularities for groupBy. */
+export const DATE_BUCKETS = ["day", "week", "month", "quarter", "year"] as const;
+export type DateBucket = (typeof DATE_BUCKETS)[number];
+
+/**
+ * Output format per bucket — a compact, SORTABLE label rather than a raw
+ * timestamp, because these are report axis keys that a human reads.
+ */
+const BUCKET_FORMAT: Record<DateBucket, string> = {
+  day: "YYYY-MM-DD",
+  week: "IYYY-\"W\"IW",
+  month: "YYYY-MM",
+  quarter: 'YYYY-"Q"Q',
+  year: "YYYY",
+};
+
+/**
+ * Two dimensions, not more. A third turns the result into a cross-product that
+ * blows past MAX_AGGREGATE_GROUPS and truncates — producing a report that looks
+ * complete and is built from an arbitrary slice.
+ */
+export const MAX_GROUP_DIMENSIONS = 2;
+
+/** One groupBy dimension: a field name, or a field with a date bucket. */
+export type GroupSpec = string | { field: string; bucket?: DateBucket };
+
+function normalizeGroupSpec(g: GroupSpec): { field: string; bucket?: DateBucket } {
+  return typeof g === "string" ? { field: g } : g;
+}
+
 export interface AggregateResult {
   /** One entry per group; a single group with key null when groupBy is absent. */
-  groups: { key: string | null; label?: string; values: (number | null)[] }[];
+  groups: {
+    /** C3: the FIRST dimension's key — unchanged, so existing callers keep working. */
+    key: string | null;
+    /** C3: every dimension's key, in groupBy order. */
+    keys?: (string | null)[];
+    label?: string;
+    /** C3: resolved labels per dimension (relations only). */
+    labels?: (string | undefined)[];
+    values: (number | null)[];
+  }[];
   /** True when more than MAX_AGGREGATE_GROUPS groups exist (largest kept). */
   truncated: boolean;
 }
@@ -2700,7 +2739,12 @@ export interface AggregateResult {
  */
 export async function aggregateEntries(
   collection: Collection,
-  opts: { aggregates: AggregateSpec[]; groupBy?: string; where?: WhereItem[]; related?: RelatedContextMap },
+  opts: {
+    aggregates: AggregateSpec[];
+    groupBy?: GroupSpec | GroupSpec[];
+    where?: WhereItem[];
+    related?: RelatedContextMap;
+  },
 ): Promise<AggregateResult> {
   const numberFields = collection.fields.filter((f) => f.type === "number");
   const selects: Record<string, ReturnType<typeof sql>> = {};
@@ -2741,58 +2785,108 @@ export async function aggregateEntries(
     return { groups: [{ key: null, values: toValues(row) }], truncated: false };
   }
 
-  const groupField = collection.fields.find((f) => f.name === opts.groupBy);
-  if (!groupField || (groupField.type !== "enum" && groupField.type !== "relation")) {
-    const groupable = collection.fields
-      .filter((f) => f.type === "enum" || f.type === "relation")
-      .map((f) => f.name);
+  // ── C3: one or TWO dimensions, and date BUCKETING ────────────────────────
+  // The by-month report pipeline. Previously groupBy took one enum/relation
+  // field, so "revenue by month" and "leads by source AND stage" both had to be
+  // done by fetching rows and grouping in the client — the same "correct at
+  // small scale, wrong at real scale" shape as C1.
+  const dims = (Array.isArray(opts.groupBy) ? opts.groupBy : [opts.groupBy]).map(normalizeGroupSpec);
+  if (dims.length > MAX_GROUP_DIMENSIONS) {
     throw new ValidationError(
-      `groupBy: needs an enum or relation field — groupable: ${groupable.join(", ") || "(none)"}`,
+      `groupBy: at most ${MAX_GROUP_DIMENSIONS} dimensions — more produces a cross-product that truncates into nonsense`,
     );
   }
 
+  const resolved = dims.map((d) => {
+    const f = collection.fields.find((x) => x.name === d.field);
+    if (!f) {
+      throw new ValidationError(
+        `groupBy: unknown field "${d.field}" — fields: ${collection.fields.map((x) => x.name).join(", ")}`,
+      );
+    }
+    if (f.type === "date") {
+      // A bucket is REQUIRED on a date. Grouping raw timestamps yields one
+      // group per row, which then silently truncates at MAX_AGGREGATE_GROUPS —
+      // a plausible-looking report built from an arbitrary slice of the data.
+      if (!d.bucket) {
+        throw new ValidationError(
+          `groupBy: "${d.field}" is a date — it needs a bucket (${DATE_BUCKETS.join(" | ")}), e.g. {field:"${d.field}",bucket:"month"}. Grouping raw timestamps would make one group per row.`,
+        );
+      }
+      return { field: f, bucket: d.bucket };
+    }
+    if (d.bucket) {
+      throw new ValidationError(`groupBy: bucket is only valid on a date field — "${d.field}" is ${f.type}`);
+    }
+    if (f.type !== "enum" && f.type !== "relation") {
+      const groupable = collection.fields
+        .filter((x) => x.type === "enum" || x.type === "relation" || x.type === "date")
+        .map((x) => x.name);
+      throw new ValidationError(
+        `groupBy: needs an enum, relation, or bucketed date field — groupable: ${groupable.join(", ") || "(none)"}`,
+      );
+    }
+    return { field: f, bucket: undefined as DateBucket | undefined };
+  });
+
   // Group/order by ordinal: repeating the parametrized JSONB expression would
   // get fresh parameter numbers and Postgres would refuse to match them.
-  const keyExpr = sql`${entries.data}->>${groupField.name}`;
+  const keySelects: Record<string, SQL> = {};
+  resolved.forEach((r, i) => {
+    keySelects[`k${i}`] = r.bucket
+      ? sql`to_char(date_trunc(${r.bucket}, (${entries.data}->>${r.field.name})::timestamptz) AT TIME ZONE 'UTC', ${BUCKET_FORMAT[r.bucket]})`
+      : sql`${entries.data}->>${r.field.name}`;
+  });
+  const ordinals = resolved.map((_, i) => sql.raw(String(i + 1)));
+
   const rows = await tdb
-    .select({ key: keyExpr, ...selects })
+    .select({ ...keySelects, ...selects })
     .from(entries)
     .where(and(...conditions))
-    .groupBy(sql`1`)
-    .orderBy(sql`count(*) DESC`, sql`1`)
+    .groupBy(...ordinals)
+    .orderBy(sql`count(*) DESC`, ...ordinals)
     .limit(MAX_AGGREGATE_GROUPS + 1);
 
   const truncated = rows.length > MAX_AGGREGATE_GROUPS;
-  const groups: AggregateResult["groups"] = rows.slice(0, MAX_AGGREGATE_GROUPS).map((row) => ({
-    key: row.key === null ? null : String(row.key),
-    values: toValues(row),
-  }));
+  const groups: AggregateResult["groups"] = rows.slice(0, MAX_AGGREGATE_GROUPS).map((row) => {
+    const keys = resolved.map((_, i) => (row[`k${i}`] === null ? null : String(row[`k${i}`])));
+    return {
+      // `key` stays the FIRST dimension so every existing caller keeps working;
+      // `keys` carries the full tuple.
+      key: keys[0],
+      keys,
+      values: toValues(row as Record<string, unknown>),
+    };
+  });
 
-  // Relation group keys are target-entry ids; resolve their labels in one query.
-  // (Target collection = control plane; the label rows = tenant DB.)
-  if (groupField.type === "relation") {
-    const ids = groups.map((g) => g.key).filter((k): k is string => k !== null);
-    if (ids.length > 0) {
-      const [target] = await controlDb
-        .select()
-        .from(collections)
-        .where(
-          and(
-            eq(collections.projectId, collection.projectId),
-            eq(collections.name, groupField.targetCollection),
-          ),
-        )
-        .limit(1);
-      if (target) {
-        const labelRows = await tdb
-          .select({ id: entries.id, label: sql`${entries.data}->>${groupField.labelField}` })
-          .from(entries)
-          .where(and(eq(entries.collectionId, target.id), inArray(entries.id, ids)));
-        const labels = new Map(labelRows.map((r) => [r.id, r.label === null ? "" : String(r.label)]));
-        for (const g of groups) {
-          if (g.key !== null && labels.has(g.key)) g.label = labels.get(g.key);
-        }
-      }
+  // Relation group keys are target-entry ids; resolve their labels in one query
+  // PER RELATION DIMENSION. (Target collection = control plane; labels = tenant.)
+  for (const [dimIndex, r] of resolved.entries()) {
+    if (r.field.type !== "relation") continue;
+    const ids = [...new Set(groups.map((g) => g.keys?.[dimIndex]).filter((k): k is string => !!k))];
+    if (ids.length === 0) continue;
+    const [target] = await controlDb
+      .select()
+      .from(collections)
+      .where(
+        and(
+          eq(collections.projectId, collection.projectId),
+          eq(collections.name, r.field.targetCollection),
+        ),
+      )
+      .limit(1);
+    if (!target) continue;
+    const labelRows = await tdb
+      .select({ id: entries.id, label: sql`${entries.data}->>${r.field.labelField}` })
+      .from(entries)
+      .where(and(eq(entries.collectionId, target.id), inArray(entries.id, ids)));
+    const labels = new Map(labelRows.map((x) => [x.id, x.label === null ? "" : String(x.label)]));
+    for (const g of groups) {
+      const k = g.keys?.[dimIndex];
+      if (!k || !labels.has(k)) continue;
+      g.labels ??= [];
+      g.labels[dimIndex] = labels.get(k)!;
+      if (dimIndex === 0) g.label = labels.get(k); // back-compat
     }
   }
 
