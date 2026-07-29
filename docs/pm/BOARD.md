@@ -17,11 +17,12 @@
 Protocol: **[BURNDOWN.md](BURNDOWN.md)** · dispositioned queue: **[QUEUE.md](QUEUE.md)**
 
 <!-- BEGIN:LEDGER -->
-_27 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
+_28 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
 
 | | id | project | item | receipt |
 |---|---|---|---|---|
 | ✅ | `16d745d3` | CSLP | Docs say publicWrite POST is 'anonymous', but a truly tokenless POST returns 401 E_AUTH - 'anonymous' actually | `8d63719` |
+| 📝 | `2bdec2b0` | CSLP | Unauthenticated GET on an access-ruled collection returns 404 E_NOT_FOUND instead of 401/403 - fail-closed is  | `43d0cd9` |
 | ✅ | `2684fec0` | CSLP | No date bucketing and no second groupBy dimension - by-month pipeline, closed volume by rep by month, tours by | `0ee45c9` |
 | ✅ | `8570cb24` | CSLP | No counting/capacity constraint: unique gives exactly-one-per-key, but 'max N rows per composite key' (e.g. to | `bea3377` |
 | ✅ | `a61039c4` | CSLP | Workflow actors are too coarse: 'admin' includes client-role members (v1), so anyone invited to the admin UI c | `2798606` |
@@ -73,18 +74,17 @@ _27 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=62 · new=3 · planned=2 · reviewed=2_
+_Wall totals: done=63 · new=3 · planned=1 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_5 open (3 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-07-29 16:33Z_
+_4 open (3 new, 1 planned) · 0 theme(s) reported more than once · snapshot 2026-07-29 16:48Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
 | ⬜ | 07-26 | xvibe | idea | XVibe-class static apps need an edge proxy solely to hold the delivery token — a browse… |
 | ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
 | ⬜ | 07-26 | jabed test | idea | Workflow transitions gate on ACTOR but not on row state, so "you may not launch a campa… |
-| 🗓️ | 07-18 | CSLP | friction | Unauthenticated GET on an access-ruled collection returns 404 E_NOT_FOUND instead of 40… |
 | 🗓️ | 07-23 | Codex-test | idea | Add a browser-safe public-read mode for public collections. |
 <!-- END:WALL -->
 
