@@ -391,6 +391,24 @@ const RESOLUTIONS = {
       "surface. REOPENS WHEN: the feedback wall reaches zero, which is the current sprint's goal " +
       "and is close — this is first in line after it, tracked on the PLUG line in docs/BACKLOG.md.",
   },
+
+  // --- delivery status codes (commit 43d0cd9) ------------------------------
+  "2bdec2b0": {
+    disposition: "ANSWERED",
+    ref: "43d0cd9",
+    note:
+      "Reproduced, and the answer is the first of your two options — with a correction to the " +
+      "premise. An access-ruled collection WITH publicRead fields already returns a clean 401 " +
+      "naming X-User-Token; you were not seeing the auth gate. The 404 appears only when NO field " +
+      "is publicRead, and an AUTHENTICATED caller gets the SAME 404 — which is what settles it. " +
+      "The status is honest (there is nothing to serve to anyone, whoever asks), and 401 would be " +
+      "a lie: it would send you to a door that does not open. " +
+      "Your real complaint was right though — nothing said any of that, which is exactly how you " +
+      "ended up chasing a routing bug. The 404 now states that it is NOT an auth failure, that " +
+      "signing in will not change it, and that it is unrelated to any access rule; and " +
+      "get_project_info carries a statusCodes guide (401/403/404/422/429) so the rule is " +
+      "discoverable rather than reverse-engineered.",
+  },
 };
 
 const stamp = (r) =>
