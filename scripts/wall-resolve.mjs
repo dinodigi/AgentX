@@ -438,6 +438,24 @@ const RESOLUTIONS = {
       "resolved, so there is no path that forgot. Browser-side WRITES are a deliberate follow-up " +
       "rather than an omission: public writes from a bundle need a human-verification story first.",
   },
+
+  // --- D2: transition preconditions (commit 346cdd4) -----------------------
+  "6809681c": {
+    disposition: "SHIPPED",
+    ref: "346cdd4",
+    note:
+      "Transitions now take a `when` precondition, using the same clause vocabulary as query " +
+      "where: [{from:'draft',to:'live',when:[{field:'creative',op:'exists',value:true}]}]. Your " +
+      "diagnosis was the useful part — the required-field workaround did not just feel clumsy, it " +
+      "put the constraint at the wrong MOMENT, blocking every draft save to enforce a rule about " +
+      "one transition. " +
+      "It is compiled into the same conditional UPDATE as the state guard, on both the ordinary " +
+      "and the CAS path, so a concurrent write cannot clear the required field between check and " +
+      "write. Preconditions are kept PER BRANCH: two transitions reaching the same state can carry " +
+      "different rules, and ANDing them would enforce something nobody wrote. A refusal names the " +
+      "unmet requirement rather than reporting a conflict — the two need opposite responses, and " +
+      "calling a precondition failure a race would send you into a retry loop that never succeeds.",
+  },
 };
 
 const stamp = (r) =>
