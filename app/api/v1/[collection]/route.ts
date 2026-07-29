@@ -80,8 +80,16 @@ export async function GET(
   if (pub.length === 0) {
     return deliveryError(
       404,
+      // This 404 is IDENTITY-INDEPENDENT and must say so. A reporter with an
+      // access rule on the collection read the bare 404 as the auth gate,
+      // signed in, got the same 404, and went looking for a routing bug. The
+      // status is right — with no publicRead fields there is nothing to serve
+      // to anyone — but a caller cannot tell that from the code alone, and
+      // 401 would be a lie ("sign in and you'll get it"; they won't).
       `collection "${name}" exists but has no publicly readable fields — ` +
-        `publicRead is per-field; set it via define_collection, or read this collection over MCP instead`,
+        `publicRead is per-field; set it via define_collection, or read this collection over MCP instead. ` +
+        `NOTE: this is not an auth failure — signing in (X-User-Token) will NOT change it, ` +
+        `and it is unrelated to any access rule on the collection`,
     );
   }
 

@@ -2294,6 +2294,20 @@ export async function callTool(
               "writes the delivery API cannot do (workflow transitions, non-public reads, atomic " +
               "increments). Tool results come back as JSON text in result.content[0].text; errors " +
               "set result.isError with a stable E_* code. Rate limit: 300 calls/min/project.",
+            // A reporter hit the 404 below with an access rule on the collection,
+            // read it as the auth gate, signed in, got the same 404, and went
+            // hunting a routing bug. Each code is defensible on its own; what
+            // was missing is that nothing told you WHICH question a code was
+            // answering, and two of them are identity-independent.
+            statusCodes:
+              "WHICH FAILURE IS IT? 401 = this collection IS delivery-readable but needs identity — " +
+              "pass the end-user's JWT in X-User-Token (an ABSENT delivery token also 401s, with a bare " +
+              "body: collection names never leak to the unauthenticated). 403 = you are identified and " +
+              "do not meet the rule. 404 on a collection that exists = it is not exposed on this API at " +
+              "all, because no field is publicRead — IDENTITY-INDEPENDENT, so signing in will not change " +
+              "it and it is unrelated to any access rule; set publicRead per field, or read it over MCP. " +
+              "404 on an unknown name lists the project's readable collections. 422 = a malformed query " +
+              "(the message names the field and the fix). 429 carries retry-after.",
             batch:
               "POST {deliveryBase}/batch { queries: [{collection, params?}, ...] } (max 10) answers " +
               "several reads in ONE round trip — params = the same keys as the list GET's query " +

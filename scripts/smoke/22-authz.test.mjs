@@ -478,11 +478,14 @@ describe("authz: Phase-12 review regressions", () => {
     const anon = await delivery(p.deliveryToken, "/inbox_gated", { method: "POST", body: { message: "x" } });
     assert.ok([200, 201].includes(anon.status), `anonymous intake must survive a write rule: ${anon.status}`);
     // ...and the read side is still gated, which is the half that must NOT
-    // move. The exact refusal code is the route's business (401/403/404 all
-    // encode "not for you"); what matters is that widening WRITE did not widen
-    // READ.
+    // move. This collection has NO publicRead fields, so it is 404 rather than
+    // 401 — not the auth gate at all, and identity-independent (an
+    // authenticated caller gets the same). That distinction is asserted
+    // properly in 103-delivery-status-codes; here we only need "widening WRITE
+    // did not widen READ".
     const anonRead = await delivery(p.deliveryToken, "/inbox_gated");
-    assert.notEqual(anonRead.status, 200, "read:authenticated must still require a user token");
+    assert.equal(anonRead.status, 404, "no publicRead field means nothing is served to anyone");
+    assert.notEqual(anonRead.status, 200, "read must not have widened");
   });
 });
 
