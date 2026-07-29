@@ -409,6 +409,35 @@ const RESOLUTIONS = {
       "get_project_info carries a statusCodes guide (401/403/404/422/429) so the rule is " +
       "discoverable rather than reverse-engineered.",
   },
+
+  // --- D3: browser-safe read-only delivery token (commit 57bbea4) ----------
+  eff3e105: {
+    disposition: "SHIPPED",
+    ref: "57bbea4",
+    note:
+      "mint_delivery_token now takes readOnly:true, and that token is safe to embed in a browser " +
+      "bundle — so the edge proxy whose only job was holding a credential can go. Your report is " +
+      "what reframed this correctly: a read-only token grants EXACTLY what publicRead already " +
+      "exposes to the anonymous internet, so if that data is public a leak leaks nothing new. The " +
+      "real cost is abuse, which is rate-limiting and revocation, not authorization. " +
+      "Writes are deliberately still excluded: a browser-embeddable write endpoint is a spam " +
+      "surface in a way reads are not, and it deserves a human-verification story rather than " +
+      "being bundled in quietly. Existing tokens are untouched (scopes = null still means full " +
+      "access, asserted by test — that failure would have broken every deployed site at once), and " +
+      "list_delivery_tokens now shows readOnly so a human can tell a browser-safe credential from " +
+      "one that must never leave a server.",
+  },
+  "66d1cbd9": {
+    disposition: "SHIPPED",
+    ref: "57bbea4",
+    note:
+      "Shipped as a read-only delivery token class — mint_delivery_token with readOnly:true. It is " +
+      "safe to embed in a client bundle because it can do exactly what publicRead already exposes " +
+      "to anyone on the internet, and every write path (POST/PATCH/DELETE, uploads, checkout) " +
+      "refuses it with E_SCOPE. Enforced at the single choke point where delivery tokens are " +
+      "resolved, so there is no path that forgot. Browser-side WRITES are a deliberate follow-up " +
+      "rather than an omission: public writes from a bundle need a human-verification story first.",
+  },
 };
 
 const stamp = (r) =>
