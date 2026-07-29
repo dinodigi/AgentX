@@ -110,6 +110,40 @@ let doc = readFileSync(BOARD, "utf8");
 doc = replaceBlock(doc, "WALLHEALTH", health);
 doc = replaceBlock(doc, "WALL", wall);
 doc = replaceBlock(doc, "BACKLOG", backlogBlock);
+
+// ── Burn-down ledger ──────────────────────────────────────────────────────
+// Every CLOSED item with the receipt we wrote back to the reporter. This used
+// to be a hand-kept table and drifted within a single session, so it is derived
+// from the same rows the reporter reads.
+const closed = await sql`
+  SELECT f.id, f.summary, f.detail, p.name AS project, f.status
+  FROM platform_feedback f LEFT JOIN projects p ON p.id = f.project_id
+  WHERE f.status = 'done'
+    AND (p.name IS NULL OR p.name NOT ILIKE 'smoke%')
+    AND f.detail LIKE '%---%**%'
+  ORDER BY f.created_at`;
+
+const RECEIPT = /---\n\*\*(SHIPPED|ANSWERED|DECLINED|TRIGGER)\*\* ([0-9-]+) · `([^`]*)`/;
+const MARK = { SHIPPED: "✅", ANSWERED: "📝", DECLINED: "🚫", TRIGGER: "⏳" };
+const ledgerRows = [];
+for (const r of closed) {
+  const m = RECEIPT.exec(r.detail ?? "");
+  if (!m) continue;
+  const [, disposition, , ref] = m;
+  ledgerRows.push(
+    `| ${MARK[disposition] ?? "•"} | \`${String(r.id).slice(0, 8)}\` | ${String(r.project ?? "—")} | ${r.summary.replace(/\s+/g, " ").replace(/\|/g, "\|").slice(0, 110)} | ${disposition === "TRIGGER" ? `reopens: ${ref}` : `\`${ref}\``} |`,
+  );
+}
+const ledger = ledgerRows.length
+  ? [
+      `_${ledgerRows.length} closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._`,
+      "",
+      "| | id | project | item | receipt |",
+      "|---|---|---|---|---|",
+      ...ledgerRows,
+    ].join("\n")
+  : "_Nothing closed with a receipt yet._";
+doc = replaceBlock(doc, "LEDGER", ledger);
 writeFileSync(BOARD, doc);
 
 // ── burn-down progress ────────────────────────────────────────────────────

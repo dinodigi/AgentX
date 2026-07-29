@@ -6,61 +6,54 @@
 > The wall section is generated — run `npm run pm` to refresh it from the live
 > database. Everything else is hand-maintained.
 
-## Sprint tracks — committed work
+## Sprint tracks — burn-down ledger
 
-Current sprint: **[Field signal](../plans/SPRINT-FIELD-SIGNAL.md)** (opened
-2026-07-26). Prioritised by *independent confirmation* — issues two or more
-unrelated testers hit.
+> **GENERATED** — `npm run pm` rebuilds this from the feedback wall's receipts.
+> It used to be hand-maintained and drifted badly during the very session that
+> shipped the work (13 items still reading open after they were closed), which
+> is the same "the board lies" failure the wall itself had. Anything derivable
+> from the database is now derived from it.
 
-### A · Reported by 2+ testers (do first)
+Protocol: **[BURNDOWN.md](BURNDOWN.md)** · dispositioned queue: **[QUEUE.md](QUEUE.md)**
 
-| ID | Item | State | Note |
-|---|---|---|---|
-| A1 | `admin` workflow actor silently includes client-role members | ✅ | Shipped — `operator`/`client` split, `admin` kept as a permissive alias so no live workflow tightens. 3 tests. |
-| A2 | Two read planes disagree; only schema returns a convergence note | ✅ | Hatchly + jabed + our own G2. Cheap half: add the note to entry writes. |
-| A3 | `indexed` rejected on date fields | ⬜ | Fatsoz + jabed. `published_at` has no substitute. |
-| A4 | Stateless MCP-over-HTTP undocumented | ✅ | **3 reporters.** Cheapest item on the board. |
-| A5 | Anonymous intake cannot coexist with gated writes | ⬜ | CSLP + xvibe. Most common shape on the platform needs 2 collections. |
+<!-- BEGIN:LEDGER -->
+_27 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
 
-### B · Cheap ergonomics
-
-| ID | Item | State |
-|---|---|---|
-| B1 | `bulk_create_entries` / `create_entry` shape asymmetry + misleading error order | ⬜ |
-| B2 | Typed-block sub-fields reject explicit `null` without hinting "omit the key" | ⬜ |
-| B3 | `query_entries` rejects `id` in where clauses | ⬜ |
-| B4 | MCP-path errors use delivery-facing wording | ⬜ |
-| B5 | `increment` refuses an unset field; the workaround loses the first count | ⬜ |
-
-### C · Scaling traps (ship fine, fail after a customer invests)
-
-| ID | Item | State |
-|---|---|---|
-| C1 | Array fields cannot be filtered on the delivery API | ⬜ |
-| C2 | `publicFilter` cannot express relative time | ⬜ |
-| C3 | No date bucketing / second `groupBy` dimension | ⬜ |
-
-### D · Design decisions ⚑ (need the operator)
-
-| ID | Item | State |
-|---|---|---|
-| D1 | `auth_kit` leaves credential handling to every tenant | ⬜ ⚑ |
-| D2 | Workflow transitions gate on WHO, never on WHAT | ⬜ ⚑ |
-| D3 | A browser-safe delivery credential (XVibe runs a proxy just to hold a token) | ⬜ ⚑ |
-
-### E · Bugs — reproduce first
-
-| ID | Item | State |
-|---|---|---|
-| E1 | `briefing.health` reports connectors as `error` while they demonstrably work | ⬜ |
-| E2 | `get_client_code` omits `update()`/`remove()` for claim-write collections | ⬜ |
+| | id | project | item | receipt |
+|---|---|---|---|---|
+| ✅ | `16d745d3` | CSLP | Docs say publicWrite POST is 'anonymous', but a truly tokenless POST returns 401 E_AUTH - 'anonymous' actually | `8d63719` |
+| ✅ | `2684fec0` | CSLP | No date bucketing and no second groupBy dimension - by-month pipeline, closed volume by rep by month, tours by | `0ee45c9` |
+| ✅ | `8570cb24` | CSLP | No counting/capacity constraint: unique gives exactly-one-per-key, but 'max N rows per composite key' (e.g. to | `bea3377` |
+| ✅ | `a61039c4` | CSLP | Workflow actors are too coarse: 'admin' includes client-role members (v1), so anyone invited to the admin UI c | `2798606` |
+| ✅ | `73a14ef7` | CSLP | Enum option renames have no mapped migration - renames:[] covers fields only, so renaming a pipeline stage or  | `260e64b` |
+| ⏳ | `de626cb6` | CSLP | No SMS connector (Twilio etc.) although the countryside_crm baseline ships text_opt_in - the platform stores a | reopens: a second project asks, or one client commits to SMS |
+| ✅ | `4847bc14` | CSLP | op 'ne' never matching unset fields is correct but surprising, and the anyOf:[{ne},{exists:false}] idiom for ' | `0dbf3ff` |
+| ✅ | `1c10d760` | CSLP | 100 rows/call makes real migrations chatty (3.1k-lead Salesforce import = ~31 sequential calls) - a streaming/ | `f5a99f7` |
+| 📝 | `5e8146d8` | CSLP | Some MCP-path error hints use delivery-facing wording - e.g. writableBy rejections say 'remove them or sign in | `0dbf3ff` |
+| ⏳ | `42a6d515` | CSLP | countryside_crm ships tools:[] — building a full CRM on it meant re-implementing every domain operation in app | reopens: after the wall is clear (plugin-authored tools, PLUG line) |
+| ✅ | `0a5ce08c` | Fatsoz | `indexed` is rejected on date fields, so the most natural sort/filter dimension for events and submissions (a  | `2dfa814` |
+| ✅ | `95b660d1` | Fatsoz | The stateless MCP-over-HTTP transport is excellent for server-side use — worth documenting it as a supported p | `66ad28e` |
+| ✅ | `4fae3449` | Hatchly | query_entries rejects `id` in where clauses ("unknown field id"), so fetching one entry by id needs a separate | `0dbf3ff` |
+| ✅ | `9c2333cb` | Hatchly | define_collection has no additive field op — adding one field requires re-sending the whole schema, and any om | `f5a99f7` |
+| ✅ | `e9628701` | Hatchly | Two read planes disagree: MCP reads reflect writes immediately, but the delivery API converges ~15s later and  | `66ad28e` |
+| ✅ | `58aaca1e` | xvibe | briefing.health reports r2/clerk/resend connectors as "error" on project xvibe while R2 demonstrably works end | `65fa439` |
+| ✅ | `e0b6eb32` | xvibe | A collection cannot combine anonymous form intake (publicWrite POST) with claim-gated delivery PATCH, because  | `8d63719` |
+| ✅ | `921f9ec7` | xvibe | get_client_code generated no update()/remove() methods for a collection whose access.write is a claim rule, ev | `65fa439` |
+| ✅ | `a1fb8001` | jabed test | publicFilter cannot express relative time, so "serve this row only while now is between starts_at and ends_at" | `279d70e` |
+| ✅ | `ad690ade` | jabed test | Relation and asset sub-fields inside typed blocks reject an explicit null — the key must be omitted entirely — | `0dbf3ff` |
+| ✅ | `34acd74d` | jabed test | indexed is rejected on date fields, but published_at is the canonical sort key for any content collection — th | `2dfa814` |
+| ✅ | `d128f35a` | jabed test | bulk_create_entries takes bare objects while create_entry takes {collection, data:{...}} — the asymmetry betwe | `0dbf3ff` |
+| ✅ | `cbf4db8f` | jabed test | Array fields cannot be filtered on the delivery API, so a tag archive has to fetch every post and filter in me | `47ed83e` |
+| ✅ | `9c61bc7a` | jabed test | Entry writes are not immediately visible on the delivery API and nothing documents that, so my first read afte | `66ad28e` |
+| ✅ | `1a24b96b` | jabed test | update_entry_if increment refuses an unset field, so every counter needs a seed-or-fallback path — and the fal | `0dbf3ff` |
+| ✅ | `75f9f4f7` | jabed test | The workflow docs note that the 'admin' actor includes client-role members, which quietly means an actor-gated | `2798606` |
+| ✅ | `74e7016d` | jabed test | The MCP endpoint is stateless — tools/call works with no initialize handshake or session id — which let me wri | `66ad28e` |
+<!-- END:LEDGER -->
 
 ## Carried from earlier sprints
 
 | ID | Item | State | Source |
 |---|---|---|---|
-| G1 | `define_collection` has no additive field op | ⬜ | [Loose ends](../plans/SPRINT-LOOSE-ENDS.md) |
-| G2 | Two read planes disagree | ⬜ | Loose ends — merged into A2 |
 | L-B1 | Provider-switch button never clicked in a browser | ⬜ ⚑ | Loose ends |
 | L-B2 | Cron retry armed? (check Runs tab after a deploy) | ⬜ ⚑ | Loose ends |
 | L-D1 | Orphan smoke projects draining (185 → 48, self-healing) | 🚧 | Loose ends |
@@ -80,11 +73,11 @@ unrelated testers hit.
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=59 · new=3 · planned=5 · reviewed=2_
+_Wall totals: done=62 · new=3 · planned=2 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_8 open (3 new, 5 planned) · 0 theme(s) reported more than once · snapshot 2026-07-29 03:16Z_
+_5 open (3 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-07-29 16:17Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
@@ -92,9 +85,6 @@ _8 open (3 new, 5 planned) · 0 theme(s) reported more than once · snapshot 202
 | ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
 | ⬜ | 07-26 | jabed test | idea | Workflow transitions gate on ACTOR but not on row state, so "you may not launch a campa… |
 | 🗓️ | 07-18 | CSLP | friction | Unauthenticated GET on an access-ruled collection returns 404 E_NOT_FOUND instead of 40… |
-| 🗓️ | 07-18 | CSLP | limitation | No counting/capacity constraint: unique gives exactly-one-per-key, but 'max N rows per … |
-| 🗓️ | 07-18 | CSLP | limitation | No SMS connector (Twilio etc.) although the countryside_crm baseline ships text_opt_in … |
-| 🗓️ | 07-19 | CSLP | idea | countryside_crm ships tools:[] — building a full CRM on it meant re-implementing every … |
 | 🗓️ | 07-23 | Codex-test | idea | Add a browser-safe public-read mode for public collections. |
 <!-- END:WALL -->
 
