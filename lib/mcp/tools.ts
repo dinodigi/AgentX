@@ -124,7 +124,17 @@ const WHERE_CLAUSE_JSON = {
         "only op arrays support, and they cannot be sorted at all (a set has no order); arrays of " +
         "groups support neither.",
     },
-    value: { description: "scalar, or string[] for op 'in'" },
+    value: {
+      description:
+        "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / " +
+        "{daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now " +
+        'and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in ' +
+        'publicFilter: [{field:"starts_at",op:"lt",value:{hoursAgo:0}},' +
+        '{field:"ends_at",op:"gt",value:{hoursAgo:0}}] serves a row only INSIDE its window, ' +
+        "database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using " +
+        "relative time is time-varying, so that collection's delivery responses are not " +
+        "edge-cached — an exact window costs you the CDN hit, deliberately.",
+    },
   },
   required: ["field", "op", "value"],
   additionalProperties: false,
@@ -1567,7 +1577,17 @@ export const TOOL_DEFS: ToolDef[] = [
 const whereClauseSchema = z.object({
   field: z.string(),
   op: z.enum(WHERE_OPS), // single source of truth — lib/query.ts
-  value: z.union([z.string(), z.number(), z.boolean(), z.array(z.string())]),
+  // C2: a RELATIVE time is a legal value on a date field. Accepted here at the
+  // parse layer; lib/query.ts rejects it on any non-date field, where it would
+  // otherwise stringify to "[object Object]" and match nothing.
+  value: z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.array(z.string()),
+    z.object({ daysAgo: z.number() }).strict(),
+    z.object({ hoursAgo: z.number() }).strict(),
+  ]),
 });
 const whereItemSchema = z.union([
   whereClauseSchema,

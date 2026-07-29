@@ -14,11 +14,47 @@ import { ValidationError } from "./validation";
 export const WHERE_OPS = ["eq", "ne", "neOrUnset", "contains", "gt", "lt", "in", "has", "exists"] as const;
 export type WhereOp = (typeof WHERE_OPS)[number];
 
+/**
+ * C2 — a RELATIVE time, resolved at evaluation time. Negative goes forward:
+ * {hoursAgo: 0} is now, {hoursAgo: -24} is 24h from now.
+ *
+ * Deliberately the SAME vocabulary `define_schedule` already accepts, because
+ * the reporter's point was that the language existed and simply was not wired
+ * to where clauses — inventing a second spelling for the same idea would be the
+ * worse outcome.
+ */
+export type RelativeTime = { daysAgo: number } | { hoursAgo: number };
+
 export interface WhereClause {
   field: string;
   op: WhereOp;
-  /** `in` takes a string[]; every other op takes a scalar. */
-  value: string | number | boolean | string[];
+  /** `in` takes a string[]; every other op takes a scalar or a RelativeTime. */
+  value: string | number | boolean | string[] | RelativeTime;
+}
+
+/** Is this value the {daysAgo}/{hoursAgo} shape? */
+export function isRelativeTime(v: unknown): v is RelativeTime {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    (typeof o.daysAgo === "number" && Number.isFinite(o.daysAgo)) ||
+    (typeof o.hoursAgo === "number" && Number.isFinite(o.hoursAgo))
+  );
+}
+
+/** Resolve a RelativeTime against NOW. */
+export function resolveRelativeTime(v: RelativeTime, now = Date.now()): string {
+  const hours = "daysAgo" in v ? v.daysAgo * 24 : v.hoursAgo;
+  return new Date(now - hours * 3_600_000).toISOString();
+}
+
+/** C2: does any clause carry a relative time? Such a filter is TIME-VARYING,
+ *  so its responses cannot be honestly edge-cached. */
+export function hasRelativeTime(items: WhereItem[] | undefined): boolean {
+  if (!items?.length) return false;
+  return items.some((i) =>
+    "anyOf" in i ? i.anyOf.some((c) => isRelativeTime(c.value)) : isRelativeTime(i.value),
+  );
 }
 
 /**
@@ -284,6 +320,19 @@ function compileScalarClause(
       `where: op "${clause.op}" on "${f.name}" takes a single value, not an array — use op "in" for value lists`,
     );
   }
+  // C2: resolve a relative time to an absolute instant BEFORE anything else, so
+  // every op below sees an ordinary ISO value. Only dates accept it — on any
+  // other type it is a mistake, and silently stringifying "[object Object]"
+  // would match nothing while looking like a working filter.
+  if (isRelativeTime(clause.value)) {
+    if (f.type !== "date") {
+      throw new ValidationError(
+        `where: a relative time ({daysAgo}/{hoursAgo}) is only valid on a date field — "${f.name}" is ${f.type}`,
+      );
+    }
+    clause = { ...clause, value: resolveRelativeTime(clause.value) };
+  }
+
   // A3: for an indexed date every comparison value is canonicalized to the
   // stored form, so the text index applies and the answer is identical to the
   // ::timestamptz path.
@@ -474,6 +523,13 @@ function matchClause(
   {
     const f = fields.find((x) => x.name === c.field);
     if (!f) return false;
+    // C2: resolve here too. A divergence would make a window match in list
+    // queries (SQL) and fail single-entry gates (JS) — the same class of bug
+    // the neOrUnset pair is tested against.
+    if (isRelativeTime(c.value)) {
+      if (f.type !== "date") return false;
+      c = { ...c, value: resolveRelativeTime(c.value) };
+    }
     const v = data[c.field];
     switch (c.op) {
       case "in":

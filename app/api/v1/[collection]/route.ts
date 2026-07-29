@@ -6,7 +6,7 @@ import { searchEntriesPage, publicSearchableFields } from "@/lib/search";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
 import { gateRead, gateCreate, stampIdentity, checkFieldWrites, fieldWriteError } from "@/lib/access-rules";
-import { isScalarArray } from "@/lib/query";
+import { isScalarArray, hasRelativeTime } from "@/lib/query";
 import {
   createEntry,
   queryEntries,
@@ -329,7 +329,18 @@ export async function GET(
     // Shareable (edge-cacheable) iff the response is a pure function of
     // (token → project, URL): no x-user-token sent (user identity can alter
     // ref/relation visibility even on public reads) and no owner row-clauses.
-    const share = req.headers.get("x-user-token") === null && (gate.rowClauses ?? []).length === 0;
+    //
+    // C2: ...and NOT time-varying. A publicFilter carrying a relative time
+    // ({hoursAgo}/{daysAgo}) produces a different answer minute to minute, so
+    // an edge-cached copy would keep serving a row past the end of its window —
+    // reproducing, at 60s instead of an hour, exactly the symptom the relative
+    // filter exists to remove. Correctness over a cache hit: the author asked
+    // for a time window, so only THAT collection loses edge caching.
+    const timeVarying = hasRelativeTime(collection.publicFilter ?? undefined);
+    const share =
+      req.headers.get("x-user-token") === null &&
+      (gate.rowClauses ?? []).length === 0 &&
+      !timeVarying;
     return cachedJson(req, { data }, { share });
   } catch (e) {
     if (e instanceof ValidationError) {

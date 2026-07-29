@@ -80,18 +80,17 @@ unrelated testers hit.
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=56 · new=5 · planned=6 · reviewed=2_
+_Wall totals: done=57 · new=4 · planned=6 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_11 open (5 new, 6 planned) · 0 theme(s) reported more than once · snapshot 2026-07-28 22:58Z_
+_10 open (4 new, 6 planned) · 0 theme(s) reported more than once · snapshot 2026-07-29 00:56Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
 | ⬜ | 07-26 | xvibe | idea | XVibe-class static apps need an edge proxy solely to hold the delivery token — a browse… |
 | ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
 | ⬜ | 07-26 | jabed test | limitation | publicFilter cannot express relative time, so "serve this row only while now is between… |
-| ⬜ | 07-26 | jabed test | limitation | Array fields cannot be filtered on the delivery API, so a tag archive has to fetch ever… |
 | ⬜ | 07-26 | jabed test | idea | Workflow transitions gate on ACTOR but not on row state, so "you may not launch a campa… |
 | 🗓️ | 07-18 | CSLP | friction | Unauthenticated GET on an access-ruled collection returns 404 E_NOT_FOUND instead of 40… |
 | 🗓️ | 07-18 | CSLP | limitation | No date bucketing and no second groupBy dimension - by-month pipeline, closed volume by… |

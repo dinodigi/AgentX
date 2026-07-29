@@ -586,7 +586,7 @@ Create or update a collection (a data model). `fields` is an array of field defs
                 "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
               },
               "value": {
-                "description": "scalar, or string[] for op 'in'"
+                "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
               }
             },
             "required": [
@@ -624,7 +624,7 @@ Create or update a collection (a data model). `fields` is an array of field defs
                       "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
                     },
                     "value": {
-                      "description": "scalar, or string[] for op 'in'"
+                      "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
                     }
                   },
                   "required": [
@@ -1114,7 +1114,7 @@ Atomic compare-and-set on one entry — conditions and change apply in ONE state
                 "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
               },
               "value": {
-                "description": "scalar, or string[] for op 'in'"
+                "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
               }
             },
             "required": [
@@ -1152,7 +1152,7 @@ Atomic compare-and-set on one entry — conditions and change apply in ONE state
                       "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
                     },
                     "value": {
-                      "description": "scalar, or string[] for op 'in'"
+                      "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
                     }
                   },
                   "required": [
@@ -1467,7 +1467,7 @@ Apply up to 25 entry ops as ONE all-or-nothing batch (a single DB transaction). 
                       "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
                     },
                     "value": {
-                      "description": "scalar, or string[] for op 'in'"
+                      "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
                     }
                   },
                   "required": [
@@ -1505,7 +1505,7 @@ Apply up to 25 entry ops as ONE all-or-nothing batch (a single DB transaction). 
                             "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
                           },
                           "value": {
-                            "description": "scalar, or string[] for op 'in'"
+                            "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
                           }
                         },
                         "required": [
@@ -1614,7 +1614,7 @@ List entries in a collection (relations resolved to {id,label}). Supports limit/
                 "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
               },
               "value": {
-                "description": "scalar, or string[] for op 'in'"
+                "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
               }
             },
             "required": [
@@ -1652,7 +1652,7 @@ List entries in a collection (relations resolved to {id,label}). Supports limit/
                       "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
                     },
                     "value": {
-                      "description": "scalar, or string[] for op 'in'"
+                      "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
                     }
                   },
                   "required": [
@@ -1815,7 +1815,7 @@ Keyword full-text search over every field marked searchable:true (INCLUDING non-
                 "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
               },
               "value": {
-                "description": "scalar, or string[] for op 'in'"
+                "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
               }
             },
             "required": [
@@ -1853,7 +1853,7 @@ Keyword full-text search over every field marked searchable:true (INCLUDING non-
                       "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
                     },
                     "value": {
-                      "description": "scalar, or string[] for op 'in'"
+                      "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
                     }
                   },
                   "required": [
@@ -1937,7 +1937,7 @@ Count entries in a collection, optionally with the same where filters as query_e
                 "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
               },
               "value": {
-                "description": "scalar, or string[] for op 'in'"
+                "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
               }
             },
             "required": [
@@ -1975,7 +1975,7 @@ Count entries in a collection, optionally with the same where filters as query_e
                       "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
                     },
                     "value": {
-                      "description": "scalar, or string[] for op 'in'"
+                      "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
                     }
                   },
                   "required": [
@@ -2077,7 +2077,7 @@ Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggreg
                 "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
               },
               "value": {
-                "description": "scalar, or string[] for op 'in'"
+                "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
               }
             },
             "required": [
@@ -2115,7 +2115,7 @@ Aggregate a collection WITHOUT fetching rows — dashboards in one query. aggreg
                       "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
                     },
                     "value": {
-                      "description": "scalar, or string[] for op 'in'"
+                      "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
                     }
                   },
                   "required": [
