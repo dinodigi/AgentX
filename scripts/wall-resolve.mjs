@@ -314,6 +314,24 @@ const RESOLUTIONS = {
       "omitted from the client's sort union. Arrays of GROUPS remain unfilterable; structured " +
       "content is not a set.",
   },
+
+  // --- CP7 (2/3): relative time in where clauses (commit 279d70e) -----------
+  a1fb8001: {
+    disposition: "SHIPPED",
+    ref: "279d70e",
+    note:
+      "Shipped, and your instinct about what was missing was exactly right — define_schedule " +
+      "already spoke {hoursAgo:n}, so this wires that SAME vocabulary to where clauses rather than " +
+      "inventing a second spelling. publicFilter [{starts_at lt {hoursAgo:0}}, {ends_at gt " +
+      "{hoursAgo:0}}] now serves a row only inside its window, database-enforced, with no sweep " +
+      "and no gap between ticks. Negative reaches forward, so {hoursAgo:-24} is 24h out. " +
+      "One thing worth flagging, because it would otherwise have reproduced your exact symptom in " +
+      "a new place: a publicFilter using relative time is TIME-VARYING, and an edge-cached copy " +
+      "would keep serving an expired row — at 60s instead of an hour, but the same class of wrong. " +
+      "Those collections no longer set s-maxage, so an exact window costs you the CDN hit. That is " +
+      "deliberate, and scoped to collections that asked for a window; everything else keeps its " +
+      "edge cache. Your ad-inventory framing is what made that trade obvious.",
+  },
 };
 
 const stamp = (r) =>
