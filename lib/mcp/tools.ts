@@ -113,13 +113,16 @@ const WHERE_CLAUSE_JSON = {
     },
     op: {
       type: "string",
-      enum: ["eq", "ne", "neOrUnset", "contains", "gt", "lt", "in", "exists"],
+      enum: ["eq", "ne", "neOrUnset", "contains", "gt", "lt", "in", "has", "exists"],
       description:
         "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for " +
         "\"different OR not set\", which is what exclusion filters almost always mean: " +
         '{field:"email_opt_out",op:"neOrUnset",value:true} excludes opted-out rows AND keeps ' +
         "rows that never set the flag. Reaching for `ne` there silently drops every row with " +
-        "the field unset.",
+        "the field unset. `has` is set MEMBERSHIP on an array of scalars: " +
+        '{field:"tags",op:"has",value:"rust"} matches rows whose tags CONTAIN "rust". It is the ' +
+        "only op arrays support, and they cannot be sorted at all (a set has no order); arrays of " +
+        "groups support neither.",
     },
     value: { description: "scalar, or string[] for op 'in'" },
   },

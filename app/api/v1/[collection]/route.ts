@@ -6,6 +6,7 @@ import { searchEntriesPage, publicSearchableFields } from "@/lib/search";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
 import { gateRead, gateCreate, stampIdentity, checkFieldWrites, fieldWriteError } from "@/lib/access-rules";
+import { isScalarArray } from "@/lib/query";
 import {
   createEntry,
   queryEntries,
@@ -212,6 +213,16 @@ export async function GET(
         422,
         `unknown or non-public filter field "${key}" — filterable: ${pub.map((f) => f.name).join(", ")}`,
       );
+    }
+    // C1: an array of scalars filters by MEMBERSHIP, not equality. `?tags=rust`
+    // used to compile to `tags = 'rust'`, which never matches a JSON array — so
+    // a tag archive had to fetch every row and filter in memory: correct at 5
+    // posts and wrong at 500. The generated client's filter type advertised the
+    // field the whole time, which is what made it look supported.
+    if (isScalarArray(field)) {
+      const item = (field as { item?: { type?: string } }).item;
+      where.push({ field: key, op: "has", value: coerceParam(item?.type ?? "text", value) });
+      continue;
     }
     where.push({ field: key, op: "eq", value: coerceParam(field.type, value) });
   }

@@ -80,11 +80,11 @@ unrelated testers hit.
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=55 · new=5 · planned=7 · reviewed=2_
+_Wall totals: done=56 · new=5 · planned=6 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_12 open (5 new, 7 planned) · 0 theme(s) reported more than once · snapshot 2026-07-28 22:37Z_
+_11 open (5 new, 6 planned) · 0 theme(s) reported more than once · snapshot 2026-07-28 22:58Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
@@ -96,7 +96,6 @@ _12 open (5 new, 7 planned) · 0 theme(s) reported more than once · snapshot 20
 | 🗓️ | 07-18 | CSLP | friction | Unauthenticated GET on an access-ruled collection returns 404 E_NOT_FOUND instead of 40… |
 | 🗓️ | 07-18 | CSLP | limitation | No date bucketing and no second groupBy dimension - by-month pipeline, closed volume by… |
 | 🗓️ | 07-18 | CSLP | limitation | No counting/capacity constraint: unique gives exactly-one-per-key, but 'max N rows per … |
-| 🗓️ | 07-18 | CSLP | limitation | Enum option renames have no mapped migration - renames:[] covers fields only, so renami… |
 | 🗓️ | 07-18 | CSLP | limitation | No SMS connector (Twilio etc.) although the countryside_crm baseline ships text_opt_in … |
 | 🗓️ | 07-19 | CSLP | idea | countryside_crm ships tools:[] — building a full CRM on it meant re-implementing every … |
 | 🗓️ | 07-23 | Codex-test | idea | Add a browser-safe public-read mode for public collections. |

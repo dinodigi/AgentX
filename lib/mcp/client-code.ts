@@ -1,5 +1,6 @@
 import type { Collection } from "@/db/schema";
 import { fieldLocalized, type FieldDef } from "@/lib/field-types";
+import { isScalarArray } from "@/lib/query";
 import { toList, isClaimRule } from "@/lib/access-rules";
 
 /**
@@ -19,7 +20,26 @@ import { toList, isClaimRule } from "@/lib/access-rules";
 // Subsystem 04 extends this table.
 function filterable(f: FieldDef): boolean {
   // J5: localized fields have no single comparable value — the API 422s them.
-  return f.type !== "richtext" && !fieldLocalized(f);
+  if (f.type === "richtext" || fieldLocalized(f)) return false;
+  // C1: an array is filterable only when its items are SCALARS (membership).
+  // The type used to advertise every array, including arrays of groups, which
+  // is how "filter by tags" looked supported while silently matching nothing.
+  if (f.type === "array") return isScalarArray(f);
+  if (f.type === "group") return false;
+  return true;
+}
+
+/**
+ * C1: the TS type of a FILTER value. For a scalar array this is the ITEM type,
+ * not the array — `?tags=rust` asks "does this set contain rust", so the client
+ * must take `tags?: string`, never `tags?: string[]`.
+ */
+function filterType(f: FieldDef): string {
+  if (f.type === "array") {
+    const item = (f as { item?: FieldDef }).item;
+    return item ? readType(item) : "string";
+  }
+  return writeType(f);
 }
 
 function pascal(slug: string): string {
@@ -122,12 +142,18 @@ function typeBlock(p: CollectionPlan): string {
     parts.push(
       ``,
       `export interface ${p.typeName}ListOpts {`,
-      `  /** Equality filters on public fields. */`,
+      `  /** Filters on public fields: equality, or set MEMBERSHIP for array fields. */`,
       filters.length
-        ? `  filter?: {\n${fieldLines(filters, writeType, true).replace(/^ {2}/gm, "    ")}\n  };`
+        ? `  filter?: {\n${fieldLines(filters, filterType, true).replace(/^ {2}/gm, "    ")}\n  };`
         : `  filter?: Record<string, never>;`,
-      p.publicFields.length
-        ? `  sort?: { field: ${p.publicFields.map((f) => JSON.stringify(f.name)).join(" | ")}; dir: "asc" | "desc" };`
+      // C1: arrays and groups are not sortable — a set has no order — so they
+      // must not appear in the sort union. Offering them would generate code
+      // that type-checks and then 422s at runtime.
+      p.publicFields.some((f) => f.type !== "array" && f.type !== "group")
+        ? `  sort?: { field: ${p.publicFields
+            .filter((f) => f.type !== "array" && f.type !== "group")
+            .map((f) => JSON.stringify(f.name))
+            .join(" | ")}; dir: "asc" | "desc" };`
         : ``,
       p.publicFields.some(fieldLocalized)
         ? `  /** Localized fields serve this locale's variant (fallback: the default locale). */\n  locale?: string;`

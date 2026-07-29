@@ -11,7 +11,7 @@ import { ValidationError } from "./validation";
  * exist, use an operator that doesn't fit the type, or inject anything.
  */
 
-export const WHERE_OPS = ["eq", "ne", "neOrUnset", "contains", "gt", "lt", "in", "exists"] as const;
+export const WHERE_OPS = ["eq", "ne", "neOrUnset", "contains", "gt", "lt", "in", "has", "exists"] as const;
 export type WhereOp = (typeof WHERE_OPS)[number];
 
 export interface WhereClause {
@@ -44,8 +44,10 @@ const OPS_BY_TYPE: Record<FieldDef["type"], WhereOp[]> = {
   asset: ["eq", "ne", "neOrUnset", "exists"],
   relation: ["eq", "ne", "neOrUnset", "in", "exists"],
   // Structured fields aren't filterable/sortable — no ops means any where/orderBy
-  // on a group/array is rejected with a clear message (v1 scope guard).
+  // on a group is rejected with a clear message (v1 scope guard).
   group: [],
+  // C1: an array of SCALARS supports membership (`has`). Computed per field by
+  // opsForField below, because it depends on the item type, not just "array".
   array: [],
 };
 
@@ -64,6 +66,25 @@ const OPS_BY_TYPE: Record<FieldDef["type"], WhereOp[]> = {
  */
 const VIRTUAL_ID: FieldDef = { name: "id", label: "ID", type: "text" } as FieldDef;
 const ID_OPS: WhereOp[] = ["eq", "ne", "in"];
+
+/**
+ * C1 — the ops a specific field supports.
+ *
+ * A tag archive used to fetch every row and filter in memory: "correct at 5
+ * posts and wrong at 500", and the generated client's filter type advertised
+ * `tags`, which implied otherwise. An array of SCALARS is a set, and a set
+ * supports membership — so those fields get `has`. An array of GROUPS is
+ * structured content and stays unfilterable.
+ */
+export function opsForField(f: FieldDef): WhereOp[] {
+  if (f.type !== "array") return OPS_BY_TYPE[f.type];
+  const item = (f as { item?: { type?: string } }).item;
+  if (!item || item.type === "group") return [];
+  return ["has", "exists"];
+}
+
+/** C1: is this an array of scalars, i.e. a filterable set? */
+export const isScalarArray = (f: FieldDef) => opsForField(f).includes("has");
 
 /** A3: a date field whose index (and therefore comparison) is text-based. */
 const isIndexedDate = (f: FieldDef) => f.type === "date" && f.indexed === true;
@@ -124,6 +145,8 @@ export function accessor(field: FieldDef, dataCol: AnyColumn | SQL = entries.dat
     }
     return sql`${entries.id}::text`;
   }
+  // C1: an array is compared as JSONB (containment), never as text.
+  if (field.type === "array") return sql`${dataCol}->${field.name}`;
   const raw = sql`${dataCol}->>${field.name}`;
   switch (field.type) {
     case "number":
@@ -243,7 +266,7 @@ function compileScalarClause(
   // B3: the virtual id is text-shaped but not a text field — it takes eq/ne/in
   // only. `contains` on a uuid invites a substring scan that looks like it
   // works; `exists` is always true on a primary key.
-  const base = f === VIRTUAL_ID ? ID_OPS : OPS_BY_TYPE[f.type];
+  const base = f === VIRTUAL_ID ? ID_OPS : opsForField(f);
   const ops = allowedOps ? base.filter((o) => allowedOps.has(o)) : base;
   if (!ops.includes(clause.op)) {
     throw new ValidationError(
@@ -325,6 +348,19 @@ function compileScalarClause(
     case "in": {
       const values = (clause.value as string[]).map((v) => sql`${String(v)}`);
       return sql`${lhs} IN (${sql.join(values, sql`, `)})`;
+    }
+    case "has": {
+      // JSONB containment: `["a","b"] @> ["a"]`. Coerced to the ITEM's type so
+      // a numeric tag does not silently miss (JSON 1 !== "1"), and expressed as
+      // @> specifically because that is the operator a GIN index can serve.
+      const item = (f as { item?: { type?: string } }).item;
+      const v = clause.value;
+      const coerced =
+        item?.type === "number" ? Number(v) : item?.type === "boolean" ? Boolean(v) : String(v);
+      if (item?.type === "number" && Number.isNaN(coerced as number)) {
+        throw new ValidationError(`where: op "has" on "${f.name}" needs a number — got ${JSON.stringify(v)}`);
+      }
+      return sql`${lhs} @> ${JSON.stringify([coerced])}::jsonb`;
     }
   }
 }
@@ -461,6 +497,16 @@ function matchClause(
         if (f.type === "date") return Date.parse(String(v)) !== Date.parse(String(c.value));
         return String(v) !== String(c.value);
       }
+      case "has": {
+        // Mirrors the SQL containment exactly, including the item-type coercion.
+        if (!Array.isArray(v)) return false;
+        const item = (f as { item?: { type?: string } }).item;
+        return item?.type === "number"
+          ? v.some((x) => Number(x) === Number(c.value))
+          : item?.type === "boolean"
+            ? v.some((x) => Boolean(x) === Boolean(c.value))
+            : v.some((x) => String(x) === String(c.value));
+      }
       case "exists":
         return (v != null) === Boolean(c.value);
       case "eq":
@@ -489,6 +535,17 @@ function matchClause(
 export function buildOrderBy(fields: FieldDef[], orderBy?: OrderByClause): SQL | undefined {
   if (!orderBy) return undefined;
   const f = fieldOrThrow(fields, orderBy.field, "orderBy");
+  // C1: a set has no order. Arrays became FILTERABLE (`has`), which makes
+  // sorting by one the obvious next thing to try — and it would not have
+  // errored, it would have ordered rows by the raw JSONB, which is a
+  // meaningless result presented as a real one.
+  if (f.type === "array" || f.type === "group") {
+    throw new ValidationError(
+      `orderBy: "${f.name}" is a ${f.type} field and cannot be sorted — ${
+        f.type === "array" ? "a set has no order; filter it with op \"has\" instead" : "sort by one of its sub-fields' own columns"
+      }`,
+    );
+  }
   if (orderBy.dir !== "asc" && orderBy.dir !== "desc") {
     throw new ValidationError(`orderBy: dir must be "asc" or "desc"`);
   }
