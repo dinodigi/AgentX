@@ -91,7 +91,7 @@ _5 open (3 new, 2 planned) · 0 theme(s) reported more than once · snapshot 202
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_45 unshipped (10 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_41 unshipped (9 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
 **These are NOT started.** A sprint is a commitment; this is a list. High priority only:
 
@@ -103,12 +103,11 @@ _45 unshipped (10 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md
 | 📥 | **OPS-2** | Breaking-change comms: platform behavior changes shipped under live sites with zero noti |
 | 🚧 | **PLUG-2** | Base/blueprint composition model — now a full plan: [plans/PLUGIN-BASES-PLAN.md](plans/P |
 | 📥 | **QRY-3** | Publish the limits in the contract: per-IP rate budget, `429` + `retry-after`, size caps |
-| 🗓️ | **QRY-5** | Reporting: date-bucketed aggregates (`granularity: day\ |
 | 📥 | **SEC-1** | Masked / write-only field type — today any credential in a normal field is plaintext in  |
 | 📥 | **WP-3** | Fix the hooks×bulk contract contradiction: `define_collection.hooks` says bulk is "refus |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 35 at M/L priority._
+_…plus 32 at M/L priority._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)
