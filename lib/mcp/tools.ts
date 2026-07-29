@@ -77,6 +77,7 @@ import { WHERE_OPS } from "@/lib/query";
 import { exportEntries } from "@/lib/export";
 import { formatZodError, issuesFromZod, type ConstraintIssue } from "@/lib/validation";
 import { ERROR_CODES, type ErrorCode } from "@/lib/error-codes";
+import { migrationNotice } from "@/lib/migration-notice";
 
 /**
  * The MCP tool surface. Terse on purpose — the brief values terseness over
@@ -2148,7 +2149,14 @@ export async function callTool(
           buildBriefing(projectId),
         ]);
         if (!project) return err("project not found", "E_NOT_FOUND");
+        // Host migration: present ONLY while one is configured, and omitted
+        // entirely otherwise — an empty key would read as "something is wrong
+        // here". Agents are the primary integrator on this platform, so the
+        // orientation endpoint is where a move has to be announced; the same
+        // notice rides every delivery response as RFC 8594 headers.
+        const migration = migrationNotice(ctx.baseUrl);
         return ok({
+          ...(migration ? { migration } : {}),
           project: {
             name: project.name,
             branding: project.branding,

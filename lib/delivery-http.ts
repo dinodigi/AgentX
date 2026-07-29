@@ -3,6 +3,7 @@ import type { NextRequest } from "next/server";
 import { CORS_HEADERS } from "./cors";
 import type { ErrorCode } from "./error-codes";
 import type { ConstraintIssue } from "./validation";
+import { migrationHeaders } from "./migration-notice";
 
 /**
  * Shared HTTP plumbing for the delivery API: every response carries CORS
@@ -13,7 +14,10 @@ import type { ConstraintIssue } from "./validation";
 export function corsJson(body: unknown, init?: ResponseInit): Response {
   return Response.json(body, {
     ...init,
-    headers: { ...CORS_HEADERS, ...(init?.headers ?? {}) },
+    // migrationHeaders() is {} unless a host migration is configured, so every
+    // delivery response carries the RFC 8594 notice during a move and is byte
+    // identical otherwise.
+    headers: { ...CORS_HEADERS, ...migrationHeaders(), ...(init?.headers ?? {}) },
   });
 }
 
@@ -88,10 +92,10 @@ export function cachedJson(req: NextRequest, body: unknown, opts?: { share?: boo
   // Match by hash inclusion, not equality: CDNs mutate ETags in flight
   // (Netlify appends -df for compressed responses; proxies add W/ markers).
   if (req.headers.get("if-none-match")?.includes(hash)) {
-    return new Response(null, { status: 304, headers: { ...CORS_HEADERS, ...cacheHeaders } });
+    return new Response(null, { status: 304, headers: { ...CORS_HEADERS, ...migrationHeaders(req.url), ...cacheHeaders } });
   }
   return new Response(json, {
     status: 200,
-    headers: { ...CORS_HEADERS, ...cacheHeaders, "content-type": "application/json" },
+    headers: { ...CORS_HEADERS, ...migrationHeaders(req.url), ...cacheHeaders, "content-type": "application/json" },
   });
 }
