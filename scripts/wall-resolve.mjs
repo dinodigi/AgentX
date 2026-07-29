@@ -355,7 +355,7 @@ const RESOLUTIONS = {
   // --- CP8: capacity SHIPPED; two items closed as TRIGGER -------------------
   "8570cb24": {
     disposition: "SHIPPED",
-    ref: "CP8SHA",
+    ref: "bea3377",
     note:
       "`capacity: N` on a field — at most N rows may share each value. You framed it exactly " +
       "right: unique gives exactly-one-per-key and nothing gave at-most-N. The important part is " +
