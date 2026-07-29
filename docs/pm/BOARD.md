@@ -17,7 +17,7 @@
 Protocol: **[BURNDOWN.md](BURNDOWN.md)** · dispositioned queue: **[QUEUE.md](QUEUE.md)**
 
 <!-- BEGIN:LEDGER -->
-_28 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
+_30 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
 
 | | id | project | item | receipt |
 |---|---|---|---|---|
@@ -35,11 +35,13 @@ _28 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 | ✅ | `0a5ce08c` | Fatsoz | `indexed` is rejected on date fields, so the most natural sort/filter dimension for events and submissions (a  | `2dfa814` |
 | ✅ | `95b660d1` | Fatsoz | The stateless MCP-over-HTTP transport is excellent for server-side use — worth documenting it as a supported p | `66ad28e` |
 | ✅ | `4fae3449` | Hatchly | query_entries rejects `id` in where clauses ("unknown field id"), so fetching one entry by id needs a separate | `0dbf3ff` |
+| ✅ | `66d1cbd9` | Codex-test | Add a browser-safe public-read mode for public collections. | `57bbea4` |
 | ✅ | `9c2333cb` | Hatchly | define_collection has no additive field op — adding one field requires re-sending the whole schema, and any om | `f5a99f7` |
 | ✅ | `e9628701` | Hatchly | Two read planes disagree: MCP reads reflect writes immediately, but the delivery API converges ~15s later and  | `66ad28e` |
 | ✅ | `58aaca1e` | xvibe | briefing.health reports r2/clerk/resend connectors as "error" on project xvibe while R2 demonstrably works end | `65fa439` |
 | ✅ | `e0b6eb32` | xvibe | A collection cannot combine anonymous form intake (publicWrite POST) with claim-gated delivery PATCH, because  | `8d63719` |
 | ✅ | `921f9ec7` | xvibe | get_client_code generated no update()/remove() methods for a collection whose access.write is a claim rule, ev | `65fa439` |
+| ✅ | `eff3e105` | xvibe | XVibe-class static apps need an edge proxy solely to hold the delivery token — a browser-safe, read-only+publi | `57bbea4` |
 | ✅ | `a1fb8001` | jabed test | publicFilter cannot express relative time, so "serve this row only while now is between starts_at and ends_at" | `279d70e` |
 | ✅ | `ad690ade` | jabed test | Relation and asset sub-fields inside typed blocks reject an explicit null — the key must be omitted entirely — | `0dbf3ff` |
 | ✅ | `34acd74d` | jabed test | indexed is rejected on date fields, but published_at is the canonical sort key for any content collection — th | `2dfa814` |
@@ -74,18 +76,16 @@ _28 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=63 · new=3 · planned=1 · reviewed=2_
+_Wall totals: done=65 · new=2 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_4 open (3 new, 1 planned) · 0 theme(s) reported more than once · snapshot 2026-07-29 16:48Z_
+_2 open (2 new, 0 planned) · 0 theme(s) reported more than once · snapshot 2026-07-29 17:23Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
-| ⬜ | 07-26 | xvibe | idea | XVibe-class static apps need an edge proxy solely to hold the delivery token — a browse… |
 | ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
 | ⬜ | 07-26 | jabed test | idea | Workflow transitions gate on ACTOR but not on row state, so "you may not launch a campa… |
-| 🗓️ | 07-23 | Codex-test | idea | Add a browser-safe public-read mode for public collections. |
 <!-- END:WALL -->
 
 ## Backlog — decided-or-parked, NOT started

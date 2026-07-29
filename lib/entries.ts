@@ -27,6 +27,7 @@ import {
   buildWhere,
   buildWhereParts,
   buildOrderBy,
+  describeClauses,
   matchesClauses,
   WHERE_OPS,
   type WhereItem,
@@ -516,6 +517,7 @@ async function updateEntryCore(
   // G4: a workflow move is validated (actor + from→to) BEFORE the write and
   // guarded so a concurrent change since our read fails as E_CONFLICT.
   const guards: SQL[] = [];
+  let preconditionWhen: WhereItem[] | undefined;
   let transition: EmitDescriptor["transition"];
   const wf = collection.workflow;
   if (wf && wf.field in patch) {
@@ -536,6 +538,15 @@ async function updateEntryCore(
         );
       }
       guards.push(sql`${entries.data}->>${wf.field} = ${from}`);
+      // D2: the transition's precondition, compiled into the SAME conditional
+      // UPDATE as the state guard. Checking it in JS against the row we read
+      // would be a read-then-hope: a concurrent write could clear the required
+      // field between the check and the write, and the move would still land.
+      const branch = check.branches.find((b) => b.froms.includes(from));
+      if (branch?.when?.length) {
+        guards.push(...buildWhere(collection.fields, branch.when));
+        preconditionWhen = branch.when;
+      }
       transition = { field: wf.field, from, to: check.to };
     }
   }
@@ -580,6 +591,24 @@ async function updateEntryCore(
     // the row was deleted): a conflict to re-read and retry. Without a guard, a
     // 0-row means a concurrent delete → E_NOT_FOUND.
     if (transition) {
+      // D2: a precondition and a concurrent move both produce 0 rows, and they
+      // need completely different responses — "add the missing field" vs
+      // "re-read and retry". Re-read to tell them apart, because a
+      // precondition failure reported as a race sends the caller into a retry
+      // loop that can never succeed.
+      if (preconditionWhen?.length) {
+        const [now] = await dbc
+          .select({ data: entries.data })
+          .from(entries)
+          .where(eq(entries.id, id))
+          .limit(1);
+        if (now && !matchesClauses(collection.fields, preconditionWhen, now.data as Record<string, unknown>)) {
+          throw new ValidationError(
+            `workflow: "${transition.field}" cannot move to "${transition.to}" — this transition requires ${describeClauses(preconditionWhen)}. Set it first, then transition.`,
+            "E_VALIDATION",
+          );
+        }
+      }
       throw new ValidationError(
         `workflow: "${transition.field}" changed since read — concurrent transition, re-read and retry`,
         "E_CONFLICT",
@@ -1096,13 +1125,21 @@ async function updateEntryIfCore(
     }
     const check = checkTransition(collection, actorType, patch)!;
     wfTo = check.to;
-    const guardVals = [...new Set(check.allowedFroms)];
-    conditions.push(
-      sql`(${entries.data}->>${wf.field}) = ANY(${sql`ARRAY[${sql.join(
-        guardVals.map((v) => sql`${v}`),
-        sql`, `,
-      )}]::text[]`})`,
-    );
+    // D2: each branch guards its OWN froms with its OWN precondition, ORed
+    // together. Flattening the froms and ANDing every `when` would enforce a
+    // rule the author never wrote — two transitions reaching the same state can
+    // carry different preconditions.
+    const branchSql = check.branches
+      .filter((b) => b.froms.length > 0)
+      .map((b) => {
+        const inFrom = sql`(${entries.data}->>${wf.field}) = ANY(${sql`ARRAY[${sql.join(
+          b.froms.map((v) => sql`${v}`),
+          sql`, `,
+        )}]::text[]`})`;
+        const when = b.when?.length ? buildWhere(collection.fields, b.when) : [];
+        return when.length ? sql`(${and(inFrom, ...when)})` : sql`(${inFrom})`;
+      });
+    if (branchSql.length) conditions.push(sql`(${sql.join(branchSql, sql` OR `)})`);
   }
 
   // null = explicit unset, mirroring update_entry: subtract unset keys, then

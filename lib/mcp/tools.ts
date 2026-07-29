@@ -608,7 +608,10 @@ export const TOOL_DEFS: ToolDef[] = [
           type: "object",
           description:
             "declarative state machine over ONE enum field: {field, initial, transitions:[{from: " +
-            "state|state[], to: state, actors?: (mcp|admin|delivery)[], actions?: [event action]}]}. " +
+            "state|state[], to: state, actors?: (mcp|admin|delivery)[], when?: [where clause], " +
+            "actions?: [event action]}]}. `when` gates a transition on the ROW's data rather than " +
+            "on who is asking — the way to express \"may not go live without a creative\" without " +
+            "making that field required (which would block saving a draft). " +
             "initial is enforced on EVERY create path (including bulk_create_entries and " +
             "public/delivery writes — an explicit non-initial value is rejected; for MIGRATIONS, " +
             "create_entry/bulk_create_entries accept allowExplicitWorkflowState:true to load " +
@@ -638,6 +641,12 @@ export const TOOL_DEFS: ToolDef[] = [
                   from: { description: "state or state[]" },
                   to: { type: "string" },
                   actors: { type: "array", items: { type: "string", enum: ["mcp", "operator", "client", "admin", "delivery"] } },
+                  when: {
+                    type: "array",
+                    items: WHERE_ITEM_JSON,
+                    description:
+                      "PRECONDITION on the row for THIS transition — same clause vocabulary as query where. Gate on the DATA, not just the actor: [{field:\"creative\",op:\"exists\",value:true}] on draft->live means a campaign cannot go live without one, WITHOUT making creative a required field (which would block saving a draft). Checked atomically in the same statement as the state guard, so a concurrent write cannot slip a move past it; a refusal names the unmet requirement.",
+                  },
                   actions: { type: "array", items: { type: "object" } },
                 },
                 required: ["from", "to"],
@@ -1705,6 +1714,11 @@ const defineArgs = z.object({
             from: z.union([z.string(), z.array(z.string()).min(1)]),
             to: z.string(),
             actors: z.array(z.enum(["mcp", "operator", "client", "admin", "delivery"])).optional(),
+            // D2: without this the parser SILENTLY STRIPS `when` — the clause
+            // is accepted, discarded, and the transition then has no
+            // precondition at all. A gate that vanishes quietly is worse than
+            // one that was never offered.
+            when: z.array(whereItemSchema).optional(),
             actions: z.array(eventActionSchema).optional(),
           }),
         )

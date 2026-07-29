@@ -706,7 +706,7 @@ Create or update a collection (a data model). `fields` is an array of field defs
     },
     "workflow": {
       "type": "object",
-      "description": "declarative state machine over ONE enum field: {field, initial, transitions:[{from: state|state[], to: state, actors?: (mcp|admin|delivery)[], actions?: [event action]}]}. initial is enforced on EVERY create path (including bulk_create_entries and public/delivery writes — an explicit non-initial value is rejected; for MIGRATIONS, create_entry/bulk_create_entries accept allowExplicitWorkflowState:true to load historical records at their real states, audit-stamped). The field then moves ONLY via a declared transition; an illegal move is rejected with the allowed targets, and a target no transition reaches from the current state conflicts. Transitions are ACTOR-GATED. Actors: 'mcp' (agents with an mcp token) · 'operator' (workspace members + platform operators — THIS is staff) · 'client' (invited project-role members) · 'delivery' (end users on the public API) · 'admin' (DEPRECATED alias meaning operator OR client). Default is ['mcp','admin']. ⚠️ IF YOU WANT STAFF-ONLY, USE 'operator' — NOT 'admin'. 'admin' means anyone acting through the project admin UI, INCLUDING invited client-role members, so actors:['mcp','admin'] is NOT an authorization boundary against your own clients. Two independent integrators read it that way and were wrong. Add 'delivery' to let end users drive a transition (e.g. an owner cancelling their own request). Overlapping (from,to) pairs are rejected at define time so every move resolves one transition. A matched transition fires its actions as an entry.transitioned event (webhook/email, immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
+      "description": "declarative state machine over ONE enum field: {field, initial, transitions:[{from: state|state[], to: state, actors?: (mcp|admin|delivery)[], when?: [where clause], actions?: [event action]}]}. `when` gates a transition on the ROW's data rather than on who is asking — the way to express \"may not go live without a creative\" without making that field required (which would block saving a draft). initial is enforced on EVERY create path (including bulk_create_entries and public/delivery writes — an explicit non-initial value is rejected; for MIGRATIONS, create_entry/bulk_create_entries accept allowExplicitWorkflowState:true to load historical records at their real states, audit-stamped). The field then moves ONLY via a declared transition; an illegal move is rejected with the allowed targets, and a target no transition reaches from the current state conflicts. Transitions are ACTOR-GATED. Actors: 'mcp' (agents with an mcp token) · 'operator' (workspace members + platform operators — THIS is staff) · 'client' (invited project-role members) · 'delivery' (end users on the public API) · 'admin' (DEPRECATED alias meaning operator OR client). Default is ['mcp','admin']. ⚠️ IF YOU WANT STAFF-ONLY, USE 'operator' — NOT 'admin'. 'admin' means anyone acting through the project admin UI, INCLUDING invited client-role members, so actors:['mcp','admin'] is NOT an authorization boundary against your own clients. Two independent integrators read it that way and were wrong. Add 'delivery' to let end users drive a transition (e.g. an owner cancelling their own request). Overlapping (from,to) pairs are rejected at define time so every move resolves one transition. A matched transition fires its actions as an entry.transitioned event (webhook/email, immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
       "properties": {
         "field": {
           "type": "string",
@@ -739,6 +739,94 @@ Create or update a collection (a data model). `fields` is an array of field defs
                     "delivery"
                   ]
                 }
+              },
+              "when": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "field": {
+                          "type": "string",
+                          "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                        },
+                        "op": {
+                          "type": "string",
+                          "enum": [
+                            "eq",
+                            "ne",
+                            "neOrUnset",
+                            "contains",
+                            "gt",
+                            "lt",
+                            "in",
+                            "has",
+                            "exists"
+                          ],
+                          "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
+                        },
+                        "value": {
+                          "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
+                        }
+                      },
+                      "required": [
+                        "field",
+                        "op",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "anyOf": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "field": {
+                                "type": "string",
+                                "description": "field name, or \"relationField.targetField\" (one hop) to filter by a related record's field — ops are type-checked against the target field; on MCP the target is read like any MCP read (publicFilter/access do not apply)"
+                              },
+                              "op": {
+                                "type": "string",
+                                "enum": [
+                                  "eq",
+                                  "ne",
+                                  "neOrUnset",
+                                  "contains",
+                                  "gt",
+                                  "lt",
+                                  "in",
+                                  "has",
+                                  "exists"
+                                ],
+                                "description": "`ne` is SET-AND-DIFFERENT — an unset field never matches it. Use `neOrUnset` for \"different OR not set\", which is what exclusion filters almost always mean: {field:\"email_opt_out\",op:\"neOrUnset\",value:true} excludes opted-out rows AND keeps rows that never set the flag. Reaching for `ne` there silently drops every row with the field unset. `has` is set MEMBERSHIP on an array of scalars: {field:\"tags\",op:\"has\",value:\"rust\"} matches rows whose tags CONTAIN \"rust\". It is the only op arrays support, and they cannot be sorted at all (a set has no order); arrays of groups support neither."
+                              },
+                              "value": {
+                                "description": "scalar, or string[] for op 'in', or a RELATIVE TIME on a date field: {hoursAgo:n} / {daysAgo:n}, resolved at evaluation time (negative goes FORWARD, so {hoursAgo:0} is now and {hoursAgo:-24} is 24h out). This is what makes a live window expressible in publicFilter: [{field:\"starts_at\",op:\"lt\",value:{hoursAgo:0}},{field:\"ends_at\",op:\"gt\",value:{hoursAgo:0}}] serves a row only INSIDE its window, database-enforced, with no sweep job and no gap between ticks. NOTE: a publicFilter using relative time is time-varying, so that collection's delivery responses are not edge-cached — an exact window costs you the CDN hit, deliberately."
+                              }
+                            },
+                            "required": [
+                              "field",
+                              "op",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "minItems": 1,
+                          "maxItems": 200
+                        }
+                      },
+                      "required": [
+                        "anyOf"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                },
+                "description": "PRECONDITION on the row for THIS transition — same clause vocabulary as query where. Gate on the DATA, not just the actor: [{field:\"creative\",op:\"exists\",value:true}] on draft->live means a campaign cannot go live without one, WITHOUT making creative a required field (which would block saving a draft). Checked atomically in the same statement as the state guard, so a concurrent write cannot slip a move past it; a refusal names the unmet requirement."
               },
               "actions": {
                 "type": "array",

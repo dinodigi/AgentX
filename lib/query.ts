@@ -503,6 +503,25 @@ function compileClause(
 }
 
 /** JS-side item evaluation for single-entry row gates (same semantics as buildWhere). */
+/**
+ * Human/agent-readable rendering of a clause list — used when a gate REFUSES,
+ * so the message names the actual requirement instead of "condition not met".
+ * A precondition the caller cannot see is one they cannot satisfy.
+ */
+export function describeClauses(items: WhereItem[]): string {
+  const one = (c: WhereClause): string => {
+    if (c.op === "exists") return c.value === false ? `${c.field} to be unset` : `${c.field} to be set`;
+    if (c.op === "has") return `${c.field} to contain ${JSON.stringify(c.value)}`;
+    const verb =
+      c.op === "eq" ? "=" : c.op === "ne" ? "!=" : c.op === "neOrUnset" ? "!= (or unset)" :
+      c.op === "gt" ? ">" : c.op === "lt" ? "<" : c.op === "in" ? "in" : c.op;
+    return `${c.field} ${verb} ${JSON.stringify(c.value)}`;
+  };
+  return items
+    .map((i) => ("anyOf" in i ? `(${i.anyOf.map(one).join(" or ")})` : one(i)))
+    .join(" and ");
+}
+
 export function matchesClauses(
   fields: FieldDef[],
   clauses: WhereItem[],

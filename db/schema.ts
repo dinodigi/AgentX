@@ -80,6 +80,17 @@ export interface WorkflowTransition {
   to: string;
   /** Defaults to ["mcp","admin"] — delivery must be listed explicitly. */
   actors?: WorkflowActor[];
+  /**
+   * D2 — a PRECONDITION on the row, checked at the moment of the move.
+   *
+   * Transitions gated on WHO but never on WHAT, so "may not go live without a
+   * creative" had to become a required field — which then blocked saving a
+   * draft. The constraint landed at every save instead of at the one transition
+   * that cares. Same clause vocabulary as query where / publicFilter, compiled
+   * into the same conditional UPDATE as the from-state guard, so it is checked
+   * atomically rather than read-then-hoped.
+   */
+  when?: WhereItem[];
   actions?: EventAction[];
 }
 
