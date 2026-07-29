@@ -755,6 +755,81 @@ async function syncSearchIndex(
   }
 }
 
+/** Per-collection capacity trigger names (same 8-hex-prefix scheme as indexes). */
+function capacityFnName(collectionId: string, field: string): string {
+  return `entries_cap_${collectionId.replaceAll("-", "").slice(0, 8)}_${field}`.slice(0, 63);
+}
+
+/**
+ * `capacity: N` — at most N rows may share each value of a field.
+ *
+ * `unique` already gave exactly-one-per-key; nothing gave AT MOST N, so booking
+ * capacity ("10 seats per slot") had to be a count-then-insert in application
+ * code. That races: two callers both count 9 and both insert, and the slot
+ * oversells. The reporter asked for the constraint precisely because the
+ * workaround cannot be made correct from outside the database.
+ *
+ * So it is a BEFORE INSERT OR UPDATE trigger that takes a per-key advisory lock
+ * before counting. The lock serializes only writers touching the SAME key, and
+ * it is an xact lock taken inside the same statement as the insert — which is
+ * exactly the scope that survives the neon-http driver, where each statement is
+ * its own transaction.
+ *
+ * SQLSTATE 23505 is raised deliberately so this arrives on the same error path
+ * as a unique violation, which callers already handle.
+ */
+async function syncCapacityTriggers(
+  projectId: string,
+  collectionId: string,
+  oldFields: FieldDef[],
+  newFields: FieldDef[],
+): Promise<void> {
+  const caps = (fs: FieldDef[]) =>
+    new Map(fs.filter((f) => f.capacity !== undefined).map((f) => [f.name, f.capacity!]));
+  const oldCaps = caps(oldFields);
+  const newCaps = caps(newFields);
+  const tdb = await tenantDb(projectId);
+
+  for (const [name] of oldCaps) {
+    if (newCaps.get(name) === oldCaps.get(name)) continue; // unchanged
+    const fn = capacityFnName(collectionId, name);
+    await tdb.execute(sql.raw(`DROP TRIGGER IF EXISTS "${fn}_trg" ON entries`));
+    await tdb.execute(sql.raw(`DROP FUNCTION IF EXISTS "${fn}"()`));
+  }
+  for (const [name, max] of newCaps) {
+    if (oldCaps.get(name) === max) continue; // unchanged
+    const fn = capacityFnName(collectionId, name);
+    // Names are validated snake_case and the id is a uuid, so raw is safe here.
+    await tdb.execute(
+      sql.raw(`
+        CREATE OR REPLACE FUNCTION "${fn}"() RETURNS trigger AS $fn$
+        DECLARE k text; n int;
+        BEGIN
+          k := NEW.data->>'${name}';
+          IF k IS NULL THEN RETURN NEW; END IF;
+          IF TG_OP = 'UPDATE' AND OLD.data->>'${name}' IS NOT DISTINCT FROM k THEN
+            RETURN NEW;  -- key unchanged: the row already counted toward its own slot
+          END IF;
+          PERFORM pg_advisory_xact_lock(hashtext('${collectionId}' || k));
+          SELECT count(*) INTO n FROM entries
+            WHERE collection_id = '${collectionId}' AND data->>'${name}' = k;
+          IF n >= ${max} THEN
+            RAISE EXCEPTION 'entries_cap_${name}: at most ${max} per "%"', k
+              USING ERRCODE = '23505';
+          END IF;
+          RETURN NEW;
+        END $fn$ LANGUAGE plpgsql`),
+    );
+    await tdb.execute(sql.raw(`DROP TRIGGER IF EXISTS "${fn}_trg" ON entries`));
+    await tdb.execute(
+      sql.raw(`
+        CREATE TRIGGER "${fn}_trg" BEFORE INSERT OR UPDATE ON entries
+        FOR EACH ROW WHEN (NEW.collection_id = '${collectionId}')
+        EXECUTE FUNCTION "${fn}"()`),
+    );
+  }
+}
+
 async function syncUniqueIndexes(
   projectId: string,
   collectionId: string,
@@ -920,6 +995,7 @@ export async function replayCollectionIndexes(projectId: string): Promise<void> 
     await syncUniqueIndexes(projectId, c.id, [], c.fields as FieldDef[]);
     await syncSearchIndex(projectId, c.id, [], c.fields as FieldDef[]);
     await syncFilterIndexes(projectId, c.id, [], c.fields as FieldDef[]);
+    await syncCapacityTriggers(projectId, c.id, [], c.fields as FieldDef[]);
   }
 }
 
@@ -1366,6 +1442,7 @@ export async function defineCollection(
     await syncUniqueIndexes(projectId, current.id, current.fields, fields);
     await syncSearchIndex(projectId, current.id, current.fields, fields);
     await syncFilterIndexes(projectId, current.id, current.fields, fields);
+    await syncCapacityTriggers(projectId, current.id, current.fields, fields);
   }
 
   // Tightened validator-level constraints apply to NEW writes immediately;
@@ -1422,6 +1499,7 @@ export async function defineCollection(
     await syncUniqueIndexes(projectId, row.id, [], fields);
     await syncSearchIndex(projectId, row.id, [], fields);
     await syncFilterIndexes(projectId, row.id, [], fields);
+    await syncCapacityTriggers(projectId, row.id, [], fields);
   }
 
   // Backfill each rename: move the old key's value to the new key across every
@@ -1619,6 +1697,7 @@ export async function deleteCollection(projectId: string, name: string): Promise
     await syncUniqueIndexes(projectId, target.id, target.fields, []);
     await syncSearchIndex(projectId, target.id, target.fields, []);
     await syncFilterIndexes(projectId, target.id, target.fields, []);
+    await syncCapacityTriggers(projectId, target.id, target.fields, []);
   }
   revalidateTag(collectionsTag(projectId));
 }

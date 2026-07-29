@@ -256,6 +256,7 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
     required: z.boolean().optional(),
     publicRead: z.boolean().optional(),
     indexed: z.boolean().optional(),
+    capacity: z.number().int().positive().optional(),
     // constraints (subsystem 05), validated per type by superRefine below
     unique: z.boolean().optional(),
     min: z.union([z.number(), z.string()]).optional(),
@@ -428,6 +429,22 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
             ? "indexed is not valid on richtext — use searchable for full-text"
             : "indexed is not valid on group/array — nested content isn't filterable/sortable",
       });
+    }
+    if (f.capacity !== undefined) {
+      // The key must be a scalar the trigger can compare as text.
+      const CAPACITY_TYPES = ["text", "number", "enum", "relation", "date", "boolean"];
+      if (!CAPACITY_TYPES.includes(f.type)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `capacity is not valid on ${f.type} — it counts rows sharing a scalar key (${CAPACITY_TYPES.join(", ")})`,
+        });
+      }
+      if (f.unique) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "capacity and unique conflict — unique already means capacity 1; drop one",
+        });
+      }
     }
     if (f.pattern !== undefined) {
       if (f.type !== "text") {

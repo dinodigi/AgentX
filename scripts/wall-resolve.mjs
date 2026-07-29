@@ -351,6 +351,46 @@ const RESOLUTIONS = {
       "`key` still carries the first dimension with `keys` omitted entirely for a single " +
       "dimension, so nothing you already built against this tool changed shape.",
   },
+
+  // --- CP8: capacity SHIPPED; two items closed as TRIGGER -------------------
+  "8570cb24": {
+    disposition: "SHIPPED",
+    ref: "CP8SHA",
+    note:
+      "`capacity: N` on a field — at most N rows may share each value. You framed it exactly " +
+      "right: unique gives exactly-one-per-key and nothing gave at-most-N. The important part is " +
+      "WHERE it is enforced. A count-then-insert in application code cannot be made correct from " +
+      "outside the database — two callers both count 9 of 10 and both insert — so this is a " +
+      "trigger that takes a per-key advisory lock before counting. A test rushes a 3-seat slot " +
+      "with 10 concurrent bookings and demands exactly 3 winners. Moving a row INTO a full key is " +
+      "refused too, while updating a row already in a full key still works (it counts toward its " +
+      "own slot; re-counting it would make a full slot permanently uneditable). Overflow arrives " +
+      "as E_VALIDATION naming the full key, on the same error path as a unique violation.",
+  },
+  de626cb6: {
+    disposition: "TRIGGER",
+    ref: "a second project asks, or one client commits to SMS",
+    note:
+      "Not building this yet, and I would rather say so plainly than leave it sitting on the wall " +
+      "looking planned. You are right that countryside_crm's baseline implies messaging, but an " +
+      "SMS connector needs an operator-held Twilio account, a billing relationship, and per-country " +
+      "compliance (sender IDs, opt-out handling) — that is a product decision with recurring cost, " +
+      "not a missing adapter. REOPENS WHEN: a second project asks for SMS, or one client commits " +
+      "to paying for it. Until then text_message steps in the baseline should be read as email or " +
+      "webhook, and if you have a client waiting, say so and this moves immediately.",
+  },
+  "42a6d515": {
+    disposition: "TRIGGER",
+    ref: "after the wall is clear (plugin-authored tools, PLUG line)",
+    note:
+      "Accurate report, and the gap is real: plugins ship collections, workflows and schedules but " +
+      "`tools: []` is inert, so anything bespoke gets re-implemented per project. Letting a plugin " +
+      "contribute MCP tools is a design pass of its own, though — it decides who may execute what, " +
+      "how a tenant-authored tool is sandboxed, and how versioning works when a project pins an " +
+      "older plugin. Doing that carelessly is how a content platform grows a code-execution " +
+      "surface. REOPENS WHEN: the feedback wall reaches zero, which is the current sprint's goal " +
+      "and is close — this is first in line after it, tracked on the PLUG line in docs/BACKLOG.md.",
+  },
 };
 
 const stamp = (r) =>

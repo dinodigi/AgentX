@@ -224,6 +224,23 @@ export function dbErrorText(e: unknown): string {
 
 /** Map partial-unique-index violations (23505) to agent-repairable errors. */
 export function rethrowUnique(e: unknown): never {
+  // Capacity trigger (raised as 23505 so it lands on this same path). Its
+  // message already names the field and the limit; keep the caller's key.
+  const cap = /entries_cap_([a-z][a-z0-9_]*): at most (\d+) per "([^"]*)"/.exec(dbErrorText(e));
+  if (cap) {
+    throw new ValidationError(
+      `${cap[1]}: "${cap[3]}" is full — at most ${cap[2]} entries may share this value`,
+      "E_VALIDATION",
+      [
+        {
+          field: cap[1],
+          constraint: "unique",
+          limit: Number(cap[2]),
+          hint: `capacity reached: "${cap[3]}" already holds ${cap[2]} entries — pick another value, or raise capacity on this field`,
+        },
+      ],
+    );
+  }
   const m = /entries_uq_[0-9a-f]{8}_([a-z][a-z0-9_]*)/.exec(dbErrorText(e));
   if (m) {
     throw new ValidationError(`${m[1]}: value already exists — this field is unique`, "E_VALIDATION", [

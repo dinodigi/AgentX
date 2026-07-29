@@ -53,6 +53,14 @@ interface FieldBase {
    */
   indexed?: boolean;
   /**
+   * At most N rows may share each value of this field — the booking-capacity
+   * constraint. `unique` gives exactly-one-per-key and nothing gave at-most-N,
+   * so "10 seats per slot" had to be a read-then-write in application code,
+   * which races and oversells. Enforced by a tenant-DB trigger that takes a
+   * per-key advisory lock, so the guarantee is the database's, not the caller's.
+   */
+  capacity?: number;
+  /**
    * Value must be unique within the collection (text/number/date). Enforced by
    * a partial DB index, so concurrent writers can't race past it. Date values
    * are stored normalized to UTC ISO-8601 so index equality = instant equality.
