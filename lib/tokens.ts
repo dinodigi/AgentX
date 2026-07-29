@@ -122,7 +122,7 @@ export async function resolveToken(rawToken: string): Promise<TokenInfo | null> 
  * read as unknown here (the MCP route gives agents the precise message).
  */
 export type DeliveryTokenResult =
-  | { ok: true; projectId: string }
+  | { ok: true; projectId: string; /** D3: token may READ only — every delivery write path refuses it. */ readOnly?: boolean }
   | { ok: false; code: "E_AUTH" | "E_SCOPE"; error: string };
 
 /**
@@ -154,7 +154,37 @@ export async function resolveDeliveryToken(rawToken: string | null): Promise<Del
     };
   }
   if (info.projectStatus !== "active" || info.billing !== "ok") return invalid;
-  return { ok: true, projectId: info.projectId };
+  return { ok: true, projectId: info.projectId, readOnly: isReadOnlyDelivery(info) };
+}
+
+/**
+ * D3 — the browser-safe delivery token.
+ *
+ * XVibe was running an edge proxy PER APP for the sole purpose of keeping a
+ * delivery token off the client, and after the domain split every deployed app
+ * became a distinct cross-origin caller — so that proxy stopped being one
+ * team's workaround and became the default shape of every site we ship.
+ *
+ * The reframe that makes this safe: a read-only delivery token grants EXACTLY
+ * what `publicRead` already exposes to the anonymous internet. If that data is
+ * public, a leaked token leaks nothing new. What a public token actually costs
+ * is ABUSE — quota burn — which is a rate-limit and revocation problem, not an
+ * authorization one. So this is a quota decision wearing security clothes.
+ *
+ * Reuses the existing `scopes` column rather than adding one, which inherits
+ * MT-1's grandfather rule for free: `scopes = null` means full access, so every
+ * token minted before today keeps read AND publicWrite exactly as it was.
+ *
+ * Writes are deliberately NOT included yet. A browser-embeddable write endpoint
+ * is a spam surface in a way reads are not, and it deserves a human-verification
+ * story rather than being bundled in quietly.
+ */
+export const DELIVERY_READ = "delivery.read";
+
+export function isReadOnlyDelivery(info: { scopes: string[] | null }): boolean {
+  // null = grandfathered full access. Only an EXPLICIT delivery.read grant
+  // narrows a token, so this can never tighten an existing credential.
+  return Array.isArray(info.scopes) && info.scopes.includes(DELIVERY_READ);
 }
 
 export async function resolveProjectId(rawToken: string): Promise<string | null> {
@@ -203,6 +233,8 @@ export async function mintDeliveryTokenViaMcp(
   projectId: string,
   mintedByTokenId: string,
   label: string,
+  /** D3: mint a browser-safe READ-ONLY token (every delivery write refuses it). */
+  readOnly = false,
 ): Promise<MintDeliveryResult> {
   const [{ n }] = await db
     .select({ n: count() })
@@ -223,6 +255,9 @@ export async function mintDeliveryTokenViaMcp(
       projectId,
       tokenHash: hashToken(raw),
       scope: "delivery",
+      // null keeps the grandfathered full-access meaning; an explicit grant is
+      // the ONLY thing that narrows a token, so this can never tighten one.
+      scopes: readOnly ? [DELIVERY_READ] : null,
       label: label.trim() || null,
       mintedByTokenId,
     })
@@ -241,6 +276,8 @@ export interface DeliveryTokenRow {
   lastUsedAt: Date | null;
   /** True when an agent minted it over MCP (vs a human in the console). */
   agentMinted: boolean;
+  /** D3: safe to embed in a browser bundle — reads only, every write refuses it. */
+  readOnly: boolean;
 }
 
 export async function listDeliveryTokens(projectId: string): Promise<DeliveryTokenRow[]> {
@@ -251,11 +288,16 @@ export async function listDeliveryTokens(projectId: string): Promise<DeliveryTok
       createdAt: projectTokens.createdAt,
       lastUsedAt: projectTokens.lastUsedAt,
       mintedBy: projectTokens.mintedByTokenId,
+      scopes: projectTokens.scopes,
     })
     .from(projectTokens)
     .where(and(eq(projectTokens.projectId, projectId), eq(projectTokens.scope, "delivery")))
     .orderBy(desc(projectTokens.createdAt));
   return rows.map((r) => ({
+    // D3: without this a human managing tokens cannot tell a browser-safe
+    // token from one that must never leave a server — which is exactly the
+    // distinction the whole feature exists to make.
+    readOnly: isReadOnlyDelivery(r),
     id: r.id,
     label: r.label,
     createdAt: new Date(r.createdAt),

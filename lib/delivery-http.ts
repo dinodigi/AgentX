@@ -99,3 +99,23 @@ export function cachedJson(req: NextRequest, body: unknown, opts?: { share?: boo
     headers: { ...CORS_HEADERS, ...migrationHeaders(req.url), ...cacheHeaders, "content-type": "application/json" },
   });
 }
+
+/**
+ * D3 — a read-only delivery token reached a write endpoint.
+ *
+ * Deliberately explicit about WHY, because the caller is usually a browser
+ * bundle whose author chose the embeddable token on purpose: the fix is not
+ * "use a different token in the browser" (that is the proxy we are deleting),
+ * it is "do this write server-side".
+ */
+export function readOnlyRefusal(): Response {
+  return deliveryError(
+    403,
+    "this is a READ-ONLY delivery token — it is safe to embed in a browser bundle, and that is " +
+      "exactly why it cannot write. Perform writes from a server-side context with a full delivery " +
+      "token (mint one with mint_delivery_token), or over MCP.",
+    undefined,
+    undefined,
+    "E_SCOPE",
+  );
+}

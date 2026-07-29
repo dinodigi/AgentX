@@ -12,7 +12,7 @@ import { matchesClauses } from "@/lib/query";
 import type { WhereItem } from "@/lib/query";
 import { rateLimit } from "@/lib/ratelimit";
 import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
-import { corsJson, deliveryError } from "@/lib/delivery-http";
+import { corsJson, deliveryError, readOnlyRefusal } from "@/lib/delivery-http";
 import { preflight } from "@/lib/cors";
 
 /**
@@ -51,6 +51,8 @@ function resolveUrl(override: string | undefined, configured: string): string | 
 export async function POST(req: NextRequest) {
   const auth = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
   if (!auth.ok) return deliveryError(401, auth.error, undefined, undefined, auth.code);
+  // D3: this route only writes, so a read-only token stops here.
+  if (auth.readOnly) return readOnlyRefusal();
   const projectId = auth.projectId;
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";

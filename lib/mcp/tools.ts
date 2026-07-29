@@ -1376,6 +1376,10 @@ export const TOOL_DEFS: ToolDef[] = [
       "NEXT_PUBLIC_*/client-bundled variable, never committed to the repo, never pasted into " +
       "chat or logs. Anyone holding it can read all public content and write to publicWrite " +
       "collections. Scope is fixed: this tool can ONLY create delivery tokens (never mcp). " +
+      "readOnly:true mints a BROWSER-SAFE token instead — it grants exactly what publicRead " +
+      "already exposes to anyone on the internet, so it can be embedded in a client bundle, and " +
+      "every write path refuses it. That is the token for a static site or SPA; it removes the " +
+      "server-side proxy whose only purpose was holding a credential. " +
       "Mints are audit-logged and tied to the minting token — revoking that token also revokes " +
       "everything it minted. If you leak one: revoke_delivery_token, then mint a replacement. " +
       "AFTER MINTING: prove connectivity BEFORE writing app code — regenerate get_client_code " +
@@ -1388,6 +1392,11 @@ export const TOOL_DEFS: ToolDef[] = [
         label: {
           type: "string",
           description: "What this token is for, shown in Settings → Tokens (e.g. \"marketing-site\") — required so humans can tell tokens apart",
+        },
+        readOnly: {
+          type: "boolean",
+          description:
+            "D3: mint a READ-ONLY token, which is SAFE TO EMBED in a browser bundle. It can do exactly what publicRead already exposes to the anonymous internet and nothing more — every write path (POST/PATCH/DELETE, uploads, checkout) refuses it with E_SCOPE. Use this for static sites and SPAs so they can call the delivery API directly instead of proxying through a server whose only job is holding a token. Writes must then happen server-side with a full token. Default false (read + publicWrite, server-side only).",
         },
       },
       required: ["label"],
@@ -3043,13 +3052,13 @@ export async function callTool(
       }
 
       case "mint_delivery_token": {
-        const a = rawArgs as { label?: string };
+        const a = rawArgs as { label?: string; readOnly?: boolean };
         // Credential tool — STRICT args. The server doesn't schema-enforce
         // additionalProperties, and elsewhere silently ignoring extras is fine;
         // here a caller passing `scope` believes scope is negotiable, and must
         // learn loudly that it is not, rather than receive something different
         // from what it asked for.
-        const unknown = Object.keys((rawArgs as object) ?? {}).filter((k) => k !== "label");
+        const unknown = Object.keys((rawArgs as object) ?? {}).filter((k) => k !== "label" && k !== "readOnly");
         if (unknown.length) {
           return err(
             `unknown argument${unknown.length > 1 ? "s" : ""} ${unknown.join(", ")} — this tool takes only {label}. ` +
@@ -3065,7 +3074,7 @@ export async function callTool(
           // that can't be attributed — refuse rather than mint parentless.
           return err("cannot attribute this mint to a calling token — refused", "E_INTERNAL");
         }
-        const minted = await mintDeliveryTokenViaMcp(projectId, ctx.callerTokenId, a.label);
+        const minted = await mintDeliveryTokenViaMcp(projectId, ctx.callerTokenId, a.label, a.readOnly === true);
         if (!minted.ok) return err(minted.error!, "E_CAP_REACHED");
         // Operator-visible trail: id + label ONLY — the raw token exists in
         // this response and nowhere else, ever (rule set with the operator).

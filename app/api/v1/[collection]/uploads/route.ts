@@ -6,7 +6,7 @@ import { rateLimit } from "@/lib/ratelimit";
 import { uploadAsset, MAX_UPLOAD_BYTES } from "@/lib/r2";
 import { ValidationError } from "@/lib/validation";
 import { preflight } from "@/lib/cors";
-import { corsJson, deliveryError } from "@/lib/delivery-http";
+import { corsJson, deliveryError, readOnlyRefusal } from "@/lib/delivery-http";
 
 /**
  * Public upload intake: POST /v1/{collection}/uploads with multipart/form-data
@@ -23,6 +23,8 @@ export async function POST(
   const { collection: name } = await params;
   const auth = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
   if (!auth.ok) return deliveryError(401, auth.error, undefined, undefined, auth.code);
+  // D3: this route only writes, so a read-only token stops here.
+  if (auth.readOnly) return readOnlyRefusal();
   const projectId = auth.projectId;
   const collection = await getCollection(projectId, name);
   if (!collection) return deliveryError(404, "not found");

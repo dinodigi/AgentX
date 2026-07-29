@@ -4,7 +4,7 @@ import { getCollection, getCollectionFresh, listCollections } from "@/lib/collec
 import { rateLimit } from "@/lib/ratelimit";
 import { searchEntriesPage, publicSearchableFields } from "@/lib/search";
 import { preflight } from "@/lib/cors";
-import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
+import { corsJson, deliveryError, cachedJson, readOnlyRefusal } from "@/lib/delivery-http";
 import { gateRead, gateCreate, stampIdentity, checkFieldWrites, fieldWriteError } from "@/lib/access-rules";
 import { isScalarArray, hasRelativeTime } from "@/lib/query";
 import {
@@ -38,6 +38,7 @@ async function resolve(req: NextRequest, name: string) {
   const auth = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
   if (!auth.ok) return { error: deliveryError(401, auth.error, undefined, undefined, auth.code) };
   const projectId = auth.projectId;
+  const readOnly = auth.readOnly === true;
   const collection = await getCollection(projectId, name);
   if (!collection) {
     // C1 (friction sprint): the caller AUTHENTICATED — this is their own
@@ -60,7 +61,7 @@ async function resolve(req: NextRequest, name: string) {
       ),
     };
   }
-  return { projectId, collection };
+  return { projectId, collection, readOnly };
 }
 
 export async function GET(
@@ -371,6 +372,7 @@ export async function POST(
   const { collection: name } = await params;
   const r = await resolve(req, name);
   if ("error" in r) return r.error;
+  if (r.readOnly) return readOnlyRefusal();
   const { projectId } = r;
   let collection = r.collection;
 

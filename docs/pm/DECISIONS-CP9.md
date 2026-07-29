@@ -2,7 +2,11 @@
 
 > **Durable**, written 2026-07-29. The last 4 wall items. Each is stated as
 > options with a recommendation, so this is one sitting rather than three
-> interruptions. Say yes/no/other per item; I execute from there.
+> interruptions.
+>
+> **ALL THREE DECIDED 2026-07-29 — every recommendation accepted.**
+> D3 read-only-first ✅ SHIPPED · D2 build it ⬜ next · D1 platform primitives
+> (SEC-1 + auth_kit v2) ⬜ its own checkpoint, after the CP10 backlog sweep.
 
 ---
 

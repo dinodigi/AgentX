@@ -19,7 +19,7 @@ import { getLocales, hasLocalizedFields, localizeView } from "@/lib/locales";
 import { rateLimit } from "@/lib/ratelimit";
 import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
 import { CORS_HEADERS, preflight } from "@/lib/cors";
-import { corsJson, deliveryError, cachedJson } from "@/lib/delivery-http";
+import { corsJson, deliveryError, cachedJson, readOnlyRefusal } from "@/lib/delivery-http";
 
 /**
  * Single-entry delivery endpoints (Phase 4).
@@ -33,9 +33,10 @@ async function resolve(req: NextRequest, name: string) {
   const auth = await resolveDeliveryToken(bearerFrom(req.headers.get("authorization")));
   if (!auth.ok) return { error: deliveryError(401, auth.error, undefined, undefined, auth.code) };
   const projectId = auth.projectId;
+  const readOnly = auth.readOnly === true;
   const collection = await getCollection(projectId, name);
   if (!collection) return { error: err(404, "not found") };
-  return { projectId, collection };
+  return { projectId, collection, readOnly };
 }
 
 /** Per-project/per-IP throttle for the mutating handlers — F1 lets a claim-write
@@ -156,6 +157,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (!UUID_RE.test(id)) return err(404, "not found");
   const r = await resolve(req, name);
   if ("error" in r) return r.error;
+  if (r.readOnly) return readOnlyRefusal();
   const { projectId, collection } = r;
 
   const entry = await getEntry(collection, id);
@@ -217,6 +219,7 @@ export async function DELETE(req: NextRequest, { params }: Params) {
   if (!UUID_RE.test(id)) return err(404, "not found");
   const r = await resolve(req, name);
   if ("error" in r) return r.error;
+  if (r.readOnly) return readOnlyRefusal();
   const { projectId, collection } = r;
 
   const entry = await getEntry(collection, id);

@@ -2126,13 +2126,17 @@
     },
     {
       "name": "mint_delivery_token",
-      "description": "Mint a NEW delivery-scoped token for this project — the credential the generated client (get_client_code) and every delivery-API call needs. Returns the raw token ONCE; the platform stores only a hash, so save it immediately. HANDLING: the token belongs server-side ONLY — an env var the server reads (e.g. AGENTX_DELIVERY_TOKEN), never a NEXT_PUBLIC_*/client-bundled variable, never committed to the repo, never pasted into chat or logs. Anyone holding it can read all public content and write to publicWrite collections. Scope is fixed: this tool can ONLY create delivery tokens (never mcp). Mints are audit-logged and tied to the minting token — revoking that token also revokes everything it minted. If you leak one: revoke_delivery_token, then mint a replacement. AFTER MINTING: prove connectivity BEFORE writing app code — regenerate get_client_code and run `await ax.verifyConnection()` (or curl {deliveryBase}/_health). It pinpoints wrong-base-URL vs bad-token in one call; a 404 storm on your fetches means YOUR app is hitting its own origin with relative paths, not the platform.",
+      "description": "Mint a NEW delivery-scoped token for this project — the credential the generated client (get_client_code) and every delivery-API call needs. Returns the raw token ONCE; the platform stores only a hash, so save it immediately. HANDLING: the token belongs server-side ONLY — an env var the server reads (e.g. AGENTX_DELIVERY_TOKEN), never a NEXT_PUBLIC_*/client-bundled variable, never committed to the repo, never pasted into chat or logs. Anyone holding it can read all public content and write to publicWrite collections. Scope is fixed: this tool can ONLY create delivery tokens (never mcp). readOnly:true mints a BROWSER-SAFE token instead — it grants exactly what publicRead already exposes to anyone on the internet, so it can be embedded in a client bundle, and every write path refuses it. That is the token for a static site or SPA; it removes the server-side proxy whose only purpose was holding a credential. Mints are audit-logged and tied to the minting token — revoking that token also revokes everything it minted. If you leak one: revoke_delivery_token, then mint a replacement. AFTER MINTING: prove connectivity BEFORE writing app code — regenerate get_client_code and run `await ax.verifyConnection()` (or curl {deliveryBase}/_health). It pinpoints wrong-base-URL vs bad-token in one call; a 404 storm on your fetches means YOUR app is hitting its own origin with relative paths, not the platform.",
       "inputSchema": {
         "type": "object",
         "properties": {
           "label": {
             "type": "string",
             "description": "What this token is for, shown in Settings → Tokens (e.g. \"marketing-site\") — required so humans can tell tokens apart"
+          },
+          "readOnly": {
+            "type": "boolean",
+            "description": "D3: mint a READ-ONLY token, which is SAFE TO EMBED in a browser bundle. It can do exactly what publicRead already exposes to the anonymous internet and nothing more — every write path (POST/PATCH/DELETE, uploads, checkout) refuses it with E_SCOPE. Use this for static sites and SPAs so they can call the delivery API directly instead of proxying through a server whose only job is holding a token. Writes must then happen server-side with a full token. Default false (read + publicWrite, server-side only)."
           }
         },
         "required": [
