@@ -293,6 +293,27 @@ const RESOLUTIONS = {
       "rather than guessed at. The schema diff also had to learn the difference, so a safe option " +
       "migration no longer reads as a destructive field drop.",
   },
+
+  // --- CP7 (1/3): array membership filtering (commit 47ed83e) ---------------
+  cbf4db8f: {
+    disposition: "SHIPPED",
+    ref: "47ed83e",
+    note:
+      'You called it "correct at 5 posts and wrong at 500", and that framing is why this went ' +
+      "first: it is the only item on the wall that ships fine and breaks after a customer has " +
+      "invested. There is now a `has` op — JSONB containment on arrays of scalars — on BOTH read " +
+      "planes: {field:\"tags\",op:\"has\",value:\"rust\"} over MCP, and ?tags=rust on the delivery " +
+      "API, which previously compiled to tags = 'rust' and could never match a JSON array. " +
+      "Containment specifically, because that is the operator a GIN index can serve, and the value " +
+      "is coerced to the item type so a numeric tag does not silently miss on JSON 1 !== \"1\". " +
+      "You also spotted the deeper problem — the generated client's filter type advertised `tags` " +
+      "the whole time. It typed the filter as the FIELD (unknown[]), so it could not even express " +
+      "the query; filters now type as the ITEM. Two things came out of fixing it: arrays became " +
+      "sortable-looking the moment they became filterable, and sorting one would have ordered rows " +
+      "by raw JSONB — a meaningless answer presented as a real one — so that is now refused and " +
+      "omitted from the client's sort union. Arrays of GROUPS remain unfilterable; structured " +
+      "content is not a set.",
+  },
 };
 
 const stamp = (r) =>
