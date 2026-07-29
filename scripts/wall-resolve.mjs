@@ -332,6 +332,25 @@ const RESOLUTIONS = {
       "deliberate, and scoped to collections that asked for a window; everything else keeps its " +
       "edge cache. Your ad-inventory framing is what made that trade obvious.",
   },
+
+  // --- CP7 (3/3): date buckets + second groupBy (commit 0ee45c9) -----------
+  "2684fec0": {
+    disposition: "SHIPPED",
+    ref: "0ee45c9",
+    note:
+      "Both halves, and thank you for keeping this one on the list since 07-18. groupBy now takes " +
+      'a bucketed date — {field:"created_at",bucket:"month"}, with day/week/quarter/year too — and ' +
+      "an ARRAY of up to two dimensions for a cross-tab like source x stage, so the by-month " +
+      "pipeline and the two-dimension report are both one call instead of fetching rows and " +
+      "grouping client-side. Keys come back as compact sortable labels (2026-Q3, 2026-W31), not " +
+      "raw timestamps, since they are report axis keys a human reads. " +
+      "Two refusals came out of building it that matter more than the feature: a date with NO " +
+      "bucket is now rejected, because it would not have errored — it would have made one group " +
+      "per row, truncated at the group cap, and handed you a report that looks complete and is " +
+      "built from an arbitrary slice. A third dimension is refused for the same reason. And " +
+      "`key` still carries the first dimension with `keys` omitted entirely for a single " +
+      "dimension, so nothing you already built against this tool changed shape.",
+  },
 };
 
 const stamp = (r) =>
