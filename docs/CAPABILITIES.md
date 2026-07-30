@@ -1,6 +1,6 @@
 # Pluggie (AgentX) — System Capabilities
 
-> **Living — last synced 2026-07-23.** What the platform can do **today**,
+> **Living — last synced 2026-07-29.** What the platform can do **today**,
 > grouped by surface. Sync this doc whenever a batch changes the tool surface
 > or platform behavior (see CLAUDE.md ship ritual). For what's next, see
 > [BACKLOG.md](BACKLOG.md) and [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md);
@@ -35,6 +35,27 @@ page linked in the site footer).
 - **Computed fields** (closed vocabulary): `slugify | template | now | uuid` —
   client values rejected, stamped server-side, recompute rules define-time
   checked (template composes into unique keys, e.g. no-double-book slots).
+- **Write-only fields** (SEC-1): `{type:"text", writeOnly:true}` — written, and
+  never returned by **any** read. The guarantee is stated as an absence, which is
+  what makes it testable: the field's *name* never appears as a key in a read
+  payload (MCP projection, delivery, export json **and** the csv column, entry
+  versions, the changes feed and SSE, webhook + email payloads and the delivery
+  log, before-write hook envelopes, the admin list and form). Two layers, because
+  either alone has a hole — the value is never *copied* into version snapshots,
+  feed rows or event payloads, **and** every read redacts anyway, since a field
+  flipped to write-only leaves plaintext in history the first layer cannot reach.
+  A filter is a read with extra steps, so `where`/`orderBy`/`select` refuse it
+  (which also covers `publicFilter`, event/hook/transition `when` and
+  `update_entry_if` conditions — at define time). Refused combos, each with its
+  reason: `publicRead` (serves the value), `unique`/`capacity` (existence
+  oracles), `indexed`/`searchable`/`localized`/`computed`, nesting in a
+  group/array, being a computed field's source, a relation `labelField`, an email
+  `{{token}}`, `ownerField`, `access.org.field`, `checkout.priceField`.
+  `describe_collection` still names the field and flags it, so schemas stay
+  explainable. Update semantics: **omit** to keep, `null` to unset, a value to
+  rotate — and a version restore or a hook transform carries the stored value
+  across rather than silently clearing it. **Not** a credential *verifier*: a
+  salted hash must be compared, and a comparison is a read (BACKLOG SEC-3).
 - **Localized fields**: `set_locales` + `localized: true` on text/richtext;
   variant maps stored, delivery serves one flat string (`?locale=`), MCP gets
   the raw map, per-variant fallback, wrap/delocalize migrations plan+confirm.
@@ -239,13 +260,25 @@ page linked in the site footer).
 - **SEO plugin**: enables `score_page`/`audit_site`/`fetch_page` advisors.
 - **Client case study**: `countryside_crm` (global DB def) — CRM baseline with
   workflow pipeline, owner relations, computed-unique slot keys.
-- **Auth Kit** (`auth_kit`, global DB def) — DIY user management, credential-free
-  by design: users with an account-lifecycle workflow (invited → active ↔
-  suspended → deactivated, suspension admin-gated), roles + permissions registry
-  (RBAC keys the tenant's token issuer embeds as claims), orgs/memberships with
-  DB-enforced one-per-user+org, uuid-coded single-use invitations, and an
-  `auth_events` security trail. Credentials (password hashes, sessions, MFA)
-  stay on the tenant's own auth service — never in a collection.
+- **Auth Kit** (`auth_kit` v2, global DB def) — DIY user management: users with an
+  account-lifecycle workflow (invited → active ↔ suspended → deactivated,
+  suspension admin-gated), roles + permissions registry (RBAC keys the tenant's
+  token issuer embeds as claims), orgs/memberships with DB-enforced
+  one-per-user+org, uuid-coded single-use invitations, and an `auth_events`
+  security trail. **v2 adds the credential *recipe*** — the highest-risk code
+  every tenant was rewriting: brute-force **lockout** as real fields
+  (`failed_attempts`/`locked_until`) incremented through `update_entry_if`'s
+  ATOMIC increment, so concurrent failures cannot collapse into one (an
+  undercounted lockout is a bypass, not a rounding error); a **`password_resets`**
+  collection whose single-use guarantee is the workflow's terminal `used` state;
+  and, as tested guidance, one argon2id parameter set (m=19456, t=2, p=1) with a
+  rehash-on-login upgrade path plus the account-enumeration defence *including*
+  its trap — a dummy hash must be a REAL argon2id hash, because a malformed one
+  fails on parse and returns instantly, reintroducing the exact timing signal it
+  exists to remove. Password **verification** still lives on the tenant's own
+  service: a salted hash must be compared, and a comparison is a read, so it
+  cannot live behind a write-only field either (BACKLOG SEC-3 carries the
+  platform-side option with a trigger).
 - **Notification Kit** (`notification_kit`, global DB def) — in-app
   notifications for the tenant's app users (pairs with auth_kit): per-user feed
   with unread tracking (`read_at exists:false` badge query), idempotent sends

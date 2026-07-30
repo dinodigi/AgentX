@@ -1,6 +1,6 @@
 # Backlog — open ideas, feedback & parked decisions
 
-> **Living — last synced 2026-07-26.**
+> **Living — last synced 2026-07-29.**
 
 *Single source of truth for everything raised but **not yet decided or scheduled**.
 Started 2026-07-12. Sources now include the agent feedback wall
@@ -59,7 +59,8 @@ delivery API — MCP and admin are full-trust. This is the highest-value cluster
 
 | ID | Item | Status | Pri | Source |
 |---|---|---|---|---|
-| SEC-1 | **Masked / write-only field type** — today any credential in a normal field is plaintext in DB/admin/MCP/export/versions/changes; blocks BYO-key-in-content patterns | 📥 Backlog | H | audit #12 |
+| SEC-1 | **Masked / write-only field type** — **✅ SHIPPED 2026-07-29 (`4de9ddb`)** as sprint item D1: `{type:"text", writeOnly:true}` is written but never returned by any read. The invariant is that the field's NAME never appears as a key in any read payload — not masked, absent — enforced in two layers: storage minimisation (versions, change feed and event payloads strip before the write) plus read redaction at every boundary, which is load-bearing rather than belt-and-braces because a field FLIPPED to write-only leaves plaintext in history the first layer cannot reach backwards into. Filtering/sorting/selecting it is refused (a filter is a read with extra steps), as are the combos that would serve the value or make it an existence oracle (publicRead/unique/capacity/indexed/searchable/localized/computed), nesting it in a group/array, deriving a computed field from it, and using it as a relation labelField or an email token. *Platform-side credential VERIFICATION (`verify_credential`) is deliberately NOT part of this — see the SEC-3 entry below.* | ✅ Shipped | — | audit #12, wall `0ceec805` |
+| SEC-3 | **Platform-side credential verification** (`set_credential` / `verify_credential`) — the half of wall item `0ceec805` that SEC-1 does not close. A salted hash must be COMPARED to be verified, and a comparison is a read, so a write-only field cannot hold one: argon2id embeds a random salt, so you cannot even recompute the hash without the stored value. Verification therefore still lives on each tenant's own auth service, and `auth_kit` v2 ships the recipe (argon2id parameters, the real-dummy-hash timing defence, atomic lockout, single-use non-enumerating resets) instead of the mechanism. Taking this on means owning password reset, MFA and session revocation permanently — the identity-provider scope DECISIONS-CP9 declined. **⏳ TRIGGER: a second project independently asks for platform-side verification, or a tenant ships a demonstrably wrong implementation of the recipe.** | 🅿️ Parked | M | wall `0ceec805` |
 | SEC-2 | Reject secret-shaped values (`sk_`/`rk_`/`whsec_`) in non-secret connector config fields + Clerk `pk_` shape check | ✅ Shipped `e59d13e` | — | dogfood |
 
 ## Query & scale

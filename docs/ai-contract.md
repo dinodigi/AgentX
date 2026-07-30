@@ -1054,7 +1054,7 @@ List every collection in this project (name, displayName, publicWrite, field cou
 
 ## `describe_collection`
 
-Return one collection's full field definitions and flags. Constraints (min/max/pattern/enum/integer/unique) are enforced on WRITE only — rows that predate a tightened constraint keep their stored values.
+Return one collection's full field definitions and flags. Constraints (min/max/pattern/enum/integer/unique) are enforced on WRITE only — rows that predate a tightened constraint keep their stored values. A field marked writeOnly:true IS listed here — its existence and shape are public, only its VALUES are not; reads simply omit the key.
 
 **Input schema:**
 

@@ -1,6 +1,6 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
-import { ensureServer, createEphemeralProject, mcp, sql } from "./helpers.mjs";
+import { ensureServer, createEphemeralProject, mcp, sql, delivery } from "./helpers.mjs";
 import { AUTH_KIT_PLUGIN } from "../../plugins/auth-kit.mjs";
 
 // Auth Kit plugin, end to end: the global DB def is visible + enableable, the
@@ -30,7 +30,7 @@ describe("Auth Kit plugin (DIY user management)", () => {
     assert.ok(e.ok, e.errorText);
     const g = await mcp(p.mcpToken, "get_plugin", { id: "auth_kit" });
     assert.equal(g.value.enabled, true);
-    assert.equal(g.value.structure.baseline.length, 7);
+    assert.equal(g.value.structure.baseline.length, 8, "v2 adds password_resets");
   });
 
   it("APPLY: the full baseline defines cleanly (workflows + computed fields included)", async () => {
@@ -46,13 +46,54 @@ describe("Auth Kit plugin (DIY user management)", () => {
     }
   });
 
-  it("credential-free rule: no password/token/secret-shaped field anywhere in the kit", () => {
-    const banned = /password|passwd|secret|token|otp|totp|hash/i;
+  // v2 replaces a NAME regex with the actual invariant. The old test banned any
+  // field matching /password|token|hash/, which would now reject
+  // password_changed_at and the reset token — fields that are metadata and a
+  // server-stamped nonce, not secrets. A name check was always a proxy; this is
+  // the rule it was standing in for.
+  it("no VERIFIED secret is stored: no password hash, no MFA seed, anywhere in the kit", () => {
+    // A value you must COMPARE cannot be write-only (the comparison is a read),
+    // and a readable one would ride out through export/versions/changes — which
+    // is exactly what the reporter of 0ceec805 flagged. So neither form belongs
+    // in the kit at all.
+    const secretShaped = /(^|_)(password_hash|passwd|pwhash|secret|totp_secret|mfa_secret|otp_secret|recovery_codes)($|_)/i;
     for (const c of AUTH_KIT_PLUGIN.structure.baseline) {
       for (const f of c.fields) {
-        assert.ok(!banned.test(f.name), `${c.name}.${f.name} looks credential-shaped`);
+        assert.ok(!secretShaped.test(f.name), `${c.name}.${f.name} looks like a verified secret`);
       }
     }
+  });
+
+  it("nothing in the kit is writeOnly — and the guidance explains why, rather than just saying no", () => {
+    // If a future edit adds a writeOnly field here, this test should fail and
+    // force the reasoning to be re-derived: the platform primitive exists and is
+    // correct, it is simply not what a password hash needs.
+    for (const c of AUTH_KIT_PLUGIN.structure.baseline) {
+      for (const f of c.fields) {
+        assert.notEqual(f.writeOnly, true, `${c.name}.${f.name} is writeOnly — see the header`);
+      }
+    }
+    assert.match(AUTH_KIT_PLUGIN.guidance, /writeOnly/, "guidance must name the primitive");
+    assert.match(
+      AUTH_KIT_PLUGIN.guidance,
+      /comparison is a read/,
+      "guidance must give the REASON a hash can't be write-only, not just the rule",
+    );
+  });
+
+  it("the v2 recipe is actually present in the guidance — all four points", () => {
+    // The recipe IS the deliverable for this half of the wall item, so its
+    // absence must fail a test rather than be noticed by a reader six weeks on.
+    const g = AUTH_KIT_PLUGIN.guidance;
+    assert.match(g, /argon2id/, "1: hashing recipe");
+    assert.match(g, /m=19456.*t=2.*p=1/, "1: concrete parameters, not 'pick some'");
+    assert.match(g, /rehash on next successful login/i, "1: the upgrade path");
+    assert.match(g, /REAL pre-computed dummy hash/, "2: the timing defence");
+    assert.match(g, /fails on PARSE and returns immediately/, "2: the trap inside the defence");
+    assert.match(g, /startingFrom:0/, "3: the atomic counter");
+    assert.match(g, /undercounted lockout is a bypass/, "3: why read-then-write is wrong");
+    assert.match(g, /NON-ENUMERATING/, "4: the reset request rule");
+    assert.match(g, /'used' is terminal/, "4: single-use is the workflow's guarantee");
   });
 
   it("users: unique email enforced; initial status forced to 'invited'", async () => {
@@ -155,6 +196,98 @@ describe("Auth Kit plugin (DIY user management)", () => {
       collection: "invitations", id: inv2.value.id, data: { status: "accepted" },
     });
     assert.equal(late.ok, false, "revoked invitation must not accept");
+  });
+
+  // ── v2: the lockout counter, which is the part with a race in it ──────────
+
+  it("LOCKOUT: concurrent failed attempts each count — the atomic increment has no lost update", async () => {
+    const u = await mcp(p.mcpToken, "create_entry", {
+      collection: "users", data: { email: "brute@example.com" },
+    });
+    assert.ok(u.ok, u.errorText);
+    const id = u.value.id;
+
+    // Fire 5 increments AT ONCE. This is the whole point: the read-then-write
+    // implementation every tenant writes first would collapse some of these into
+    // one, and an undercounted lockout is a bypass rather than a rounding error.
+    const bumps = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        mcp(p.mcpToken, "update_entry_if", {
+          collection: "users",
+          id,
+          increment: { field: "failed_attempts", by: 1, startingFrom: 0 },
+        }),
+      ),
+    );
+    for (const b of bumps) assert.ok(b.ok, b.errorText);
+    const after = await mcp(p.mcpToken, "get_entry", { collection: "users", id });
+    assert.equal(
+      after.value.data.failed_attempts,
+      5,
+      "five concurrent failures must count five — startingFrom makes the FIRST one atomic too",
+    );
+
+    // Threshold reached → lock, then a successful login clears both.
+    const lock = await mcp(p.mcpToken, "update_entry", {
+      collection: "users", id, data: { locked_until: new Date(Date.now() + 900_000).toISOString() },
+    });
+    assert.ok(lock.ok, lock.errorText);
+    const clear = await mcp(p.mcpToken, "update_entry", {
+      collection: "users", id, data: { failed_attempts: 0, locked_until: null },
+    });
+    assert.ok(clear.ok, clear.errorText);
+    const cleared = await mcp(p.mcpToken, "get_entry", { collection: "users", id });
+    assert.equal(cleared.value.data.failed_attempts, 0);
+    assert.ok(!("locked_until" in cleared.value.data), "null unsets it, so the sweep won't re-match");
+  });
+
+  it("LOCKOUT: the locked accounts are findable by query — the unlock sweep is a real filter", async () => {
+    // locked_until is indexed precisely so this is the scheduled sweep's query.
+    const r = await mcp(p.mcpToken, "query_entries", {
+      collection: "users",
+      where: [{ field: "locked_until", op: "lt", value: { hoursAgo: 0 } }],
+    });
+    assert.ok(r.ok, r.errorText);
+  });
+
+  it("RESETS: server-stamped token, single-use via a terminal 'used' state", async () => {
+    const u = await mcp(p.mcpToken, "create_entry", {
+      collection: "users", data: { email: "forgot@example.com" },
+    });
+    const res = await mcp(p.mcpToken, "create_entry", {
+      collection: "password_resets",
+      data: { user: u.value.id, expires_at: new Date(Date.now() + 3_600_000).toISOString() },
+    });
+    assert.ok(res.ok, res.errorText);
+    assert.match(res.value.data.token, /^[0-9a-f-]{36}$/i, "uuid token stamped server-side");
+    assert.ok(res.value.data.requested_at, "requested_at stamped at create");
+    assert.equal(res.value.data.status, "pending");
+
+    const use = await mcp(p.mcpToken, "update_entry", {
+      collection: "password_resets", id: res.value.id, data: { status: "used" },
+    });
+    assert.ok(use.ok, use.errorText);
+
+    // THE guarantee: there is no route out of `used`, so a replayed token cannot
+    // be redeemed a second time even if the attacker holds a valid token string.
+    for (const status of ["used", "pending", "revoked"]) {
+      const replay = await mcp(p.mcpToken, "update_entry", {
+        collection: "password_resets", id: res.value.id, data: { status },
+      });
+      if (status === "used") continue; // same-state no-op is legitimately allowed
+      assert.equal(replay.ok, false, `a used token must not move to "${status}"`);
+    }
+  });
+
+  it("RESETS: the token is private — it is never served by the delivery API", async () => {
+    // Not writeOnly (accepting a reset means comparing it), so its protection is
+    // the absence of publicRead. Assert that rather than trusting the default.
+    const resets = AUTH_KIT_PLUGIN.structure.baseline.find((c) => c.name === "password_resets");
+    for (const f of resets.fields) {
+      assert.notEqual(f.publicRead, true, `password_resets.${f.name} must not be publicRead`);
+    }
+    const pub = await delivery(p.deliveryToken, "/password_resets");
+    assert.equal(pub.status, 404, "a collection with no public fields is not exposed at all");
   });
 
   it("audit trail: auth_events accepts typed rows and aggregates by type", async () => {
