@@ -80,6 +80,21 @@ interface FieldBase {
    * text, now on date. Computed fields can't be required/requiredIf.
    */
   computed?: ComputedSpec;
+  /**
+   * SEC-1: WRITE-ONLY. The value can be written but is never returned by ANY
+   * read — not MCP projection, not the delivery API, not export, not entry
+   * versions, not the changes feed, not webhook/email payloads, not the admin
+   * form. This is the credential primitive (password hashes, BYO API keys):
+   * before it existed, a secret in an ordinary field was plaintext on all of
+   * those surfaces at once.
+   *
+   * text only. Deliberately incompatible with every knob that would turn the
+   * field back into something readable or into an existence oracle —
+   * publicRead, unique, capacity, indexed, searchable, localized, computed —
+   * and it may not be filtered, sorted, selected, or nested in a group/array.
+   * See lib/write-only.ts for the redaction choke points.
+   */
+  writeOnly?: boolean;
 }
 
 /** Closed computed-field vocabulary (I3). No expression language, ever. */
@@ -228,6 +243,13 @@ export const fieldInteger = (f: FieldDef): boolean | undefined => (f.type === "n
 export const fieldComputed = (f: FieldDef): ComputedSpec | undefined => f.computed;
 export const fieldLocalized = (f: FieldDef): boolean =>
   (f.type === "text" || f.type === "richtext") && f.localized === true;
+/**
+ * SEC-1: is this field write-only (never returned by any read)?
+ * Deliberately NOT gated on `type === "text"` the way fieldLocalized is: the
+ * define-time gate already refuses writeOnly on any other type, and if a def
+ * ever slipped past it the fail-closed answer is "redact", not "expose".
+ */
+export const fieldWriteOnly = (f: FieldDef): boolean => f.writeOnly === true;
 
 /**
  * Terse, machine-readable description of each primitive and its config knobs.
@@ -246,6 +268,18 @@ export const FIELD_TYPE_SPECS: Record<
       "pattern?: string (JS RegExp source the value must match; requires max <= 10000)",
       "patternHint?: string (returned verbatim on pattern failure — write it as a fix hint)",
       "searchable?: boolean (include in full-text search)",
+      "writeOnly?: boolean — THE CREDENTIAL PRIMITIVE (SEC-1). Written, never read " +
+        "back: the key is absent from query_entries/get_entry/search_entries, export " +
+        "(both json rows and the csv COLUMN), list_entry_versions, the changes feed, " +
+        "the delivery API, webhook + email payloads, before-write hook envelopes, and " +
+        "the admin form. Store a password HASH or an encrypted API key here — Pluggie " +
+        "does not hash for you. describe_collection still reports that the field " +
+        "exists. A read that omits the key does NOT mean the value is unset. UPDATE: " +
+        "omit to keep, null to unset, a new value to rotate. Cannot be combined with " +
+        "publicRead/unique/capacity/indexed/searchable/localized/computed (each would " +
+        "either serve the value or make it an existence oracle), cannot be filtered, " +
+        "sorted, selected, searched, used as a relation labelField or an email {{token}}, " +
+        "and cannot be nested inside a group/array.",
     ],
   },
   richtext: {
@@ -317,6 +351,10 @@ export const COMMON_FIELD_CONFIG = [
     "Use writableBy:'none' to lock an admin-only field on a publicWrite collection. " +
     "Fields referenced by the collection's publicFilter are auto-locked against anonymous writes.",
   "in update calls, set a field to null to unset it (optional fields only)",
+  "writeOnly?: boolean (TEXT only) — written but NEVER returned by any read. The " +
+    "credential primitive: use it for password hashes and BYO API keys instead of an " +
+    "ordinary text field, which is plaintext in the admin, exports, versions and the " +
+    "changes feed simultaneously. See the `text` entry for the full rule.",
   "computed?: {fn} — value DERIVED server-side, never client-supplied (a supplied value is " +
     "rejected). fn: {slugify, from:<sibling text field>} | {template, template:'{{a}}-{{b}}'} | " +
     "{now, on?:'create'|'always'} (date) | {uuid}. slugify/template/uuid on text, now on date; " +

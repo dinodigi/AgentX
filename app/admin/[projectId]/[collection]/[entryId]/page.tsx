@@ -11,6 +11,7 @@ import { loadRelationChoices } from "@/lib/admin";
 import { getLocales } from "@/lib/locales";
 import { fieldLocalized } from "@/lib/field-types";
 import { publicFields } from "@/lib/entries";
+import { redact } from "@/lib/write-only";
 import { allowedTargets } from "@/lib/workflow";
 import { EntryForm } from "@/components/EntryForm";
 import { DeleteEntryButton } from "@/components/DeleteEntryButton";
@@ -55,7 +56,7 @@ export default async function EditEntry({
     ),
     loadRelationChoices(projectId, collection.fields),
     listAuditLog(projectId, { entryId, limit: 8, offset: 0 }),
-    listEntryVersions(projectId, entryId, { limit: 10 }),
+    listEntryVersions(projectId, entryId, collection.fields, { limit: 10 }),
     getLocales(projectId),
   ]);
   if (!entry) notFound();
@@ -116,7 +117,10 @@ export default async function EditEntry({
             projectId={projectId}
             fields={collection.fields}
             relationChoices={relationChoices}
-            initial={entry.data}
+            // SEC-1: EntryForm is a CLIENT component, so anything passed as a
+            // prop is serialized into the page's RSC payload and sits in the
+            // HTML — redact here, not just in the input that renders it.
+            initial={redact(collection.fields, entry.data)}
             action={saveEntry.bind(null, projectId, name, entryId)}
             enumOptionOverrides={enumOptionOverrides}
             locales={locales}

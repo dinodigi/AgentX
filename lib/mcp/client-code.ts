@@ -1,5 +1,5 @@
 import type { Collection } from "@/db/schema";
-import { fieldLocalized, type FieldDef } from "@/lib/field-types";
+import { fieldLocalized, fieldWriteOnly, type FieldDef } from "@/lib/field-types";
 import { isScalarArray } from "@/lib/query";
 import { toList, isClaimRule } from "@/lib/access-rules";
 
@@ -98,7 +98,9 @@ interface CollectionPlan {
 }
 
 function plan(c: Collection): CollectionPlan {
-  const publicFieldDefs = c.fields.filter((f) => f.publicRead);
+  // SEC-1: mirrors publicFields() — a write-only field is never in the READ type
+  // (it stays in the write/input type below, because writing it is the point).
+  const publicFieldDefs = c.fields.filter((f) => f.publicRead && !fieldWriteOnly(f));
   const write = c.access?.write ?? "none";
   const canCreate = Boolean(c.publicWrite) || write !== "none";
   return {
@@ -165,8 +167,15 @@ function typeBlock(p: CollectionPlan): string {
   }
   if (p.canCreate || p.canMutate) {
     const writable = p.fields.filter((f) => f.name !== p.ownerField);
+    // SEC-1: write-only fields STAY in the write shape — they are writable, that
+    // is their whole purpose. Say so in the doc comment, because a generated type
+    // that lets you set a field the read type omits looks like a generator bug.
+    const wo = writable.filter(fieldWriteOnly).map((f) => f.name);
     parts.push(
       ``,
+      ...(wo.length > 0
+        ? [`/** ${wo.join(", ")}: write-only — settable here, never present in ${p.typeName}. */`]
+        : []),
       `/** ${p.slug} — write shape (relations/assets by id${p.ownerField ? `; "${p.ownerField}" is stamped server-side` : ""}). */`,
       `export interface ${p.typeName}Create {`,
       fieldLines(writable, writeType),

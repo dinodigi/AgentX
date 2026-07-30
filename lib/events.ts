@@ -9,6 +9,8 @@ import { ValidationError } from "./validation";
 import { enqueueJob } from "./jobs";
 import { tenantDb } from "./data-plane";
 import { webhookDeliveries } from "@/db/schema";
+import { redact } from "./write-only";
+import type { FieldDef } from "./field-types";
 
 /**
  * The single emit point (Phase 3). Every entry mutation — MCP, admin, or
@@ -143,17 +145,51 @@ export async function emitEntryEvent(
 }
 
 /**
+ * SEC-1: strip write-only values out of an event payload. The payload shape is a
+ * convention this module owns — {entry:{id,data}, previous:{data}} — so redacting
+ * it here keeps the rule in one place instead of at each construction site.
+ */
+export function redactEventPayload(
+  fields: FieldDef[],
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const wrapped = (v: unknown): unknown => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return v;
+    const o = v as Record<string, unknown>;
+    if (!o.data || typeof o.data !== "object" || Array.isArray(o.data)) return v;
+    const data = redact(fields, o.data as Record<string, unknown>);
+    return data === o.data ? v : { ...o, data };
+  };
+  const entry = wrapped(payload.entry);
+  const previous = wrapped(payload.previous);
+  if (entry === payload.entry && previous === payload.previous) return payload;
+  return { ...payload, ...(payload.entry ? { entry } : {}), ...(payload.previous ? { previous } : {}) };
+}
+
+/**
  * Dispatch ONE action (webhook or email) with a ready payload — the shared exit
  * point for immediate events, delayed jobs (G2), and later schedule/transition
  * actions. Every outcome lands in webhook_deliveries.
+ *
+ * SEC-1: this is where the redaction goes, precisely BECAUSE it is the shared
+ * exit point. An action POSTs to an arbitrary URL or renders an email — both
+ * leave the platform, and both are stored verbatim in webhook_deliveries, which
+ * get_deliveries and refire_delivery read back. Three callers reach here
+ * (immediate events, workflow transitions, delayed jobs); redacting per caller
+ * would be three chances to forget. `when` clauses can't name a write-only field
+ * (refused at define time), so action filtering upstream is unaffected.
  */
 export async function runEventAction(
   collection: Collection,
   event: string,
   action: EventAction,
-  entry: { id: string; data?: Record<string, unknown> },
-  payload: Record<string, unknown>,
+  entryIn: { id: string; data?: Record<string, unknown> },
+  payloadIn: Record<string, unknown>,
 ): Promise<void> {
+  const entry = entryIn.data
+    ? { ...entryIn, data: redact(collection.fields, entryIn.data) }
+    : entryIn;
+  const payload = redactEventPayload(collection.fields, payloadIn);
   if (action.type === "webhook") {
     await deliverWebhook({
       projectId: collection.projectId,

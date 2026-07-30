@@ -54,7 +54,8 @@ import type { ErrorCode } from "./error-codes";
 import type { AuditActor } from "@/db/schema";
 
 const UNKNOWN_ACTOR: AuditActor = { type: "unknown" };
-import { fieldLocalized, type FieldDef, type ArrayItem, type BlockDef } from "./field-types";
+import { fieldLocalized, fieldWriteOnly, type FieldDef, type ArrayItem, type BlockDef } from "./field-types";
+import { redact, redactRows, preserveWriteOnly, writeOnlyNames } from "./write-only";
 import { z } from "zod";
 
 /**
@@ -399,10 +400,14 @@ async function runBeforeCreateHook(
   const hook = collection.hooks?.beforeCreate;
   if (!hook || hook.disabled) return data;
   if (hook.when?.length && !matchesClauses(collection.fields, hook.when, data)) return data;
+  // SEC-1: a before-write hook POSTs to a tenant-configured URL. That endpoint is
+  // trusted to gate the write, not to receive credentials — and the envelope is
+  // logged. The hook sees the candidate with write-only fields removed, exactly
+  // like every other reader.
   const outcome = await callWriteHook(projectId, collection, hook, {
     event: "entry.before_create",
     collection: collection.name,
-    candidate: { data },
+    candidate: { data: redact(collection.fields, data) },
   });
   if (outcome.kind === "reject") {
     // The machine code is ALWAYS E_HOOK_REJECTED (stable for clients); the
@@ -423,6 +428,10 @@ async function runBeforeCreateHook(
     let out = validate(collection.fields, outcome.data, false, "input", await localesFor(projectId, collection));
     applyWorkflowOnCreate(collection, out, allowExplicitState);
     if (identity) out = stampIdentity(collection, identity.user, out);
+    // SEC-1: the hook could not see the write-only values, so its replacement
+    // does not carry them. Restore the CLIENT's — a transform can neither read a
+    // credential nor drop the one being written.
+    preserveWriteOnly(collection.fields, data, out);
     const { refChecks } = buildEntrySchema(collection.fields);
     await verifyRefs(projectId, out, refChecks, assumeExisting);
     return out;
@@ -680,11 +689,13 @@ async function runBeforeUpdateHook(
   if (hook.when?.length && !matchesClauses(collection.fields, hook.when, merged)) {
     return { patch, replaced: false };
   }
+  // SEC-1: neither the candidate nor the pre-image carries write-only values out
+  // to the hook endpoint (see runBeforeCreateHook).
   const outcome = await callWriteHook(projectId, collection, hook, {
     event: "entry.before_update",
     collection: collection.name,
-    candidate: { data: merged },
-    current: { data: current.data },
+    candidate: { data: redact(collection.fields, merged) },
+    current: { data: redact(collection.fields, current.data) },
   });
   if (outcome.kind === "reject") throw new ValidationError(outcome.error, "E_HOOK_REJECTED");
   if (outcome.kind === "unavailable") {
@@ -705,10 +716,19 @@ async function runBeforeUpdateHook(
     ];
     const raw = { ...(outcome.data as Record<string, unknown>) };
     for (const f of frozen) delete raw[f];
+    // SEC-1: drop anything the hook put in a write-only field — it could not read
+    // the value, so it cannot meaningfully author one.
+    for (const n of writeOnlyNames(collection.fields)) delete raw[n];
     const full = validate(collection.fields, raw, false, "input", await localesFor(projectId, collection));
     for (const f of frozen) {
       if (f in current.data) full[f] = current.data[f];
     }
+    // SEC-1: restore from the MERGED candidate, not from `current` — this write
+    // may be a rotation, and buildReplacePatch turns any missing key into an
+    // explicit null, so anything less than this either reverts the rotation or
+    // silently clears the credential. An intentional unset (patch value null) is
+    // already absent from `merged` and stays unset.
+    preserveWriteOnly(collection.fields, merged, full);
     const { refChecks } = buildEntrySchema(collection.fields);
     await verifyRefs(projectId, full, refChecks);
     return { patch: buildReplacePatch(current.data, full), replaced: true };
@@ -780,7 +800,7 @@ export async function updateEntry(
   if (emit.previous) {
     recordVersion({
       projectId,
-      collectionId: collection.id,
+      collection,
       entryId: entry.id,
       data: emit.previous,
       changedFields: Object.keys(patch),
@@ -825,19 +845,26 @@ export async function dryRunHook(
   if (!hook) throw new ValidationError(`"${collection.name}" has no ${stage} hook configured — define one first`);
 
   const locales = await localesFor(projectId, collection);
+  // SEC-1: the dry run must send the SAME envelope the write path sends — a test
+  // that leaks what production redacts is worse than no test, because it teaches
+  // an integrator to expect the field.
   let envelope: HookEnvelope;
   if (stage === "beforeCreate") {
     const clean = validate(collection.fields, data, false, "input", locales);
     applyWorkflowOnCreate(collection, clean);
-    envelope = { event: "entry.before_create", collection: collection.name, candidate: { data: clean } };
+    envelope = {
+      event: "entry.before_create",
+      collection: collection.name,
+      candidate: { data: redact(collection.fields, clean) },
+    };
   } else {
     if (!current) throw new ValidationError("beforeUpdate test needs entryId — the row the update targets");
     const patch = validate(collection.fields, data, true, "input", locales);
     envelope = {
       event: "entry.before_update",
       collection: collection.name,
-      candidate: { data: mergePatch(current, patch, collection.fields) },
-      current: { data: current },
+      candidate: { data: redact(collection.fields, mergePatch(current, patch, collection.fields)) },
+      current: { data: redact(collection.fields, current) },
     };
   }
 
@@ -870,7 +897,12 @@ export async function dryRunHook(
     } catch (e) {
       validationOfFinalData = { ok: false, error: e instanceof ValidationError ? e.message : String(e) };
     }
-    return { verdict: "replaced", hookResponse: { ok: true, data: outcome.data }, finalData: outcome.data, validationOfFinalData };
+    // SEC-1: `hookResponse`/`finalData` echo whatever the endpoint sent back. It
+    // never received the write-only value, but a hook could invent a key with
+    // that name — and this result is shown in the console and returned over MCP,
+    // so redact on the way out too.
+    const shown = redact(collection.fields, outcome.data as Record<string, unknown>);
+    return { verdict: "replaced", hookResponse: { ok: true, data: shown }, finalData: shown, validationOfFinalData };
   }
   return { verdict: "proceed", hookResponse: { ok: true } };
 }
@@ -1280,7 +1312,7 @@ export async function updateEntryIf(
   if (emit.previous) {
     recordVersion({
       projectId,
-      collectionId: collection.id,
+      collection,
       entryId: entry.id,
       data: emit.previous,
       changedFields,
@@ -1349,6 +1381,12 @@ export async function restoreEntryVersion(
     );
   }
 
+  // SEC-1: a restore writes the FULL snapshot, and the snapshot never contains
+  // the write-only value (stripped at capture, or stripped on read for history
+  // predating the flip). Writing it verbatim would therefore DELETE a stored
+  // credential and report success — the exact silent-clear the design set out to
+  // avoid. Carry the live values across; rotation stays an explicit write.
+  preserveWriteOnly(collection.fields, current.data, clean);
   // Restore is CONTENT time-travel, not a workflow transition: never move the
   // state-machine field outside a declared, actor-gated transition. Pin it to
   // the live value so an old snapshot can't reverse actor-gated progress
@@ -1385,7 +1423,7 @@ export async function restoreEntryVersion(
   defer(() => emitEntryEvent(collection, "updated", { id: row.id, data: row.data }, current.data));
   recordVersion({
     projectId,
-    collectionId: collection.id,
+    collection,
     entryId,
     data: current.data,
     changedFields,
@@ -1853,7 +1891,7 @@ export async function transact(
   for (const v of versionPlan) {
     recordVersion({
       projectId,
-      collectionId: v.collection.id,
+      collection: v.collection,
       entryId: v.entryId,
       data: v.previous,
       changedFields: v.changedFields,
@@ -2586,10 +2624,13 @@ export async function expandRelations(
     const targetLocales =
       mode === "public" && hasLocalizedFields(targetColl.fields) ? await getLocales(projectId) : null;
     for (const tr of targetRows) {
+      // SEC-1: full mode (MCP) hands back the target's raw record — redact it
+      // exactly as a direct read of that collection would be. `expand` must not
+      // be a way to read through a relation into a write-only field.
       const view =
         mode === "public"
           ? localizeView(toPublicView(targetColl, tr), targetColl.fields, targetLocales)
-          : { id: tr.id, ...tr.data };
+          : { id: tr.id, ...redact(targetColl.fields, tr.data) };
       expandedById.set(tr.id, { raw: rawById.get(tr.id)!, view });
     }
   }
@@ -2713,7 +2754,7 @@ export async function includeReverse(
         e.id,
         mode === "public"
           ? localizeView(toPublicView(child, e), child.fields, childLocales)
-          : { id: e.id, data: e.data },
+          : { id: e.id, data: redact(child.fields, e.data) }, // SEC-1: same as expand
       ]),
     );
 
@@ -2960,6 +3001,16 @@ export function validateSelect(fields: FieldDef[], select: string[]): void {
       );
     }
   }
+  // SEC-1: naming a write-only field in `select` is REFUSED rather than silently
+  // dropped. The redaction below would strip it either way, but an agent that
+  // asked for a field and got a row back without it has been told nothing —
+  // it will conclude the value is unset and go looking for the bug elsewhere.
+  const wo = writeOnlyNames(fields).filter((n) => select.includes(n));
+  if (wo.length > 0) {
+    throw new ValidationError(
+      `select: ${wo.map((n) => `"${n}"`).join(", ")} ${wo.length === 1 ? "is a write-only field" : "are write-only fields"} — write-only values are never returned by any read. Drop ${wo.length === 1 ? "it" : "them"} from select.`,
+    );
+  }
 }
 
 /** Project entry data down to the selected fields (validation is the caller's job). */
@@ -2975,6 +3026,10 @@ export function projectData(
 export function toPublicView(collection: Collection, entry: Entry): Record<string, unknown> {
   const out: Record<string, unknown> = { id: entry.id };
   for (const f of collection.fields) {
+    // SEC-1: publicRead + writeOnly is refused at define time, so this can only
+    // fire on a def that predates the gate — belt AND braces on the surface with
+    // the widest audience (anonymous internet).
+    if (fieldWriteOnly(f)) continue;
     if (f.publicRead && f.name in entry.data) {
       out[f.name] =
         f.type === "group" || f.type === "array"
@@ -2999,6 +3054,7 @@ function projectStructured(spec: FieldDef | ArrayItem, value: unknown): unknown 
     const out: Record<string, unknown> = {};
     for (const sub of spec.fields) {
       if (sub.publicRead === false) continue; // cascade opt-out
+      if (fieldWriteOnly(sub)) continue; // SEC-1: nested writeOnly is refused at define; fail closed anyway
       if (sub.name in src) out[sub.name] = projectStructured(sub, src[sub.name]);
     }
     return out;
@@ -3023,5 +3079,5 @@ function projectStructured(spec: FieldDef | ArrayItem, value: unknown): unknown 
 
 /** The public-read fields of a collection (empty => not exposed at all). */
 export function publicFields(collection: Collection): FieldDef[] {
-  return collection.fields.filter((f) => f.publicRead);
+  return collection.fields.filter((f) => f.publicRead && !fieldWriteOnly(f));
 }

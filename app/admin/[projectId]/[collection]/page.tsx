@@ -4,7 +4,8 @@ import { Check, Plus, Search, Undo2 } from "lucide-react";
 import { getCollection } from "@/lib/collections";
 import { queryEntries, countEntries, resolveRefsForRead } from "@/lib/entries";
 import { getLocales } from "@/lib/locales";
-import { fieldLocalized, type FieldDef } from "@/lib/field-types";
+import { fieldLocalized, fieldWriteOnly, type FieldDef } from "@/lib/field-types";
+import { redactRows } from "@/lib/write-only";
 import { toggleHandledAction } from "../../actions";
 
 const PAGE_SIZE = 50;
@@ -25,23 +26,29 @@ export default async function CollectionEntries({
   const page = Math.max(1, Number(pageParam ?? 1) || 1);
   // Quick filter: contains on the first text-ish field (localized fields have
   // no single-string accessor, so they can't back the quick search — J4).
+  // SEC-1: a write-only field is excluded here too — not for tidiness, but
+  // because `contains` on one is refused by the query gate, which would 500 the
+  // whole list page for any collection whose first text field is a credential.
   const searchField = collection.fields.find(
-    (f) => (f.type === "text" || f.type === "richtext") && !fieldLocalized(f),
+    (f) => (f.type === "text" || f.type === "richtext") && !fieldLocalized(f) && !fieldWriteOnly(f),
   );
   const where =
     q && searchField ? [{ field: searchField.name, op: "contains" as const, value: q }] : [];
 
   const [rows, total, locales] = await Promise.all([
-    queryEntries(collection, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, where }).then(
-      (r) => resolveRefsForRead(projectId, collection, r, "trusted"),
-    ),
+    queryEntries(collection, { limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE, where })
+      .then((r) => resolveRefsForRead(projectId, collection, r, "trusted"))
+      // SEC-1: the admin list was one of the three surfaces that made a credential
+      // in an ordinary text field plaintext-by-default.
+      .then((r) => redactRows(collection.fields, r)),
     countEntries(collection, where),
     getLocales(projectId),
   ]);
   const defaultLocale = locales?.default ?? null;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   // First 4 fields as columns keeps the table readable at any schema size.
-  const cols = collection.fields.slice(0, 4);
+  // A write-only field would render a permanently empty column — skip it.
+  const cols = collection.fields.filter((f) => !fieldWriteOnly(f)).slice(0, 4);
   const pageHref = (p: number) =>
     `/admin/${projectId}/${name}?${new URLSearchParams({ ...(q ? { q } : {}), page: String(p) })}`;
 

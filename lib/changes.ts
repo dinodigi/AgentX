@@ -6,6 +6,8 @@ import { snapshotReadable, type ReadSpec } from "./access-rules";
 import type { EndUser } from "./user-auth";
 import { defer } from "./defer";
 import { ValidationError } from "./validation";
+import { redact } from "./write-only";
+import { fieldWriteOnly, type FieldDef } from "./field-types";
 
 /**
  * The append-only change feed (H). Every entry mutation records one row INLINE
@@ -29,7 +31,9 @@ export function computeVis(
   const matchPf = (d: Record<string, unknown>) =>
     pfClauses.length === 0 ? true : matchesClauses(collection.fields, pfClauses, d);
   const vis: ChangeVis = {
-    fields: collection.fields.filter((f) => f.publicRead).map((f) => f.name),
+    // SEC-1: a write-only field is never part of the served field set, so it can
+    // never appear in `fieldsOut` no matter how the collection is later widened.
+    fields: collection.fields.filter((f) => f.publicRead && !fieldWriteOnly(f)).map((f) => f.name),
     pf: matchPf(data),
     read: collection.access?.read ?? "public",
   };
@@ -52,14 +56,25 @@ export interface ChangeInput {
 }
 
 function rowValues(c: ChangeInput) {
+  // SEC-1 (layer 1 — storage minimisation): the feed keeps a full snapshot of
+  // every mutation for 30 days, so an unstripped write-only value would sit in
+  // `entry_changes` in plaintext, duplicated per write, long after the entry
+  // itself was deleted. Strip before the INSERT; `vis` is computed from the
+  // ORIGINAL data because the publicFilter it evaluates may legitimately gate on
+  // a private (non-write-only) field.
+  const fields = c.collection.fields as FieldDef[];
   return {
     projectId: c.projectId,
     collectionId: c.collection.id,
     collectionName: c.collection.name,
     entryId: c.entryId,
     kind: c.kind,
-    data: c.data,
-    prevData: c.prevData ?? null,
+    data: redact(fields, c.data),
+    prevData: redact(fields, c.prevData) ?? null,
+    // `changedFields` keeps the NAME. A name is not a value, and "the credential
+    // was rotated on this write" is exactly the signal an operator needs — the
+    // audit log already records it the same way. On the delivery surface it is
+    // filtered to fieldsOut anyway, which never contains a write-only field.
     changedFields: c.changedFields ?? null,
     vis: computeVis(c.collection, c.data, c.prevData),
   };

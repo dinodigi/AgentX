@@ -1,7 +1,7 @@
 import { sql, and, type SQL, type AnyColumn } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { entries } from "@/db/schema";
-import { fieldLocalized, type FieldDef } from "./field-types";
+import { fieldLocalized, fieldWriteOnly, type FieldDef } from "./field-types";
 import { ValidationError } from "./validation";
 
 /**
@@ -158,6 +158,18 @@ function fieldOrThrow(fields: FieldDef[], name: string, context: string): FieldD
   if (fieldLocalized(f)) {
     throw new ValidationError(
       `${context}: "${name}" is a localized field — localized fields cannot be filtered or sorted; use a non-localized field`,
+    );
+  }
+  // SEC-1: a filter is a READ with extra steps. `password_hash eq "..."` returns
+  // nothing but answers the question, and `contains` turns into a byte-at-a-time
+  // extraction; sorting leaks the ordering. This ONE gate covers query where,
+  // orderBy, publicFilter, events/hook/transition `when`, and update_entry_if
+  // conditions, because every one of them compiles through here — including at
+  // define time, so a schema that filters on a secret is refused before it can
+  // ever run.
+  if (fieldWriteOnly(f)) {
+    throw new ValidationError(
+      `${context}: "${name}" is a write-only field — it can be written but never read, and a filter or sort on it is a read (an eq/contains probe would answer "is the value X?"). Gate on a non-write-only field instead.`,
     );
   }
   return f;
@@ -450,10 +462,21 @@ function compileRelatedClause(
   if (!ctx) {
     throw new ValidationError(`where: "${head}" cannot be used for related filtering on this surface`);
   }
+  // The tail is resolved against the TARGET's fields, which is a second lookup
+  // path that never passes through fieldOrThrow — so the localized/write-only
+  // gates have to be re-applied here or `user.password_hash eq "…"` would
+  // compile on the MCP surface (queryFields = every target field).
   const tailField = ctx.queryFields.find((x) => x.name === tail);
   if (!tailField) {
     throw new ValidationError(
       `where: "${tail}" is not a filterable field on the target of "${head}" — options: ${ctx.queryFields.map((x) => x.name).join(", ")}`,
+    );
+  }
+  if (fieldWriteOnly(tailField) || fieldLocalized(tailField)) {
+    throw new ValidationError(
+      `where: "${clause.field}" — "${tail}" on the target of "${head}" is a ${
+        fieldWriteOnly(tailField) ? "write-only" : "localized"
+      } field and cannot be filtered`,
     );
   }
   const aliasName = `rel_${head}`;
@@ -542,6 +565,11 @@ function matchClause(
   {
     const f = fields.find((x) => x.name === c.field);
     if (!f) return false;
+    // SEC-1: unreachable via a validated schema (fieldOrThrow refuses such a
+    // clause at define time), so this is the fail-closed floor rather than a
+    // second implementation of the rule: never MATCH on a write-only field.
+    // Every caller treats false as "hidden"/"don't fire".
+    if (fieldWriteOnly(f)) return false;
     // C2: resolve here too. A divergence would make a window match in list
     // queries (SQL) and fail single-entry gates (JS) — the same class of bug
     // the neOrUnset pair is tested against.

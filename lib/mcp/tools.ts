@@ -37,11 +37,16 @@ import {
 } from "@/lib/entries";
 import { restoreEntry, listTrash, purgeEntry, emptyTrash } from "@/lib/trash";
 import { listEntryVersions } from "@/lib/versions";
+// SEC-1: the MCP surface is FULL TRUST — it has no publicRead projection to hide
+// behind, so every handler that echoes entry data redacts explicitly. That is the
+// whole point of the write-only guarantee: "trusted" does not mean "may read a
+// credential back", it means "may write one".
+import { redact, writeOnlyNames } from "@/lib/write-only";
 import { searchEntriesPage, searchableFields } from "@/lib/search";
 import { getProject } from "@/lib/admin";
 import { listAssets, deleteAsset } from "@/lib/r2";
 import { listDeliveries } from "@/lib/webhook";
-import { refireDelivery } from "@/lib/events";
+import { refireDelivery, redactEventPayload } from "@/lib/events";
 import { listAuditLog } from "@/lib/audit";
 import { listJobs, cancelJob } from "@/lib/jobs";
 import { listChanges, encodeChangeCursor, decodeChangeCursor } from "@/lib/changes";
@@ -755,7 +760,9 @@ export const TOOL_DEFS: ToolDef[] = [
     description:
       "Return one collection's full field definitions and flags. Constraints " +
       "(min/max/pattern/enum/integer/unique) are enforced on WRITE only — rows that " +
-      "predate a tightened constraint keep their stored values.",
+      "predate a tightened constraint keep their stored values. " +
+      "A field marked writeOnly:true IS listed here — its existence and shape are " +
+      "public, only its VALUES are not; reads simply omit the key.",
     inputSchema: {
       type: "object",
       properties: { name: { type: "string" } },
@@ -2514,6 +2521,12 @@ export async function callTool(
       case "describe_collection": {
         const a = nameArg.parse(rawArgs);
         const c = await mustCollection(projectId, a.name);
+        // SEC-1: write-only fields are NAMED here on purpose. Hiding their
+        // existence would make the schema unexplainable — an agent would write a
+        // password, read the row back, see nothing, and conclude the write
+        // failed. `writeOnly` is stated in the field def, and `writeOnlyFields`
+        // repeats it as a flat list so the rule is impossible to skim past.
+        const wo = writeOnlyNames(c.fields);
         return ok({
           name: c.name,
           displayName: c.displayName,
@@ -2526,6 +2539,17 @@ export async function callTool(
           checkout: c.checkout ?? null,
           hooks: c.hooks ?? null,
           fields: c.fields,
+          ...(wo.length > 0
+            ? {
+                writeOnlyFields: wo,
+                writeOnlyNote:
+                  `${wo.join(", ")} ${wo.length === 1 ? "is write-only" : "are write-only"}: writable, ` +
+                  "but never returned by any read (query/get/export/versions/changes/delivery/webhooks). " +
+                  "An entry read that omits the key does NOT mean the value is unset. Omit the field on " +
+                  "update to leave it unchanged; send null to unset it; send a new value to rotate it. " +
+                  "It cannot be filtered, sorted, or selected.",
+              }
+            : {}),
         });
       }
 
@@ -2579,14 +2603,14 @@ export async function callTool(
           actor: a.allowExplicitWorkflowState ? { type: "mcp", explicitWorkflowState: true } : { type: "mcp" },
           allowExplicitWorkflowState: a.allowExplicitWorkflowState,
         });
-        return ok({ id: e.id, data: e.data, convergence: ENTRY_CONVERGENCE });
+        return ok({ id: e.id, data: redact(c.fields, e.data), convergence: ENTRY_CONVERGENCE });
       }
 
       case "update_entry": {
         const a = updateArgs.parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         const e = await updateEntry(projectId, c, a.id, a.data, { type: "mcp" });
-        return ok({ id: e.id, data: e.data, convergence: ENTRY_CONVERGENCE });
+        return ok({ id: e.id, data: redact(c.fields, e.data), convergence: ENTRY_CONVERGENCE });
       }
 
       case "update_entry_if": {
@@ -2618,7 +2642,7 @@ export async function callTool(
             "E_CONFLICT",
           );
         }
-        return ok({ id: result.entry.id, data: result.entry.data });
+        return ok({ id: result.entry.id, data: redact(c.fields, result.entry.data) });
       }
 
       case "delete_entry": {
@@ -2675,8 +2699,8 @@ export async function callTool(
             offset: z.number().optional(),
           })
           .parse(rawArgs);
-        await mustCollection(projectId, a.collection);
-        return ok(await listEntryVersions(projectId, a.id, { limit: a.limit, offset: a.offset }));
+        const vc = await mustCollection(projectId, a.collection);
+        return ok(await listEntryVersions(projectId, a.id, vc.fields, { limit: a.limit, offset: a.offset }));
       }
 
       case "restore_entry_version": {
@@ -2685,7 +2709,7 @@ export async function callTool(
           .parse(rawArgs);
         const c = await mustCollection(projectId, a.collection);
         const entry = await restoreEntryVersion(projectId, c, a.id, a.versionId, { type: "mcp" });
-        return ok({ id: entry.id, data: entry.data });
+        return ok({ id: entry.id, data: redact(c.fields, entry.data) });
       }
 
       case "transact": {
@@ -2757,7 +2781,7 @@ export async function callTool(
         return ok({
           entries: resolved.map((r) => ({
             id: r.id,
-            data: r.data,
+            data: redact(c.fields, r.data),
             ...(reverse?.get(r.id) ? { related: reverse.get(r.id) } : {}),
           })),
           limit: page.limit,
@@ -2799,7 +2823,7 @@ export async function callTool(
           entries: resolved.map((r) => ({
             id: r.id,
             rank: (r as unknown as { rank: number }).rank,
-            data: r.data,
+            data: redact(c.fields, r.data),
           })),
           limit: page.limit,
           offset: page.offset,
@@ -2830,7 +2854,7 @@ export async function callTool(
           : undefined;
         return ok({
           id: resolved.id,
-          data: resolved.data,
+          data: redact(c.fields, resolved.data),
           ...(reverse?.get(resolved.id) ? { related: reverse.get(resolved.id) } : {}),
         });
       }
@@ -3027,6 +3051,13 @@ export async function callTool(
           offset,
         });
         const hasMore = rows.length > limit;
+        // SEC-1: payloads are redacted before dispatch, so anything stored from
+        // now on is already clean. This pass exists for rows logged BEFORE a field
+        // was flipped to write-only — the delivery log keeps them, and this tool
+        // hands them straight back. A payload whose collection is gone (or a
+        // project-level schedule fire) has no schema to check against; leave a
+        // project-level one alone and blank a collection one we cannot resolve.
+        const delFields = new Map((await listCollectionsFresh(projectId)).map((x) => [x.id, x.fields]));
         return ok({
           deliveries: rows.slice(0, limit).map((r) => ({
             id: r.id,
@@ -3035,7 +3066,12 @@ export async function callTool(
             status: r.status,
             attempts: Number(r.attempts),
             lastError: r.lastError,
-            payload: r.payload,
+            payload:
+              r.collectionId === null
+                ? r.payload
+                : delFields.has(r.collectionId)
+                  ? redactEventPayload(delFields.get(r.collectionId)!, r.payload as Record<string, unknown>)
+                  : {},
             createdAt: r.createdAt,
           })),
           limit,
@@ -3291,17 +3327,31 @@ export async function callTool(
           collectionId,
           limit: a.limit,
         });
+        // SEC-1: new feed rows were stripped at write time, but the feed keeps 30
+        // days of history — anything written BEFORE a field was flipped to
+        // write-only still holds plaintext. One unfiltered page of an omitted
+        // collection is the whole leak, so resolve fields per collection (a page
+        // can span many) and redact every row. A row whose collection has since
+        // been deleted is a TOMBSTONE we cannot schema-check: drop its data.
+        // FRESH, per CLAUDE.md: a correctness gate never reads through a cache.
+        // A field flipped to write-only seconds ago must redact on THIS page.
+        const feedFields = new Map(
+          (await listCollectionsFresh(projectId)).map((x) => [x.name, x.fields]),
+        );
         return ok({
-          changes: changes.map((c) => ({
-            cursor: encodeChangeCursor(Number(c.seq)),
-            collection: c.collectionName,
-            id: c.entryId,
-            kind: c.kind,
-            at: c.createdAt,
-            changedFields: c.changedFields,
-            data: c.data,
-            ...(c.prevData ? { prevData: c.prevData } : {}),
-          })),
+          changes: changes.map((c) => {
+            const cf = feedFields.get(c.collectionName);
+            return {
+              cursor: encodeChangeCursor(Number(c.seq)),
+              collection: c.collectionName,
+              id: c.entryId,
+              kind: c.kind,
+              at: c.createdAt,
+              changedFields: c.changedFields,
+              data: cf ? redact(cf, c.data) : {},
+              ...(c.prevData ? { prevData: cf ? redact(cf, c.prevData) : {} } : {}),
+            };
+          }),
           cursor: encodeChangeCursor(cursor),
           hasMore,
         });

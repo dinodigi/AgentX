@@ -13,7 +13,7 @@ import { ValidationError } from "./validation";
 import { getBlockLibrary, resolveLibraryBlocks } from "./blocks";
 import { validateFieldDefs, collectionNameSchema } from "./validation";
 import { buildWhere, type WhereItem } from "./query";
-import { fieldMin, fieldMax, fieldPattern, fieldInteger, fieldLocalized, type FieldDef } from "./field-types";
+import { fieldMin, fieldMax, fieldPattern, fieldInteger, fieldLocalized, fieldWriteOnly, type FieldDef } from "./field-types";
 import { getLocales } from "./locales";
 import { publicSearchableFields, searchVectorText } from "./search";
 
@@ -215,6 +215,15 @@ function assertNoLocalizedTemplateRefs(
           `${context}: email ${part} references localized field "{{${m[1]}}}" — templates render one raw value; reference a non-localized field`,
         );
       }
+      // SEC-1: an email is a read path with a recipient. `{{password_hash}}` in a
+      // subject or body would mail the credential (and store it in the delivery
+      // log), and interpolate() renders from redacted data anyway — so the token
+      // would silently render as "". Refuse at define rather than send blanks.
+      if (rf && fieldWriteOnly(rf)) {
+        throw new ValidationError(
+          `${context}: email ${part} references write-only field "{{${m[1]}}}" — a write-only value is never read, so it can never be emailed or logged; reference a readable field`,
+        );
+      }
     }
   }
 }
@@ -264,6 +273,13 @@ async function validateAccessAndEvents(
           `access.ownerField "${access.ownerField}" cannot be localized — it holds one server-stamped user id`,
         );
       }
+      // SEC-1: ownership is compared on every gated read and stamped into the
+      // change feed's `vis` — it is identity metadata, not a secret.
+      if (fieldWriteOnly(f)) {
+        throw new ValidationError(
+          `access.ownerField "${access.ownerField}" cannot be write-only — every gated read compares it, so it must be readable`,
+        );
+      }
     }
     // Anonymous write = the only write path is publicWrite with no signed-in
     // create. Such a create has no verified identity, so it can never be
@@ -294,6 +310,11 @@ async function validateAccessAndEvents(
       if (fieldLocalized(orgField)) {
         throw new ValidationError(
           `access.org.field "${access.org.field}" cannot be localized — it holds one server-stamped org id`,
+        );
+      }
+      if (fieldWriteOnly(orgField)) {
+        throw new ValidationError(
+          `access.org.field "${access.org.field}" cannot be write-only — row scoping compares it on every read, so it must be readable`,
         );
       }
       if (readList.includes("public")) {
@@ -367,6 +388,12 @@ async function validateCheckout(
   if (fieldLocalized(priceField)) {
     throw new ValidationError(
       `checkout.priceField "${checkout.priceField}" cannot be localized — a Price id is one value, not a translation`,
+    );
+  }
+  // SEC-1: the checkout route READS this field to build the Stripe session.
+  if (fieldWriteOnly(priceField)) {
+    throw new ValidationError(
+      `checkout.priceField "${checkout.priceField}" cannot be write-only — the checkout route reads it to build the Stripe session`,
     );
   }
   for (const key of ["successUrl", "cancelUrl"] as const) {
@@ -1197,6 +1224,57 @@ async function validateLocalizedFields(
 }
 
 /**
+ * SEC-1: the write-only rules a single field def cannot see, because they need
+ * sibling collections. Both directions of the relation-label rule, mirroring the
+ * localized pair above:
+ *
+ *  (a) a relation may not point its labelField at a write-only field — the
+ *      {id,label} channel resolves that value on every read of the PARENT, which
+ *      would launder the secret out through a collection that does not even
+ *      declare it;
+ *  (b) a field that is an inbound relation's labelField may not BECOME
+ *      write-only, or (a) would be violated retroactively by editing the target.
+ *
+ * These are define-time refusals rather than runtime redactions on purpose:
+ * label resolution runs on the trusted read path with no target-collection
+ * lookup, and adding one to every MCP read to defend a schema that should never
+ * have been accepted is the wrong place to pay.
+ */
+function validateWriteOnlyFields(
+  name: string,
+  fields: FieldDef[],
+  existing: Collection[],
+): void {
+  for (const f of fields) {
+    if (f.type !== "relation") continue;
+    const targetFields =
+      f.targetCollection === name
+        ? fields
+        : (existing.find((c) => c.name === f.targetCollection)?.fields as FieldDef[] | undefined);
+    const label = targetFields?.find((x) => x.name === f.labelField);
+    if (label && fieldWriteOnly(label)) {
+      throw new ValidationError(
+        `relation "${f.name}": labelField "${f.labelField}" on "${f.targetCollection}" is write-only — a label is READ on every fetch of this collection; point the relation at a readable field`,
+      );
+    }
+  }
+  for (const wf of fields.filter(fieldWriteOnly)) {
+    const refs = existing
+      .filter((c) => c.name !== name)
+      .flatMap((c) =>
+        (c.fields as FieldDef[])
+          .filter((x) => x.type === "relation" && x.targetCollection === name && x.labelField === wf.name)
+          .map((x) => `${c.name}.${x.name}`),
+      );
+    if (refs.length > 0) {
+      throw new ValidationError(
+        `"${wf.name}" cannot be write-only — it is the labelField of inbound relation(s) ${refs.join(", ")}, which read it on every fetch; point those at another field first`,
+      );
+    }
+  }
+}
+
+/**
  * J8: detect localized-flag toggles (rename-aware) and count their impact —
  * queried under the OLD key names, before the rename backfill runs.
  */
@@ -1386,6 +1464,7 @@ export async function defineCollection(
   const renames = input.renames ?? [];
   validateRenames(current, fields, renames);
   await validateLocalizedFields(projectId, name, fields, existing, current, renames);
+  validateWriteOnlyFields(name, fields, existing);
   let diff: SchemaDiff | undefined;
   let toggleWraps: string[] = [];
   let toggleCollapses: string[] = [];

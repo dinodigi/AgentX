@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Globe, Lock } from "lucide-react";
-import { fieldLocalized, type FieldDef } from "@/lib/field-types";
+import { fieldLocalized, fieldWriteOnly, type FieldDef } from "@/lib/field-types";
 import { AssetInput } from "./AssetInput";
 import { RelationCombobox } from "./RelationCombobox";
 import { RichtextInput } from "./RichtextInput";
@@ -95,7 +95,21 @@ export function EntryForm({
  * Visibility is signal, not decoration. Public is the norm — a quiet globe.
  * Admin-only is the exception worth flagging — a visible amber tag.
  */
-function VisibilityPill({ publicRead }: { publicRead?: boolean }) {
+function VisibilityPill({ publicRead, writeOnly }: { publicRead?: boolean; writeOnly?: boolean }) {
+  // SEC-1: write-only is a stronger claim than admin-only and deserves its own
+  // badge — "admin only" would imply an admin can see it here, and they cannot.
+  if (writeOnly) {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-[3px] border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.06em]"
+        style={{ color: "var(--color-err)", borderColor: "var(--color-err)" }}
+        title="Write-only — this value is never displayed anywhere, including here"
+      >
+        <Lock className="h-2.5 w-2.5" />
+        write only
+      </span>
+    );
+  }
   return publicRead ? (
     <Globe className="h-3.5 w-3.5 text-line-strong" aria-label="Public — served by the delivery API">
       <title>Public — served by the delivery API</title>
@@ -118,7 +132,7 @@ function Label({ field, localeChip }: { field: FieldDef; localeChip?: string | n
         {field.label}
         {field.required ? <span className="text-err"> *</span> : null}
       </span>
-      <VisibilityPill publicRead={field.publicRead} />
+      <VisibilityPill publicRead={field.publicRead} writeOnly={fieldWriteOnly(field)} />
       {localeChip ? <span className="chip chip-mute">{localeChip}</span> : null}
     </div>
   );
@@ -168,6 +182,30 @@ function FieldInput({
             <span className="italic">computed on save ({field.computed.fn})</span>
           )}
         </div>
+      </div>
+    );
+  }
+  // SEC-1: a write-only field renders EMPTY, always — the server never sent a
+  // value, and `type="password"` keeps a typed one out of the rendered DOM and
+  // out of the browser's form history. Leaving it blank is a no-op
+  // (coerceFormData omits empty strings), so an admin can edit the rest of the
+  // row without knowing or clobbering the credential.
+  if (fieldWriteOnly(field)) {
+    return (
+      <div className="mb-4">
+        <Label field={field} />
+        <input
+          type="password"
+          name={field.name}
+          defaultValue=""
+          autoComplete="new-password"
+          placeholder="write-only — leave blank to keep the stored value"
+          className={inputClass}
+        />
+        <p className="mt-1 text-xs text-ink-mute">
+          Never displayed, exported, versioned, or sent to the delivery API. Type a new value to
+          replace it; leave blank to keep what is stored.
+        </p>
       </div>
     );
   }

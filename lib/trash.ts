@@ -9,6 +9,8 @@ import { defer } from "./defer";
 import { ValidationError } from "./validation";
 import { rethrowUnique, dbErrorText, sweepExpiredTrash } from "./entries";
 import { recordChange } from "./changes";
+import { redact } from "./write-only";
+import type { FieldDef } from "./field-types";
 
 /**
  * Trash lifecycle — restore and list. The delete → trash MOVE lives in
@@ -129,23 +131,33 @@ export async function listTrash(
   // Collection names live in the control plane — the old correlated subquery
   // can't cross the DB split, so resolve names in a second, control-side query
   // (same decomposition as verifyRefs).
+  // SEC-1: `fields` rides along on the same query so each row's data can be
+  // redacted under ITS OWN collection's schema. Trash is a soft delete — the row
+  // still holds the credential, deliberately, so a restore is lossless — but the
+  // listing is a read, and the admin's one-line preview grabs the first stringy
+  // value it finds, which would happily be a password hash.
   const colIds = [...new Set(kept.map((r) => r.collectionId))];
   const names =
     colIds.length > 0
       ? await controlDb
-          .select({ id: collections.id, name: collections.name })
+          .select({ id: collections.id, name: collections.name, fields: collections.fields })
           .from(collections)
           .where(inArray(collections.id, colIds))
       : [];
-  const nameById = new Map(names.map((c) => [c.id, c.name]));
+  const byId = new Map(names.map((c) => [c.id, c]));
 
-  const rows = kept.map((r) => ({
-    id: r.id,
-    collection: nameById.get(r.collectionId) ?? "(deleted collection)",
-    data: r.data,
-    deletedAt: (r.deletedAt as Date).toISOString(),
-    deletedBy: r.deletedBy,
-  }));
+  const rows = kept.map((r) => {
+    const col = byId.get(r.collectionId);
+    return {
+      id: r.id,
+      collection: col?.name ?? "(deleted collection)",
+      // A collection deleted since has no schema to redact under — fail closed
+      // and show nothing rather than guess which keys were secret.
+      data: col ? redact(col.fields as FieldDef[], r.data) : {},
+      deletedAt: (r.deletedAt as Date).toISOString(),
+      deletedBy: r.deletedBy,
+    };
+  });
   return { rows, hasMore };
 }
 

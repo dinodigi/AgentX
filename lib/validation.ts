@@ -267,6 +267,7 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
     patternHint: z.string().optional(),
     searchable: z.boolean().optional(),
     localized: z.boolean().optional(),
+    writeOnly: z.boolean().optional(),
     writableBy: z
       .union([
         z.literal("none"),
@@ -323,6 +324,35 @@ const fieldDefSchema: z.ZodTypeAny = z.lazy(() =>
           code: z.ZodIssueCode.custom,
           message: "a computed field cannot be localized — computed values are derived single strings",
         });
+      }
+    }
+    // SEC-1: write-only = written, never read back. Every knob rejected here
+    // would either hand the value back on some surface or turn the field into an
+    // ORACLE for it, which is the same leak with extra steps. Stated per knob so
+    // the refusal teaches the reason rather than just the rule.
+    if (f.writeOnly) {
+      if (f.type !== "text") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `writeOnly is only valid on a text field — "${f.name}" is ${f.type}. Store a credential as its hash/ciphertext in a text field.`,
+        });
+      }
+      const oracles: [string, unknown, string][] = [
+        ["publicRead", f.publicRead, "publicRead asks the delivery API to serve the value, which is the exact opposite"],
+        ["unique", f.unique, "a uniqueness conflict tells the caller the value is already stored — an existence oracle"],
+        ["capacity", f.capacity, "a capacity conflict tells the caller how many rows hold the value — an existence oracle"],
+        ["indexed", f.indexed, "an index exists to make a field filterable and sortable, and a write-only field is neither"],
+        ["searchable", f.searchable, "full-text search returns matches, and a match on a secret is a disclosure"],
+        ["localized", f.localized, "a credential has no locale variants"],
+        ["computed", f.computed, "a computed value is derived server-side in order to be read back"],
+      ];
+      for (const [knob, v, why] of oracles) {
+        if (v !== undefined && v !== false) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `"${f.name}": writeOnly and ${knob} cannot be combined — ${why}`,
+          });
+        }
       }
     }
     if (f.computed) {
@@ -540,6 +570,7 @@ type NestedNode = {
   unique?: unknown;
   searchable?: unknown;
   requiredIf?: unknown;
+  writeOnly?: unknown;
 };
 
 /** v1 restrictions on a field nested INSIDE a group/array (deferred, not gaps). */
@@ -554,12 +585,21 @@ function assertNestedAllowed(f: NestedNode, ctx: z.RefinementCtx, path: string):
     ["unique", f.unique],
     ["searchable", f.searchable],
     ["requiredIf", f.requiredIf],
+    // SEC-1: nested is a HARD no, not a "yet". The delivery projection cascade
+    // inside a container is public-by-DEFAULT (opt out with publicRead:false),
+    // so a write-only leaf would be exposed by the one rule that differs from
+    // the top level — and a secret buried three levels into a repeater is a
+    // secret nobody audits. Keep the guarantee flat and provable.
+    ["writeOnly", f.writeOnly],
   ];
   for (const [name, v] of banned) {
     if (v !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `${path}: ${name} not supported inside a group/array yet`,
+        message:
+          name === "writeOnly"
+            ? `${path}: writeOnly is only valid on a TOP-LEVEL field — a write-only value must not be nested inside a group/array (the nested read gate is public-by-default). Give it its own field.`
+            : `${path}: ${name} not supported inside a group/array yet`,
       });
     }
   }
@@ -699,6 +739,17 @@ export const fieldsSchema = z
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             message: `${f.name}.computed references localized field "${r}" — derive from a non-localized field`,
+          });
+        } else if (sib.writeOnly) {
+          // SEC-1: the F6 shape, but absolute. A computed field is DERIVED in
+          // order to be read, so `{{password_hash}}` in a template copies the
+          // secret into a readable field — a laundering route out of the
+          // guarantee. Not conditional on publicRead: MCP reads it too.
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message:
+              `${f.name}.computed references write-only field "${r}" — a computed value is read back, ` +
+              `so this would copy the write-only value into a readable field`,
           });
         } else if (f.publicRead && !sib.publicRead) {
           // F6 (Hostile Agent free-tier report): a PUBLIC computed field whose

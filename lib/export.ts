@@ -2,6 +2,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { tenantDb } from "./data-plane";
 import { entries, type Collection } from "@/db/schema";
 import { decodeCursor, makeCursor } from "./entries";
+import { redact } from "./write-only";
+import { fieldWriteOnly } from "./field-types";
 
 /**
  * Entry export — the client's "can I get my data out?" answer. Raw stored
@@ -62,9 +64,14 @@ export async function exportEntries(
   const page = raw.slice(0, limit);
   const last = page[page.length - 1];
   const nextCursor = hasMore && last ? makeCursor(last.curT, last.e.id) : null;
+  // SEC-1: an export is the highest-volume read there is — one call can put 5,000
+  // rows in a file that gets emailed, committed, or handed to a contractor. A
+  // write-only field is absent from both formats: no key in the JSON row, and NO
+  // COLUMN in the CSV (an empty column would be a standing invitation to fill it
+  // back in on re-import).
   const rows = page.map(({ e: r }) => ({
     id: r.id,
-    data: r.data,
+    data: redact(collection.fields, r.data),
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   }));
@@ -73,7 +80,7 @@ export async function exportEntries(
     return { format, rowCount: rows.length, truncated: hasMore, hasMore, nextCursor, rows };
   }
 
-  const fieldNames = collection.fields.map((f) => f.name);
+  const fieldNames = collection.fields.filter((f) => !fieldWriteOnly(f)).map((f) => f.name);
   const header = ["id", ...fieldNames, "createdAt", "updatedAt"];
   const lines = [header.map(csvCell).join(",")];
   for (const r of rows) {
