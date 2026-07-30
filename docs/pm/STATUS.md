@@ -11,14 +11,18 @@ reporter can read — a commit hash, or a named condition that reopens it.
 
 ```
 FEEDBACK WALL   ████████████████████  100% by effort  (32/32 items)
-BACKLOG         ░░░░░░░░░░░░░░░░░░░░  41 items — CP10, not yet triaged
+BACKLOG         ████████████████████  100% dispositioned — 13 scheduled · 22 ⏳ · 1 ⚑
 ```
 
 **Zero repeat themes remain.** Every issue two or more unrelated testers hit is
 closed. That was the organising principle of the sprint and it is finished.
 
-**Next: CP10**, the 41-item backlog sweep — the only thing left on the board that
-is driveable without the operator.
+**CP10 is done** (2026-07-29): the backlog is 100% dispositioned — 13 scheduled,
+22 on-trigger, 1 operator — and `npm run pm` now mechanically verifies receipts
+and hunts silent ships. **The whole board reads zero. The burn-down freeze is
+over.** Next work is chosen, not owed: CONTRACT-1 is the flagged flagship;
+QRY-4 (entry-level import) gates the operator's dev/prod split; ENV-1 is the
+next-sprint-sized infrastructure bet.
 
 ## The three decisions, all made and all shipped
 
@@ -95,6 +99,10 @@ when 18 were fixed), the backlog (HIGH items reading "not started" days after
 shipping — twice, including during the sprint that fixed the wall), and
 BOARD.md's own hand-kept sprint table (13 items open after they shipped).
 
-Every case was a human-typed mirror of machine-known state. **Anything derivable
-from the database is now derived from it** — the wall ledger is generated, and
-finishing that job for the backlog is part of CP10.
+Every case was a human-typed mirror of machine-known state — and CP10 found a
+**fourth** (AUTO-1, DX-5, PLUG-2, all shipped, all reading open). **Anything
+derivable is now derived, and what cannot be derived is verified**: the wall
+ledger is generated from the DB, and `npm run pm` now cross-examines the
+hand-typed backlog against git — cited receipts must resolve, a commit subject
+naming a still-open item id raises a warning, and every ⏳ must carry an
+observable trigger. The detectors were proven by breaking them on purpose.

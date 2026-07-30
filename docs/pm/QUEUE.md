@@ -12,7 +12,7 @@
 ```
 FEEDBACK WALL   ████████████████████  100% by effort
                 32/32 items closed (100% by count) · 99/99 effort points
-BACKLOG         ░░░░░░░░░░░░░░░░░░░░  41 items — CP10, not yet triaged
+BACKLOG         ████████████████████  100% dispositioned — 13 scheduled · 22 ⏳ · 1 ⚑
 ```
 
 **Zero repeat themes remain.** Every issue two or more independent testers
@@ -41,20 +41,30 @@ reported is closed. That counter hit 0 at CP4.
 
 **The wall is now at 0 open — 32/32, 99/99 effort points.**
 
-## ⬜ Remaining
+## ✅ CP10 · Backlog sweep — DONE 2026-07-29
 
-### CP10 · Backlog sweep — 41 items
+All 41 open rows dispositioned; `npm run pm` reports **100% dispositioned — 13
+scheduled · 22 ⏳ trigger · 1 ⚑ operator** (plus 20 ✅ with verified receipts).
+🅿️ Parked is retired. The sweep found the staleness it predicted, a **fourth**
+time: AUTO-1 and DX-5 read "not started" though shipped (`9bc9988`, `66ad28e`),
+and PLUG-2 read "in progress" with all four Phase-1 tracks landed.
 
-Apply the four dispositions to `docs/BACKLOG.md`. Expect most to land ⏳ TRIGGER
-or 🚫 DECLINE — a backlog never dispositioned accumulates ideas nobody committed
-to. Anything surviving as 🔨 SHIP joins this list.
+Executed inline as the ANSWER batch (copy merged + contract tests, suite 108):
+**WP-3** (hooks×bulk contradiction — the description now tells the per-item
+truth), **WP-4** (same-state semantics: no-op on `update_entry`, deliberate
+E_CONFLICT on the CAS path, with the single-fire reason), **QRY-3** (rate + size
+budgets published in `get_project_info.deliveryApi.limits`, pinned to the wire
+by tests that actually hit the 429 and the 413).
 
-**One thing to fix while sweeping:** the backlog has now gone stale **three
-times** in the same direction, including twice during this sprint (DM-2, DM-3,
-DM-4, QRY-5 all read open after shipping; two were marked *Parked* with design
-notes claiming the work was hard). The wall's ledger is generated; the backlog
-is still hand-typed markdown. CP10 should end with shipped-state derived from
-commits.
+**"Shipped-state derived from commits" landed as verification, not generation:**
+`npm run pm` now checks every cited hash exists (`git cat-file`), greps commit
+SUBJECTS for still-open item ids (the silent-ship detector — it catches the
+AUTO-1 case mechanically; docs-only commits filtered), and enforces the
+disposition shape (every ⏳ carries an observable `TRIGGER:`). Both detector
+halves were negative-controlled — regressing AUTO-1 and fabricating a receipt
+each produced the warning. The first control run also caught the parser
+skipping every `| — |`-priority row (em-dash vs hyphen), which had hidden 14 of
+the 20 shipped rows from the receipt check.
 
 ### ⚑ Operator-blocked (not mine to close)
 

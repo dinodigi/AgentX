@@ -66,6 +66,12 @@ page linked in the site footer).
   `constraintWarnings[]`.
 - **Structured errors everywhere**: `ConstraintIssue[]` + stable `E_*` codes —
   an agent repairs its own mistake from the error alone.
+- **Published budgets** (QRY-3, CP10): `get_project_info.deliveryApi.limits`
+  states the real numbers — delivery mutations/search/uploads/checkout/batch at
+  20/min per IP per project (fixed windows, `429` + `Retry-After` +
+  `E_RATE_LIMITED`), 1 MiB delivery bodies (`413`), 10 MB uploads, MCP 300
+  calls/min + 16 MiB bodies — each pinned by a contract test that also exercises
+  the wire (a published wrong number would be worse than an unpublished one).
 
 ## 2. MCP tool surface (60 tools)
 

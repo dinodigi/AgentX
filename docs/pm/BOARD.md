@@ -81,7 +81,7 @@ _Wall totals: done=67 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_0 open (0 new, 0 planned) · 0 theme(s) reported more than once · snapshot 2026-07-30 04:01Z_
+_0 open (0 new, 0 planned) · 0 theme(s) reported more than once · snapshot 2026-07-30 06:47Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
@@ -90,22 +90,20 @@ _0 open (0 new, 0 planned) · 0 theme(s) reported more than once · snapshot 202
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_41 unshipped (8 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_13 scheduled (6 high) · 23 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
-**These are NOT started.** A sprint is a commitment; this is a list. High priority only:
+**Scheduled = decided, not started.** A sprint is a commitment; this is a list. High priority:
 
 | | ID | item |
 |---|---|---|
 | 📥 | **CONTRACT-1** | Full pass over agent-facing language — every tool description, `get_project_info`, `list |
 | 📥 | **ENV-1** | Staging environment — an online copy of the platform to debug against (operator, 2026-07 |
-| 📥 | **MT-2** | Org-scope the admin view, and/or fix the `get_project_info` "hand the admin URL to the c |
-| 📥 | **OPS-2** | Breaking-change comms: platform behavior changes shipped under live sites with zero noti |
-| 🚧 | **PLUG-2** | Base/blueprint composition model — now a full plan: [plans/PLUGIN-BASES-PLAN.md](plans/P |
-| 📥 | **QRY-3** | Publish the limits in the contract: per-IP rate budget, `429` + `retry-after`, size caps |
-| 📥 | **WP-3** | Fix the hooks×bulk contract contradiction: `define_collection.hooks` says bulk is "refus |
+| 📥 | **MT-2** | Org-scope the admin view — an invited client-role member sees every org's rows in the ad |
+| 📥 | **OPS-2** | Breaking-change comms. *(Re-scoped in CP10: the AGENT half shipped in the friction sprin |
+| 📥 | **QRY-4** | Entry-level import/seeding (`import_project` is schema-only). Raised to H in CP10: this  |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 33 at M/L priority._
+_…plus 7 scheduled at M/L, and 23 ⏳/⚑ rows that reopen on their named condition._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)

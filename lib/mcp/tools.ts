@@ -634,7 +634,15 @@ export const TOOL_DEFS: ToolDef[] = [
             "end users drive a transition (e.g. an owner cancelling their own request). Overlapping " +
             "(from,to) pairs are rejected at define time so every move resolves one transition. " +
             "A matched transition fires its actions as an entry.transitioned event (webhook/email, " +
-            "immediate — `after` not supported on transitions). Omitting workflow on redefine removes it.",
+            "immediate — `after` not supported on transitions). SAME-STATE WRITES (WP-4): writing the " +
+            "CURRENT state back is an idempotent NO-OP on update_entry — never treated as a transition, " +
+            "so it needs no declared route and trips no actor gate (a full-replace payload that echoes " +
+            "the unchanged field is safe). update_entry_if is the DELIBERATE exception: a same-state " +
+            "B→B write answers E_CONFLICT, because the CAS guard is what guarantees N concurrent " +
+            "identical transitions produce exactly ONE winner — letting losers no-op-succeed would " +
+            "hide whether this call's actions fired. For an idempotent CAS retry, gate on an `if` " +
+            "condition instead of re-sending the state. " +
+            "Omitting workflow on redefine removes it.",
           properties: {
             field: { type: "string", description: "an existing enum field" },
             initial: { type: "string", description: "one of the field's options" },
@@ -722,9 +730,13 @@ export const TOOL_DEFS: ToolDef[] = [
             "only) {ok:true, data:{…}} with the FULL new entry — re-validated like client input, and " +
             "ownership (ownerField/org) is always re-stamped/preserved so a hook can NEVER move it. " +
             "transform is HTTPS-ONLY. onError:'reject' (default) fails closed when your endpoint is " +
-            "unreachable; 'allow' fails open. Runs on create_entry, update_entry, AND transact creates " +
-            "— NOT bulk_create_entries (refused) or update_entry_if (single-statement CAS). `when` gates " +
-            "by the candidate snapshot.",
+            "unreachable; 'allow' fails open. Runs on create_entry, update_entry, transact creates, AND " +
+            "bulk_create_entries — bulk consults the hook PER ITEM with bounded concurrency, so a " +
+            "rejection/outage fails THAT item (E_HOOK_REJECTED/E_HOOK_FAILED in its per-item result) " +
+            "while the rest proceed, and the batch-size cap is derived from the hook's timeoutMs so the " +
+            "consults fit the host budget (the cap error names the number and the fix). NOT " +
+            "update_entry_if — its value is a single atomic statement, which a synchronous external " +
+            "consult would defeat. `when` gates by the candidate snapshot.",
           properties: {
             beforeCreate: WRITE_HOOK_JSON,
             beforeUpdate: WRITE_HOOK_JSON,
@@ -2311,6 +2323,22 @@ export async function callTool(
             conventions:
               "errors are {error, code} with stable E_* codes; GETs carry ETags " +
               "(send If-None-Match, get 304)",
+            // QRY-3: the budgets, published. Every number here is read from (or
+            // asserted against) the constant that enforces it — an unpublished
+            // limit is a wall clients discover by hitting it, and a published
+            // WRONG limit would be worse than none.
+            limits:
+              "RATE + SIZE BUDGETS (build pacing in, don't discover the wall): delivery-side " +
+              "MUTATIONS (POST/PATCH/DELETE), search (?q=), uploads, checkout and /batch share a " +
+              "budget of 20 requests per MINUTE per IP per project — fixed one-minute windows, so a " +
+              "429 carries Retry-After (seconds until the window resets) + code E_RATE_LIMITED; " +
+              "back off and resume, don't retry-storm. Public cached GETs are NOT metered (they ride " +
+              "the CDN — which is also why batching public page sections into POST /batch is a " +
+              "downgrade). Delivery JSON bodies are capped at 1 MiB (413); uploads at " +
+              "10 MB per file. THIS MCP surface: 300 tool calls/min per project (429 with the same " +
+              "structure), 16 MiB bodies (sized so a max base64 upload_asset still fits). For bigger " +
+              "delivery-side batches than the budget allows, do the work server-side over MCP " +
+              "(bulk_create_entries up to 500/call, transact up to 25 ops).",
             tokenScopes:
               "TWO token scopes, do not mix them: an MCP-scoped token authors the backend at " +
               "{mcpEndpoint} (define_collection, entries, config — this connection); a DELIVERY-scoped " +
