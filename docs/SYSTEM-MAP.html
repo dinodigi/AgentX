@@ -1,0 +1,639 @@
+<title>Pluggie — System Map</title>
+<style>
+  :root {
+    --ground: #F5F7FA;
+    --plate: #FFFFFF;
+    --plate-2: #EDF1F6;
+    --ink: #131A26;
+    --ink-2: #3C465A;
+    --neutral: #5C6779;
+    --hair: #D3DAE4;
+    --control: #2B6CB8;
+    --tenant: #B5651D;
+    --ok: #1E7A4E;
+    --warn: #8A5E08;
+    --crit: #A8281F;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0D131C; --plate: #141C28; --plate-2: #1B2532;
+      --ink: #E6EBF2; --ink-2: #AAB6C6; --neutral: #8996A8; --hair: #2A3644;
+      --control: #6BA6E8; --tenant: #E0A063;
+      --ok: #52C08A; --warn: #E0B057; --crit: #E88378;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0D131C; --plate: #141C28; --plate-2: #1B2532;
+    --ink: #E6EBF2; --ink-2: #AAB6C6; --neutral: #8996A8; --hair: #2A3644;
+    --control: #6BA6E8; --tenant: #E0A063;
+    --ok: #52C08A; --warn: #E0B057; --crit: #E88378;
+  }
+  :root[data-theme="light"] {
+    --ground: #F5F7FA; --plate: #FFFFFF; --plate-2: #EDF1F6;
+    --ink: #131A26; --ink-2: #3C465A; --neutral: #5C6779; --hair: #D3DAE4;
+    --control: #2B6CB8; --tenant: #B5651D;
+    --ok: #1E7A4E; --warn: #8A5E08; --crit: #A8281F;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--sans); line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 40px 24px 96px; }
+
+  /* ── masthead ─────────────────────────────────────────────── */
+  header { border-bottom: 2px solid var(--ink); padding-bottom: 20px; margin-bottom: 8px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--neutral);
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 46px); line-height: 1.05; margin: 10px 0 6px;
+    letter-spacing: -.025em; font-weight: 640; text-wrap: balance;
+  }
+  .sub { color: var(--ink-2); max-width: 68ch; font-size: 15.5px; }
+  .stamp {
+    font-family: var(--mono); font-size: 11.5px; color: var(--neutral);
+    margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px 18px;
+  }
+
+  /* ── plates ───────────────────────────────────────────────── */
+  section {
+    background: var(--plate); border: 1px solid var(--hair);
+    border-radius: 3px; margin-top: 28px; overflow: hidden;
+  }
+  .plate-head {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 16px 22px; border-bottom: 1px solid var(--hair);
+    background: var(--plate-2);
+  }
+  .plate-head h2 {
+    margin: 0; font-size: 17px; font-weight: 620; letter-spacing: -.012em;
+  }
+  .plate-head .note { font-size: 13px; color: var(--neutral); }
+  .plate-body { padding: 22px; }
+  .plate-body > :first-child { margin-top: 0; }
+  .plate-body > :last-child { margin-bottom: 0; }
+  p { max-width: 74ch; }
+
+  /* plane identity stripe — encodes WHICH plane, not decoration */
+  .stripe-control { border-left: 3px solid var(--control); }
+  .stripe-tenant { border-left: 3px solid var(--tenant); }
+
+  /* ── tables ───────────────────────────────────────────────── */
+  .scroll { overflow-x: auto; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: 13.5px;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--neutral); font-weight: 500;
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  code, .m { font-family: var(--mono); font-size: .92em; }
+  td code { color: var(--ink); background: var(--plate-2); padding: 1px 5px; border-radius: 2px; }
+
+  /* ── chips ────────────────────────────────────────────────── */
+  .chip {
+    display: inline-block; font-family: var(--mono); font-size: 10.5px;
+    letter-spacing: .04em; padding: 2px 7px; border-radius: 2px;
+    border: 1px solid currentColor; white-space: nowrap;
+  }
+  .c-control { color: var(--control); }
+  .c-tenant { color: var(--tenant); }
+  .c-ok { color: var(--ok); }
+  .c-warn { color: var(--warn); }
+  .c-crit { color: var(--crit); }
+  .c-mute { color: var(--neutral); }
+
+  /* ── grids ────────────────────────────────────────────────── */
+  .grid { display: grid; gap: 14px; }
+  .g2 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .g3 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+  .card {
+    background: var(--plate-2); border-radius: 3px; padding: 14px 16px;
+    border: 1px solid var(--hair);
+  }
+  .card h3 {
+    margin: 0 0 6px; font-size: 13px; font-weight: 620;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card p { margin: 0; font-size: 13px; color: var(--ink-2); max-width: none; }
+  .metric { font-family: var(--mono); font-size: 26px; font-weight: 600; letter-spacing: -.02em; }
+  .metric-label {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--neutral);
+  }
+
+  /* ── callout ──────────────────────────────────────────────── */
+  .callout {
+    background: var(--plate-2); border-left: 3px solid var(--warn);
+    padding: 13px 17px; margin: 18px 0; border-radius: 0 3px 3px 0;
+    font-size: 13.5px; color: var(--ink-2);
+  }
+  .callout strong { color: var(--ink); }
+  .callout.crit { border-left-color: var(--crit); }
+  .callout.ok { border-left-color: var(--ok); }
+
+  /* ── mermaid ──────────────────────────────────────────────── */
+  pre.mermaid {
+    background: transparent; margin: 4px 0; text-align: center;
+    overflow-x: auto;
+  }
+
+  ul { padding-left: 20px; max-width: 74ch; }
+  li { margin: 5px 0; }
+  li::marker { color: var(--neutral); }
+  a { color: var(--control); }
+  h3.sub-head {
+    font-family: var(--mono); font-size: 11px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--neutral); font-weight: 500;
+    margin: 26px 0 10px; padding-bottom: 6px; border-bottom: 1px solid var(--hair);
+  }
+  footer {
+    margin-top: 40px; padding-top: 18px; border-top: 1px solid var(--hair);
+    font-family: var(--mono); font-size: 11.5px; color: var(--neutral);
+  }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">System map · living document</div>
+  <h1>Pluggie</h1>
+  <p class="sub">An MCP-native backend platform. Agents are the primary integrator — not
+  an afterthought bolted onto a human CMS — which drives almost every design decision below.</p>
+  <div class="stamp">
+    <span>as of 2026-07-29</span>
+    <span>60 MCP tools</span>
+    <span>29 control tables</span>
+    <span>10 field types</span>
+    <span>9 query operators</span>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════════════════════ SHAPE -->
+<section>
+  <div class="plate-head">
+    <h2>The shape of it</h2>
+    <span class="note">two data planes · four surfaces</span>
+  </div>
+  <div class="plate-body">
+    <div class="grid g3">
+      <div class="card"><div class="metric-label">Control plane</div><div class="metric c-control">1</div>
+        <p>Shared Neon Postgres. Projects, schemas, tokens, connectors, billing.</p></div>
+      <div class="card"><div class="metric-label">Tenant planes</div><div class="metric c-tenant">N</div>
+        <p>One managed Neon database per project. Content never shares a database.</p></div>
+      <div class="card"><div class="metric-label">Read surfaces</div><div class="metric">2</div>
+        <p>MCP reads fresh. Delivery converges ~15s later <em>and</em> filters. They disagree by design.</p></div>
+    </div>
+
+    <h3 class="sub-head">Request topology</h3>
+    <div class="scroll">
+<pre class="mermaid">
+graph LR
+  AG["AI agent<br/>(Claude, Codex)"]:::actor
+  SITE["Tenant site<br/>server-side"]:::actor
+  BROWSER["Static app<br/>browser bundle"]:::actor
+  HUMAN["Operator / client"]:::actor
+
+  MCP["/api/mcp<br/>60 tools · stateless JSON-RPC"]:::surface
+  V1["/api/v1<br/>delivery API"]:::surface
+  OAUTH["/api/oauth + .well-known<br/>OAuth 2.1 · PKCE · DCR"]:::surface
+  ADMIN["/admin console<br/>Clerk session"]:::surface
+
+  CTRL[("Control DB<br/>29 tables")]:::control
+  TEN[("Tenant DB<br/>per project")]:::tenant
+  R2[["R2 assets"]]:::ext
+
+  AG -->|"mcp token · 6 scopes"| MCP
+  AG -.->|"first connect"| OAUTH
+  OAUTH -->|"issues scoped token"| MCP
+  SITE -->|"delivery token"| V1
+  BROWSER -->|"READ-ONLY token"| V1
+  HUMAN --> ADMIN
+
+  MCP --> CTRL
+  MCP --> TEN
+  V1 --> CTRL
+  V1 --> TEN
+  ADMIN --> CTRL
+  ADMIN --> TEN
+  TEN -.-> R2
+
+  classDef actor fill:#EDF1F6,stroke:#5C6779,color:#131A26
+  classDef surface fill:#FFFFFF,stroke:#2B6CB8,stroke-width:2px,color:#131A26
+  classDef control fill:#E3EDF9,stroke:#2B6CB8,stroke-width:2px,color:#131A26
+  classDef tenant fill:#F7EADD,stroke:#B5651D,stroke-width:2px,color:#131A26
+  classDef ext fill:#EDF1F6,stroke:#8A5E08,color:#131A26
+</pre>
+    </div>
+
+    <div class="callout ok">
+      <strong>Why the MCP endpoint is stateless.</strong> A bare JSON-RPC POST works with no
+      <code>initialize</code> handshake and no session id. Three testers discovered this by probing
+      and each called it an integration advantage — it means a serverless route handler needs no
+      persistent transport and no SDK. It is now documented in <code>get_project_info</code>, with a
+      test asserting the claim is actually true.
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ PLANES -->
+<section class="stripe-control">
+  <div class="plate-head">
+    <h2>Where data lives</h2>
+    <span class="note">the split is the tenancy boundary</span>
+  </div>
+  <div class="plate-body">
+    <div class="grid g2">
+      <div class="card">
+        <h3><span class="chip c-control">CONTROL</span> shared database</h3>
+        <p class="m" style="font-size:12px;line-height:1.7">projects · workspaces · workspace_members ·
+        project_members · collections · project_tokens · project_connectors · project_plugins ·
+        plugin_defs · project_schedules · platform_settings · platform_feedback · platform_notices ·
+        platform_events · oauth_clients · oauth_codes · webhook_deliveries · audit_log ·
+        rate_windows · usage_daily · neon_usage_daily · assets · asset_pointers</p>
+      </div>
+      <div class="card">
+        <h3><span class="chip c-tenant">TENANT</span> per-project database</h3>
+        <p class="m" style="font-size:12px;line-height:1.7">entries · entries_trash ·
+        entry_versions · entry_changes · jobs · transact_receipts</p>
+        <p style="margin-top:10px">Plus per-collection DDL derived from the schema: unique indexes,
+        a full-text index, filter indexes, and capacity triggers.</p>
+      </div>
+    </div>
+    <div class="callout">
+      <strong>The asymmetry that matters.</strong> A tenant database has no foreign key into the
+      control plane's <code>collections</code> table, so the <code>ON DELETE CASCADE</code> that
+      clears entries there does not exist. Deleting a collection has to sweep the tenant side
+      explicitly — including dropping its indexes and triggers, which outlive the rows.
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ READ PLANES -->
+<section class="stripe-tenant">
+  <div class="plate-head">
+    <h2>Two read planes that disagree</h2>
+    <span class="note">the platform's defining subtlety</span>
+  </div>
+  <div class="plate-body">
+    <p>This causes more confusion than anything else on the platform, and it is two separate
+    effects that get mistaken for one.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th></th><th>MCP · <code>/api/mcp</code></th><th>Delivery · <code>/api/v1</code></th></tr></thead>
+        <tbody>
+          <tr><td><strong>Freshness</strong></td><td>Reads fresh. An agent always sees its own writes immediately.</td><td>Converges within ~15s (cache TTL across a multi-instance fleet).</td></tr>
+          <tr><td><strong>Row visibility</strong></td><td>All rows.</td><td><code>publicFilter</code> + <code>access</code> rules applied.</td></tr>
+          <tr><td><strong>Field visibility</strong></td><td>All fields.</td><td>Only <code>publicRead</code> fields.</td></tr>
+          <tr><td><strong>Consequence</strong></td><td colspan="2">A row can be readable over MCP yet <strong>permanently</strong> absent from delivery. That is not a delay — it is a different question being answered.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout crit">
+      <strong>Correctness gates never read through a cache.</strong> A DENY that rests on a stale
+      read is a bug that looks like a policy. Destructive-change checks, relation-target validation,
+      the connector gate and <code>addFields</code> all read fresh from the database.
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ DATA MODEL -->
+<section>
+  <div class="plate-head">
+    <h2>Content model</h2>
+    <span class="note">10 primitives · composed, never invented</span>
+  </div>
+  <div class="plate-body">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Type</th><th>Stores</th><th>Filterable with</th></tr></thead>
+        <tbody>
+          <tr><td><code>text</code></td><td>string; <code>min</code> <code>max</code> <code>pattern</code> <code>searchable</code> <code>localized</code></td><td class="m">eq ne neOrUnset contains in exists</td></tr>
+          <tr><td><code>richtext</code></td><td>HTML; <code>searchable</code> strips tags</td><td class="m">contains exists</td></tr>
+          <tr><td><code>number</code></td><td>numeric; <code>min</code> <code>max</code> <code>integer</code></td><td class="m">eq ne neOrUnset gt lt exists</td></tr>
+          <tr><td><code>boolean</code></td><td>true / false</td><td class="m">eq ne neOrUnset exists</td></tr>
+          <tr><td><code>date</code></td><td>canonical UTC ISO — fixed width, so text order = chronological order</td><td class="m">eq ne neOrUnset gt lt exists</td></tr>
+          <tr><td><code>enum</code></td><td>one of <code>options</code>; the only type a workflow can drive</td><td class="m">eq ne neOrUnset in exists</td></tr>
+          <tr><td><code>asset</code></td><td>R2 object id → <code>{id,url,contentType}</code> on read</td><td class="m">eq ne neOrUnset exists</td></tr>
+          <tr><td><code>relation</code></td><td>target entry id → <code>{id,label}</code>; one-hop dotted filters</td><td class="m">eq ne neOrUnset in exists</td></tr>
+          <tr><td><code>group</code></td><td>nested named sub-fields</td><td class="c-mute">— not filterable or sortable</td></tr>
+          <tr><td><code>array</code></td><td><code>item</code> (uniform repeater) <em>or</em> <code>blocks</code> (typed blocks)</td><td class="m">has exists <span class="c-mute">— scalar items only</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="sub-head">Field modifiers</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Modifier</th><th>Effect</th><th>Enforced by</th></tr></thead>
+        <tbody>
+          <tr><td><code>required</code> <code>requiredIf</code></td><td>Presence, optionally conditional on a sibling enum</td><td>validator</td></tr>
+          <tr><td><code>publicRead</code></td><td>Field appears on the delivery API. Per <em>field</em>, not per collection</td><td>projection</td></tr>
+          <tr><td><code>unique</code></td><td>Exactly one row per value</td><td><span class="chip c-tenant">DB</span> partial unique index</td></tr>
+          <tr><td><code>capacity: N</code></td><td>At most N rows per value — booking capacity</td><td><span class="chip c-tenant">DB</span> trigger + per-key advisory lock</td></tr>
+          <tr><td><code>indexed</code></td><td>Filter/sort stays a seek as the collection grows</td><td><span class="chip c-tenant">DB</span> partial expression index</td></tr>
+          <tr><td><code>searchable</code></td><td>Included in full-text search and delivery <code>?q=</code></td><td><span class="chip c-tenant">DB</span> GIN index</td></tr>
+          <tr><td><code>computed</code></td><td>Server-derived: <code>slugify</code> · <code>template</code> · <code>now</code> · <code>uuid</code>. A client-supplied value is rejected</td><td>write path</td></tr>
+          <tr><td><code>localized</code></td><td>Value is a <code>{locale: string}</code> variant map</td><td>validator</td></tr>
+          <tr><td><code>writableBy</code></td><td>Delivery-only write gate: <code>"none"</code> or a claim match</td><td>delivery route</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>Guarantees live in the database wherever they can.</strong> <code>unique</code> and
+      <code>capacity</code> are an index and a trigger, not application checks — a count-then-insert
+      races, and two callers both see room and both write. That is why the capacity trigger takes a
+      per-key advisory lock before counting.
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ QUERY -->
+<section>
+  <div class="plate-head">
+    <h2>Query vocabulary</h2>
+    <span class="note">no expression language, ever</span>
+  </div>
+  <div class="plate-body">
+    <p>One clause shape — <code>{field, op, value}</code> — validated against the collection's fields
+    before any SQL is built. Clauses AND together; <code>{anyOf:[…]}</code> ORs, one level deep. The
+    same vocabulary is reused by <code>publicFilter</code>, <code>events.when</code>, workflow
+    <code>when</code> preconditions, CAS <code>if</code> guards, and schedule sweeps.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Operator</th><th>Meaning</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td><code>eq</code> <code>gt</code> <code>lt</code> <code>in</code></td><td>The obvious ones</td><td></td></tr>
+          <tr><td><code>ne</code></td><td>Set <strong>and</strong> different</td><td>An unset field never matches — fail-closed, which <code>publicFilter</code> depends on</td></tr>
+          <tr><td><code>neOrUnset</code></td><td>Different <strong>or</strong> not set</td><td>What exclusion filters almost always mean. Reaching for <code>ne</code> silently drops every row with the field unset</td></tr>
+          <tr><td><code>contains</code></td><td>Substring, LIKE-escaped</td><td>Literal — <code>%</code> and <code>_</code> match themselves</td></tr>
+          <tr><td><code>has</code></td><td>Set membership on an array of scalars</td><td>JSONB containment, so a GIN index can serve it</td></tr>
+          <tr><td><code>exists</code></td><td>Key present and not JSON null</td><td></td></tr>
+          <tr><td><code>id</code> <span class="c-mute">(virtual field)</span></td><td>Filter by entry id</td><td><code>eq ne in</code> only. Fetches a known set in one call instead of N</td></tr>
+          <tr><td><code>{hoursAgo}</code> <code>{daysAgo}</code></td><td>A relative-time <em>value</em> on a date field</td><td>Negative reaches forward. Makes a live window expressible with no sweep job</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>A time-varying <code>publicFilter</code> is not edge-cached.</strong> A window built
+      from relative time gives a different answer minute to minute, so a cached copy would serve a
+      row past the end of its window. Those collections drop <code>s-maxage</code> deliberately —
+      an exact window costs the CDN hit.
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ ACCESS -->
+<section class="stripe-control">
+  <div class="plate-head">
+    <h2>Credentials &amp; access</h2>
+    <span class="note">two token scopes, mutually rejected</span>
+  </div>
+  <div class="plate-body">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Class</th><th>Surface</th><th>Grants</th><th>Where it may live</th></tr></thead>
+        <tbody>
+          <tr><td><code>mcp</code></td><td><code>/api/mcp</code></td><td>Authoring. Narrowed by six scopes</td><td class="c-crit">Server only — never a site, never a bundle</td></tr>
+          <tr><td><code>delivery</code></td><td><code>/api/v1</code></td><td>Public read + <code>publicWrite</code></td><td class="c-warn">Server-side env var</td></tr>
+          <tr><td><code>delivery</code> <span class="chip c-ok">READ-ONLY</span></td><td><code>/api/v1</code></td><td>Reads only. Every write path refuses it</td><td class="c-ok">Safe to embed in a browser bundle</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="sub-head">MCP scopes</h3>
+    <p class="m" style="font-size:12.5px">content.read · content.write · schema.manage ·
+    automation.manage · tokens.manage · observability.read</p>
+    <p style="font-size:13.5px;color:var(--ink-2)">Enforced at one choke point in
+    <code>callTool</code>. <code>scopes = null</code> means full access — the grandfather path, so
+    every token minted before scopes existed still works. A completeness test fails if any of the
+    60 tools lacks an assignment.</p>
+
+    <h3 class="sub-head">Row &amp; field gates on the delivery API</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Setting</th><th>Controls</th></tr></thead>
+        <tbody>
+          <tr><td><code>publicWrite</code></td><td>Anonymous <code>POST</code>. <strong>Composes</strong> with <code>access.write</code> — the two govern different verbs, so "anyone submits, only staff triage" is one collection</td></tr>
+          <tr><td><code>access.read</code></td><td><code>public</code> · <code>authenticated</code> · <code>owner</code> · <code>{claim,equals}</code> · any-of</td></tr>
+          <tr><td><code>access.write</code></td><td>Governs <code>PATCH</code>/<code>DELETE</code>. <code>owner</code> = own rows; a claim match = staff write on any row</td></tr>
+          <tr><td><code>access.org</code></td><td><code>{claim, field}</code> — every read and write scoped to the user's org, fail-closed</td></tr>
+          <tr><td><code>publicFilter</code></td><td>Row visibility on delivery. Database-enforced, so a draft cannot reach a reader</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>Token parentage is a revocation guarantee.</strong> Every mint stamps the minting
+      token's row id, and the foreign key cascades — so revoking a compromised token kills
+      everything it minted in the same statement. A foothold cannot survive remediation.
+      An <code>mcp</code> token can only ever mint <code>delivery</code> tokens: strictly weaker
+      than its minter.
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ AUTOMATION -->
+<section>
+  <div class="plate-head">
+    <h2>Automation</h2>
+    <span class="note">declarative, closed vocabularies</span>
+  </div>
+  <div class="plate-body">
+    <div class="scroll">
+<pre class="mermaid">
+graph TD
+  W["Entry write<br/>create · update · delete"]:::w
+  HOOK{"beforeCreate hook<br/>external consult"}:::g
+  VAL["Validate · computed fields<br/>refs · constraints"]:::p
+  WF{"Workflow gate<br/>actor + when"}:::g
+  DB[("Tenant DB")]:::tenant
+  EV["events<br/>created / updated / deleted"]:::p
+  JOBS[("jobs queue")]:::tenant
+  OUT["webhook · email"]:::o
+  SCH["define_schedule<br/>cron sweeps"]:::p
+
+  W --> HOOK --> VAL --> WF --> DB
+  DB --> EV --> JOBS --> OUT
+  SCH --> JOBS
+  SCH -.->|"mutate: where + guard"| DB
+
+  classDef w fill:#EDF1F6,stroke:#5C6779,color:#131A26
+  classDef g fill:#FFF6E6,stroke:#8A5E08,color:#131A26
+  classDef p fill:#FFFFFF,stroke:#2B6CB8,color:#131A26
+  classDef tenant fill:#F7EADD,stroke:#B5651D,stroke-width:2px,color:#131A26
+  classDef o fill:#E6F4EC,stroke:#1E7A4E,color:#131A26
+</pre>
+    </div>
+    <div class="grid g2" style="margin-top:16px">
+      <div class="card">
+        <h3>Workflow</h3>
+        <p>A state machine over one enum field. <code>initial</code> is enforced on every create
+        path; transitions are the only way the field moves. Gated on <strong>who</strong>
+        (<code>mcp</code> · <code>operator</code> · <code>client</code> · <code>delivery</code>) and
+        on <strong>what</strong> (<code>when</code> preconditions), both compiled into the same
+        conditional UPDATE so neither can be raced past.</p>
+      </div>
+      <div class="card">
+        <h3>Schedules</h3>
+        <p>Cron-driven sweeps. A <code>mutate</code> action selects rows by <code>where</code>, then
+        writes each through a compare-and-set, so a row that changed since the query is skipped
+        rather than stomped. Bounded per tick — a sweep is a stream, not a bomb.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ CONNECTORS -->
+<section>
+  <div class="plate-head">
+    <h2>Connectors</h2>
+    <span class="note">per project · credential-free where possible</span>
+  </div>
+  <div class="plate-body">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Connector</th><th>Provides</th><th>Probe</th></tr></thead>
+        <tbody>
+          <tr><td><code>neon</code></td><td>The project's tenant database</td><td>Connects + reports the expected schema version</td></tr>
+          <tr><td><code>r2</code></td><td>Asset storage; public URL on <code>pub-*.r2.dev</code></td><td>Write → read back through the public base → delete</td></tr>
+          <tr><td><code>clerk</code></td><td>End-user identity for <code>access</code> rules (JWT claims)</td><td>JWKS reachable</td></tr>
+          <tr><td><code>resend</code> <code>elastic_email</code></td><td>Transactional email</td><td>API key verified</td></tr>
+          <tr><td><code>stripe</code></td><td>Checkout + orders</td><td>Secret key valid; webhook endpoint still enabled</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout">
+      <strong>A probe result is a point in time, not a live reading.</strong> A probe that fails to
+      <em>run</em> — DNS, timeout, an egress blip — no longer overwrites a stored verdict, because
+      an unknown must not replace a known-good. Health carries <code>checkedAt</code> so a reader
+      can tell "broken now" from "failed a check three hours ago".
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ DELIVERY SURFACE -->
+<section>
+  <div class="plate-head">
+    <h2>Delivery API surface</h2>
+    <span class="note">what a site actually calls</span>
+  </div>
+  <div class="plate-body">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Endpoint</th><th>Purpose</th><th>Read-only token</th></tr></thead>
+        <tbody>
+          <tr><td class="m">GET /v1/{collection}</td><td>List. <code>filter</code> · <code>sort</code> · <code>select</code> · <code>expand</code> · <code>include</code> · <code>q</code> · <code>locale</code> · <code>limit</code>/<code>offset</code></td><td><span class="chip c-ok">OK</span></td></tr>
+          <tr><td class="m">GET /v1/{collection}/{id}</td><td>One row, public view</td><td><span class="chip c-ok">OK</span></td></tr>
+          <tr><td class="m">POST /v1/batch</td><td>Up to 10 reads in one round trip</td><td><span class="chip c-ok">OK</span></td></tr>
+          <tr><td class="m">GET /v1/changes<br/>GET /v1/changes/stream</td><td>Change feed; SSE stream</td><td><span class="chip c-ok">OK</span></td></tr>
+          <tr><td class="m">POST /v1/{collection}</td><td>Create — <code>publicWrite</code> or a matching rule</td><td><span class="chip c-crit">403</span></td></tr>
+          <tr><td class="m">PATCH · DELETE /v1/{collection}/{id}</td><td>Mutate — <code>owner</code> or a claim match</td><td><span class="chip c-crit">403</span></td></tr>
+          <tr><td class="m">POST /v1/{collection}/uploads</td><td>Upload an asset</td><td><span class="chip c-crit">403</span></td></tr>
+          <tr><td class="m">POST /v1/checkout</td><td>Stripe checkout session</td><td><span class="chip c-crit">403</span></td></tr>
+          <tr><td class="m">GET /v1/_health</td><td>Unauthenticated liveness — diagnoses a wrong base URL</td><td><span class="chip c-ok">OK</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="sub-head">Which failure is it?</h3>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Code</th><th>Means</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip c-warn">401</span></td><td>Readable here, but needs identity — pass the end-user JWT in <code>X-User-Token</code>. An absent delivery token also 401s, with a bare body: collection names never leak to the unauthenticated</td></tr>
+          <tr><td><span class="chip c-warn">403</span></td><td>Identified, and does not meet the rule</td></tr>
+          <tr><td><span class="chip c-crit">404</span></td><td>On an existing collection: no field is <code>publicRead</code>, so it is not on this API at all. <strong>Identity-independent</strong> — signing in will not change it</td></tr>
+          <tr><td><span class="chip c-mute">422</span></td><td>Malformed query; the message names the field and the fix</td></tr>
+          <tr><td><span class="chip c-mute">429</span></td><td>Rate limited; carries <code>retry-after</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ INFRA -->
+<section>
+  <div class="plate-head">
+    <h2>Infrastructure &amp; domains</h2>
+    <span class="note">push to master deploys</span>
+  </div>
+  <div class="plate-body">
+    <div class="grid g2">
+      <div class="card">
+        <h3>Runtime</h3>
+        <p><strong>Render</strong> — blueprint deploy, push-to-master auto-deploys.
+        <strong>Cloudflare</strong> — CDN with a worker that hashes the bearer token into the cache
+        key, because the same URL serves different projects. <strong>Neon</strong> — control DB plus
+        one per tenant. <strong>UptimeRobot</strong> — keyword monitors, since a status-code check is
+        blind to a database outage.</p>
+      </div>
+      <div class="card">
+        <h3>Domains <span class="chip c-warn">DECIDED, NOT YET MOVED</span></h3>
+        <p class="m" style="font-size:12.5px;line-height:1.8">
+        <code>plugster.dev</code> — platform<br/>
+        <code>api.plugster.dev</code> — delivery + MCP<br/>
+        <code>xvibe.app</code> — XVibe studio<br/>
+        <code>*.myxvibe.com</code> — deployed tenant apps</p>
+      </div>
+    </div>
+    <div class="callout">
+      <strong>Tenant apps must not share a registrable domain with a control plane.</strong>
+      Otherwise one tenant can set cookies on the parent and an XSS on any deployed app reaches the
+      studio. That is why <code>github.io</code> is not on <code>github.com</code>. The Public
+      Suffix List entry for <code>myxvibe.com</code> — free, but weeks to propagate — is what
+      actually enforces the boundary.
+    </div>
+    <div class="callout ok">
+      <strong>The migration machinery is already built and dormant.</strong> Setting
+      <code>SUCCESSOR_API_BASE</code> adds RFC 8594 <code>Deprecation</code>/<code>Sunset</code>/<code>Link</code>
+      headers to every delivery response and a <code>migration</code> note to
+      <code>get_project_info</code>. Not a redirect — a 301 breaks POST bodies and drops auth
+      headers across origins. The old host keeps answering, so it never has to be retired.
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════════════════════════════════════════ GAPS -->
+<section>
+  <div class="plate-head">
+    <h2>Known gaps</h2>
+    <span class="note">what this map does not yet show working</span>
+  </div>
+  <div class="plate-body">
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Gap</th><th>State</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Write-only field type</strong> — a credential in a normal field is plaintext in the admin UI, exports, entry versions and the change feed</td><td><span class="chip c-crit">NEXT</span> the last open wall item</td></tr>
+          <tr><td><strong><code>auth_kit</code> v2</strong> — dummy-hash timing defence, lockout, non-enumerating reset tokens</td><td><span class="chip c-crit">NEXT</span> pairs with the above</td></tr>
+          <tr><td><strong>Browser-side writes</strong> — the read-only token cannot POST</td><td><span class="chip c-warn">DEFERRED</span> needs a human-verification story first</td></tr>
+          <tr><td><strong>Plugin-authored MCP tools</strong> — <code>tools:[]</code> is inert</td><td><span class="chip c-warn">TRIGGER</span> after the wall clears</td></tr>
+          <tr><td><strong>SMS connector</strong></td><td><span class="chip c-warn">TRIGGER</span> a second asker, or one paying client</td></tr>
+          <tr><td><strong>OAuth refresh-token rotation</strong> — 90-day access tokens hold for now</td><td><span class="chip c-mute">BACKLOG</span></td></tr>
+          <tr><td><strong>Staging environment</strong> — no environment story yet</td><td><span class="chip c-mute">BACKLOG</span></td></tr>
+          <tr><td><strong>Clerk still on dev instances</strong> — platform + 11 tenant projects</td><td><span class="chip c-warn">OPERATOR</span> $0, needs DNS</td></tr>
+          <tr><td><strong><code>dinodigi.com</code> SPF/DKIM unverified</strong> — notification email is dead</td><td><span class="chip c-warn">OPERATOR</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer>
+  Generated from the live schema, contract dump and feedback wall on 2026-07-29 ·
+  60 tools · 29 control tables · wall 31/32 closed ·
+  keep this updated as the surface changes
+</footer>
+
+</div>
