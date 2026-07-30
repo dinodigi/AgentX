@@ -1,21 +1,79 @@
-# The queue — every open item, dispositioned, in checkpoint order
+# The completion list — every item, and what happened to it
 
-> **Living — last synced 2026-07-28.** Protocol: [BURNDOWN.md](BURNDOWN.md).
-> Regenerate counts with `npm run pm`; dispositions are judgments and are
-> maintained by hand.
+> **Living — last synced 2026-07-29.** Protocol: [BURNDOWN.md](BURNDOWN.md) ·
+> decisions: [DECISIONS-CP9.md](DECISIONS-CP9.md)
+>
+> Run `npm run pm` for live counts and the **receipt ledger** in
+> [BOARD.md](BOARD.md) — that shows every closed item with its commit hash or
+> reopening trigger, generated from the same rows the reporter reads.
 
-**Wall: 20 open** (32 − 6 closed 07-28 with receipts: A1×2, A2×2, A4×2 were
-already shipped and still reading `new`).
-**Backlog: 44 unshipped.**
+## Where the burn-down stands
 
-⚑ = blocked on an operator decision. Everything else I drive.
+```
+FEEDBACK WALL   ██████████████████░░  92% by effort
+                31/32 items closed (97% by count) · 91/99 effort points
+BACKLOG         ░░░░░░░░░░░░░░░░░░░░  41 items — CP10, not yet triaged
+```
 
-**Effort sizes** — `(S)`=1, `(M)`=3, `(L)`=8, parsed by `npm run pm` to compute
-progress. A raw item count would flatter us: the cheap items were deliberately
-batched first, so counting alone makes the burn-down look like it stalls later
-when it is really just meeting the bigger work. A duplicate report of a fix
-already counted elsewhere is `(S)` — it closes with the same commit, so charging
-full effort twice would inflate the total.
+**Zero repeat themes remain.** Every issue two or more independent testers
+reported is closed. That counter hit 0 at CP4.
+
+---
+
+## ✅ Done
+
+| CP | What | Commit |
+|---|---|---|
+| **CP1** | Burn-down protocol + a checkpoint gate that runs in 60s, not 25min. Closed 6 items already fixed but still reading `new` | `7aed86d` `0dbf3ff` |
+| **CP2** | 6 papercuts: `startingFrom` (atomic first increment), `id` in where, bulk shape unwrap, null-as-absent in blocks, `neOrUnset` | `0dbf3ff` |
+| **CP3** | Both open bugs: stale probe verdicts reported as live faults; `get_client_code` omitting claim-write mutators | `65fa439` |
+| **CP4** | `indexed` on date fields — raw-text index proven exact, EXPLAIN-asserted | `2dfa814` |
+| **CP5** | `publicWrite` + `access.write` **compose** — anonymous intake alongside gated triage | `8d63719` |
+| **CP6** | `addFields` (with a real CAS), bulk cap 100→500, enum option renames | `f5a99f7` `260e64b` |
+| **CP7** | The scaling traps: array membership filtering, relative time in `publicFilter`, date buckets + 2nd `groupBy` | `47ed83e` `279d70e` `0ee45c9` |
+| **CP8** | `capacity: N` as a database guarantee (per-key advisory lock); 2 items closed as ⏳ TRIGGER | `bea3377` |
+| **—** | Delivery status codes say which question each answered | `43d0cd9` |
+| **—** | Host migration notice — built now, silent until the new domain exists | `1833cd3` |
+| **D3** | Browser-safe **read-only** delivery token — XVibe's per-app proxy is deletable | `57bbea4` |
+| **D2** | Workflow transitions gate on the **row**, not just the actor | `346cdd4` |
+
+## ⬜ Remaining
+
+### D1 · `auth_kit` credentials — the last wall item (8 pts, the biggest)
+
+`0ceec805`. **Decided:** platform primitives, not identity provider.
+
+1. **SEC-1 — write-only field type.** Never returned by any read: MCP, delivery,
+   export, entry versions, changes feed. Today a credential in a normal field is
+   plaintext in all five. Each is a place a secret leaks if missed, which is why
+   this is its own checkpoint.
+2. **`auth_kit` v2** — encodes the dummy-hash timing defence, lockout, and
+   single-use non-enumerating reset tokens, so integrators get the correct
+   implementation by default.
+
+### CP10 · Backlog sweep — 41 items
+
+Apply the four dispositions to `docs/BACKLOG.md`. Expect most to land ⏳ TRIGGER
+or 🚫 DECLINE — a backlog never dispositioned accumulates ideas nobody committed
+to. Anything surviving as 🔨 SHIP joins this list.
+
+**One thing to fix while sweeping:** the backlog has now gone stale **three
+times** in the same direction, including twice during this sprint (DM-2, DM-3,
+DM-4, QRY-5 all read open after shipping; two were marked *Parked* with design
+notes claiming the work was hard). The wall's ledger is generated; the backlog
+is still hand-typed markdown. CP10 should end with shipped-state derived from
+commits.
+
+### ⚑ Operator-blocked (not mine to close)
+
+| Item | Why it's stuck |
+|---|---|
+| `dinodigi.com` SPF/DKIM | Stallion's notification emails dead since 07-15; also blocks the Elastic Email send proof |
+| Clerk dev → production | Platform + 11 tenant projects on dev instances; $0, needs DNS |
+| Domain switch | Decided (`plugster.dev`); mechanics recorded in OPS-5, execution is yours |
+| Provider-switch button · cron Runs tab | Never clicked in a browser |
+
+---
 
 <!-- SIZES
 16d745d3 S   2bdec2b0 S   2684fec0 L   8570cb24 M   73a14ef7 M   de626cb6 S
@@ -26,97 +84,11 @@ d128f35a M   ad690ade M   4fae3449 M   5e8146d8 S   1a24b96b M   4847bc14 M
 58aaca1e M   921f9ec7 M
 -->
 
-## CP-extra — carried in from triage
-
-| Item | Disposition | |
-|---|---|---|
-| `2bdec2b0` (S) — unauthenticated GET on an access-ruled collection returns 404, not 401 | 🔨 SHIP | **reproduce first.** `93-fresh-reads` already asserts anonymous callers get a bare 401 with no collection names leaked, so this may be fixed or may be a different path. Non-enumeration is the constraint either way. |
-
----
-
-## CP2 — Papercuts (Track B + the `ne` surprise) — SHIPPED 0dbf3ff
-
-Six reports, all small, all in the same test surface — one gate, one push.
-
-| Item | Disposition | |
-|---|---|---|
-| `d128f35a` B1 — `bulk_create_entries` vs `create_entry` shape asymmetry | 🔨 SHIP | accept both shapes; fix error ordering (leads with a downstream symptom) |
-| `ad690ade` B2 — typed-block sub-fields reject explicit `null` | 🔨 SHIP | treat null as absent for optional relation/asset sub-fields |
-| `4fae3449` B3 — `query_entries` rejects `id` in where | 🔨 SHIP | |
-| `5e8146d8` B4 — MCP errors use delivery-facing wording | 📝 ANSWER | |
-| `1a24b96b` B5 — `increment` refuses an unset field | 🔨 SHIP | the seed-or-fallback workaround **silently loses the first count** — needs atomic upsert |
-| `4847bc14` — `ne` never matches unset fields | 📝 ANSWER | reporter says it's *correct but surprising*; that is a docs defect, not a behavior one |
-
-## CP3 — The two bugs (reproduce first)
-
-CLAUDE.md rule, and it has caught us four times: a live repro decides, never the
-report's narrative.
-
-| Item | Disposition | |
-|---|---|---|
-| `58aaca1e` E1 — `briefing.health` says `error` on working connectors | 🔨 SHIP | partially verified: all four rows read `connected` in the control DB, so the briefing computes status differently or serves stale |
-| `921f9ec7` E2 — `get_client_code` omits `update()`/`remove()` for claim-write | 🔨 SHIP | either the generator or the docs is wrong — find out which **before** changing either |
-
-## CP4 — `indexed` on date fields (A3, 2 reporters)
-
-`0a5ce08c` + `34acd74d`. 🔨 SHIP — expression index over the normalized instant.
-Both reporters said the error message is good but the suggested workaround has no
-substitute: `published_at` is *the* sort key for content, `starts_at`/`ends_at`
-*the* filter for scheduling. If the index turns out to be infeasible, this
-becomes 📝 ANSWER — state the limit plainly and say why.
-
-## CP5 — Anonymous intake + gated writes (A5, 2 reporters)
-
-`e0b6eb32` + `16d745d3`. 🔨 SHIP — **decision made: they compose.** Any non-`none`
-`access.write` currently *replaces* the anonymous POST path, forcing a
-two-collection split for public form in / staff triage desk — the single most
-common shape on the platform. `publicWrite` will govern anonymous POST;
-`access.write` will govern PATCH/DELETE. Not an operator call: the current
-behavior has no defender and the composed reading is what the docs already imply.
-
-## CP6 — Schema mutation ergonomics
-
-| Item | Disposition | |
-|---|---|---|
-| `9c2333cb` — no additive field op (re-send every field to add one) | 🔨 SHIP | lost-update hazard, not just typing |
-| `73a14ef7` — enum option renames have no mapped migration | 🔨 SHIP | `renames:[]` covers fields only, so an option rename silently orphans rows |
-| `1c10d760` — 100 rows/call makes real migrations chatty | 🔨 SHIP | 3.1k-lead import = 31 calls; raise the cap or document the ceiling honestly |
-
-## CP7 — Scaling traps (Track C)
-
-| Item | Disposition | |
-|---|---|---|
-| `cbf4db8f` C1 — array fields cannot be filtered on delivery | 🔨 SHIP | **worst failure profile on the board**: ships fine at 5 rows, wrong at 500, and the generated client's filter type advertises `tags` — implying it works |
-| `a1fb8001` C2 — `publicFilter` cannot express relative time | 🔨 SHIP | `define_schedule` already accepts a `{daysAgo}` vocabulary — the language exists, it just isn't wired here |
-| `2684fec0` C3 — no date bucketing / second `groupBy` | 🔨 SHIP | long-standing, the by-month report pipeline |
-
-## CP8 — Capacity + reach
-
-| Item | Disposition | |
-|---|---|---|
-| `8570cb24` — no counting/capacity constraint (`max N rows per key`) | 🔨 SHIP | booking capacity; `unique` gives exactly-one, nothing gives at-most-N |
-| `de626cb6` — no SMS connector | ⏳ TRIGGER ⚑ | needs an operator account + a paying reason. **Trigger: a second project asks, or one client commits to SMS.** |
-| `42a6d515` — `countryside_crm` ships `tools:[]` | ⏳ TRIGGER | plugin-authored tools are a design pass of their own (PLUG line). **Trigger: after the wall is clear.** |
-
-## CP9 — The decision round ⚑
-
-These three need you, and they're worth one sitting together rather than three
-interruptions. I'll bring options and a recommendation for each.
-
-| Item | Why it's yours |
-|---|---|
-| `0ceec805` D1 — `auth_kit` leaves credentials to every tenant | **Strategic, not technical.** Store credential material (breaking "credential-free by design"), ship a verified reference implementation, or stay out and document the trap loudly? All three are defensible. The current position is the only one that is *silently* dangerous — the reporter had to know to use a real dummy hash so response latency doesn't enumerate accounts, and said they'd expect most integrators to miss it.<br><br>**Operator note 07-28:** the reporter storing argon2id hashes in a tenant collection proves the constraint was never technical — the platform holds credential material fine today. "Credential-free" is positioning, not a capability limit. So the question is not *can we*, it is **whether we make the correct implementation the default one**. Storing the hash is the easy 10%; the 90% is dummy-hash timing, lockout, single-use non-enumerating reset tokens, session invalidation on password change, and migrating argon2id params as hardware improves. Two counterweights for the decision: (a) holding credentials changes our BREACH PROFILE — a leak stops being content and starts being auth material for every tenant's end users, and the blast radius lands on us whoever wrote the code; (b) there is a cheaper 80% — platform primitives that make the traps hard to hit, chief among them the **write-only field type already in the backlog** (never returned by any read, MCP or delivery) plus a verified reference `auth_kit` v2. |
-| `eff3e105` + `66d1cbd9` D3 — a browser-safe delivery credential | Two reporters, and a measured cost: **XVibe runs an edge proxy per app for the sole purpose of holding a token.** Touches CDN cache keys, rate limiting, and abuse surface. |
-| `6809681c` D2 — workflow transitions gate on WHO, never on WHAT | "May not go live without a creative" becomes a required field, which then blocks saving a draft — the constraint lands at the wrong moment. Design shape is clear (`when` clauses exist elsewhere); the call is whether it earns a slot now. |
-
-## CP10 — The backlog sweep (44 unshipped)
-
-Same four dispositions, applied to `docs/BACKLOG.md`. Expect most to land ⏳
-TRIGGER or 🚫 DECLINE — a backlog that has never been dispositioned accumulates
-ideas that were never actually committed to. Anything that survives as 🔨 SHIP
-joins the queue above.
-
----
+**Effort sizes** above are parsed by `npm run pm`. `(S)`=1 `(M)`=3 `(L)`=8. A
+raw item count flatters us — the cheap items were batched first on purpose — so
+**quote the effort number**. An untagged open item counts as `(M)`, never zero. A
+duplicate report of a fix already counted is `(S)`, since it closes on the same
+commit.
 
 ## Done means
 

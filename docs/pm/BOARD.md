@@ -17,7 +17,7 @@
 Protocol: **[BURNDOWN.md](BURNDOWN.md)** · dispositioned queue: **[QUEUE.md](QUEUE.md)**
 
 <!-- BEGIN:LEDGER -->
-_30 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
+_31 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
 
 | | id | project | item | receipt |
 |---|---|---|---|---|
@@ -47,6 +47,7 @@ _30 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 | ✅ | `34acd74d` | jabed test | indexed is rejected on date fields, but published_at is the canonical sort key for any content collection — th | `2dfa814` |
 | ✅ | `d128f35a` | jabed test | bulk_create_entries takes bare objects while create_entry takes {collection, data:{...}} — the asymmetry betwe | `0dbf3ff` |
 | ✅ | `cbf4db8f` | jabed test | Array fields cannot be filtered on the delivery API, so a tag archive has to fetch every post and filter in me | `47ed83e` |
+| ✅ | `6809681c` | jabed test | Workflow transitions gate on ACTOR but not on row state, so "you may not launch a campaign that has no creativ | `346cdd4` |
 | ✅ | `9c61bc7a` | jabed test | Entry writes are not immediately visible on the delivery API and nothing documents that, so my first read afte | `66ad28e` |
 | ✅ | `1a24b96b` | jabed test | update_entry_if increment refuses an unset field, so every counter needs a seed-or-fallback path — and the fal | `0dbf3ff` |
 | ✅ | `75f9f4f7` | jabed test | The workflow docs note that the 'admin' actor includes client-role members, which quietly means an actor-gated | `2798606` |
@@ -76,16 +77,15 @@ _30 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=65 · new=2 · reviewed=2_
+_Wall totals: done=66 · new=1 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_2 open (2 new, 0 planned) · 0 theme(s) reported more than once · snapshot 2026-07-29 17:23Z_
+_1 open (1 new, 0 planned) · 0 theme(s) reported more than once · snapshot 2026-07-30 00:39Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
 | ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
-| ⬜ | 07-26 | jabed test | idea | Workflow transitions gate on ACTOR but not on row state, so "you may not launch a campa… |
 <!-- END:WALL -->
 
 ## Backlog — decided-or-parked, NOT started
