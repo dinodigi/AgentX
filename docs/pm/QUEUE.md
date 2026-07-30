@@ -10,8 +10,8 @@
 ## Where the burn-down stands
 
 ```
-FEEDBACK WALL   ██████████████████░░  92% by effort
-                31/32 items closed (97% by count) · 91/99 effort points
+FEEDBACK WALL   ████████████████████  100% by effort
+                32/32 items closed (100% by count) · 99/99 effort points
 BACKLOG         ░░░░░░░░░░░░░░░░░░░░  41 items — CP10, not yet triaged
 ```
 
@@ -36,20 +36,12 @@ reported is closed. That counter hit 0 at CP4.
 | **—** | Host migration notice — built now, silent until the new domain exists | `1833cd3` |
 | **D3** | Browser-safe **read-only** delivery token — XVibe's per-app proxy is deletable | `57bbea4` |
 | **D2** | Workflow transitions gate on the **row**, not just the actor | `346cdd4` |
+| **D1** | **SEC-1 write-only fields** — written, never returned by any read, on all five surfaces plus webhooks, hooks and the admin. Absent rather than masked, in two layers, with a test per surface that fails when its own redaction is removed (verified by breaking four of them) | `4de9ddb` |
+| **D1** | **`auth_kit` v2** — the credential *recipe*: atomic lockout, single-use non-enumerating resets, argon2id parameters, and the real-dummy-hash trap. Verification stays with the tenant, because a comparison is a read → BACKLOG **SEC-3** carries the platform-side option with a trigger | `4e4491f` |
+
+**The wall is now at 0 open — 32/32, 99/99 effort points.**
 
 ## ⬜ Remaining
-
-### D1 · `auth_kit` credentials — the last wall item (8 pts, the biggest)
-
-`0ceec805`. **Decided:** platform primitives, not identity provider.
-
-1. **SEC-1 — write-only field type.** Never returned by any read: MCP, delivery,
-   export, entry versions, changes feed. Today a credential in a normal field is
-   plaintext in all five. Each is a place a secret leaks if missed, which is why
-   this is its own checkpoint.
-2. **`auth_kit` v2** — encodes the dummy-hash timing defence, lockout, and
-   single-use non-enumerating reset tokens, so integrators get the correct
-   implementation by default.
 
 ### CP10 · Backlog sweep — 41 items
 
@@ -94,3 +86,9 @@ commit.
 
 `npm run pm` reports **0 open**, and every 🚫 / ⏳ has its reason or trigger
 written into the wall reply where the reporter can read it.
+
+**✅ Met for the wall, 2026-07-29.** The one split disposition (`0ceec805`:
+shipped in part, plus a TRIGGER for platform-side credential verification) states
+both halves in the reporter's own terms — including the reason the half we
+declined cannot be reached from the half we shipped. The backlog half of the
+burn-down is CP10.

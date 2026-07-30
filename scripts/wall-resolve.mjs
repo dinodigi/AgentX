@@ -456,10 +456,69 @@ const RESOLUTIONS = {
       "unmet requirement rather than reporting a conflict — the two need opposite responses, and " +
       "calling a precondition failure a race would send you into a retry loop that never succeeds.",
   },
+
+  // --- D1: SEC-1 write-only fields + auth_kit v2 (4de9ddb, 4e4491f) --------
+  // The LAST open item on the wall. Split disposition on purpose: the write-only
+  // primitive shipped, platform-side verification did not, and saying so plainly
+  // is the difference between a closed item and one that comes back in six weeks.
+  "0ceec805": {
+    disposition: "SHIPPED (in part) + TRIGGER",
+    date: "2026-07-29",
+    ref: "4de9ddb, 4e4491f",
+    note:
+      "The most thorough report on the wall, and it changed the design twice — thank you. " +
+      "Two halves, and I want to be exact about which one shipped.\n\n" +
+      "**SHIPPED — the write-only primitive you specified.** `{type:\"text\", writeOnly:true}` is " +
+      "written and never returned by any read. You were right that masking the admin display would " +
+      "not be sufficient, and right about which surfaces mattered: the field's NAME now never " +
+      "appears as a key in a read payload — `get_changes`, `export_entries` (json rows AND the csv " +
+      "COLUMN, because an empty column invites a re-import that fills it back in), " +
+      "`list_entry_versions`, MCP projection, the delivery API, SSE, webhook and email payloads, " +
+      "the delivery log, before-write hook envelopes, and the admin list and form. Absent rather " +
+      "than masked, deliberately: a `***` marker is a value, and values get logged, diffed, cached " +
+      "and eventually written back. Two layers, because either alone has a hole — the value is " +
+      "never copied into version snapshots, feed rows or event payloads, AND every read redacts " +
+      "anyway, since a field FLIPPED to write-only leaves plaintext in history that storage " +
+      "stripping cannot reach backwards into. Filtering, sorting and selecting it are refused (an " +
+      "eq/contains probe is a read with extra steps), as are `unique` and `capacity` (a conflict " +
+      "would report that a value exists), nesting it in a group/array, deriving a computed field " +
+      "FROM it, and using it as a relation labelField or an email token. `describe_collection` " +
+      "still NAMES the field and flags it, so a schema stays explainable — hiding its existence " +
+      "would leave an agent writing a password, reading the row back, seeing nothing, and " +
+      "concluding the write failed.\n\n" +
+      "**NOT SHIPPED — `verify_credential`, and here is the honest reason.** Working through your " +
+      "proposal surfaced something that changes it: a write-only field cannot hold a password " +
+      "hash. Verifying a hash means COMPARING it, and a comparison is a read; argon2id embeds a " +
+      "random salt, so you cannot even recompute the hash to compare without first reading the " +
+      "stored value. So the primitive you asked for does not by itself let Pluggie hold your " +
+      "hashes — platform-side verification is required, and that is us becoming an identity " +
+      "provider: we would own password reset, MFA and session revocation permanently. That is a " +
+      "real product and the wrong sprint, so it is recorded as BACKLOG SEC-3 rather than " +
+      "half-built. A hash we store and cannot verify would be strictly worse than one we never " +
+      "held. TRIGGER: a second project independently asks for it, or a tenant ships a " +
+      "demonstrably wrong implementation of the recipe below.\n\n" +
+      "**SHIPPED INSTEAD — `auth_kit` v2 carries the rest of your five files.** Lockout is now " +
+      "data, not advice: `users.failed_attempts` / `last_failed_at` / `locked_until` / " +
+      "`password_changed_at` / `password_algo`, all `writableBy:'none'`, with the recipe " +
+      "incrementing through `update_entry_if`'s ATOMIC increment (`startingFrom:0`, so the first " +
+      "attempt is atomic too) — the read-then-write version most people write first silently " +
+      "undercounts concurrent attempts, which is a bypass rather than a rounding error, and a test " +
+      "fires five failures at once and asserts the count is five. A `password_resets` collection " +
+      "makes single-use the WORKFLOW's guarantee (`used` is terminal, so there is no route back to " +
+      "pending) with a server-stamped uuid token and `expires_at`. Your argon2id parameters " +
+      "(m=19456, t=2, p=1) are the stated recipe, with rehash-on-login as the upgrade path and " +
+      "`password_algo` so you can list accounts on outdated parameters by QUERY without reading a " +
+      "hash — you called the upgrade path the real cost of owning this, and it was the part most " +
+      "worth centralising. And the enumeration defence is written down WITH the trap you found: " +
+      "the dummy must be a real argon2id hash, because a malformed one fails on parse and returns " +
+      "instantly, reintroducing the exact timing signal it exists to remove. That detail is in the " +
+      "plugin's guidance and in its acceptance list, so the next integrator gets it for free " +
+      "instead of deriving it the way you had to.",
+  },
 };
 
 const stamp = (r) =>
-  `\n\n---\n**${r.disposition}** 2026-07-28 · \`${r.ref}\`\n\n${r.note}`;
+  `\n\n---\n**${r.disposition}** ${r.date ?? "2026-07-28"} · \`${r.ref}\`\n\n${r.note}`;
 
 const rows = await sql`
   SELECT f.id, f.summary, f.detail, f.status, p.name AS proj

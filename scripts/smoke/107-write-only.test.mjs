@@ -219,6 +219,49 @@ describe("SEC-1 — a write-only field never appears in any read path", () => {
     assertNoLeak("webhook_deliveries table", rows);
   });
 
+  it("WORKFLOW TRANSITION actions must NOT contain it — the third dispatch route", async () => {
+    // Three callers reach runEventAction: immediate events, delayed jobs, and
+    // transition actions. Redaction lives in that one shared exit point rather
+    // than at each caller, and this is the caller with a DIFFERENT payload shape
+    // (it carries a `transition` key), so it is the one most likely to have been
+    // built by hand somewhere else.
+    const sink = await startWebhookReceiver();
+    try {
+      const def = await mcp(p.mcpToken, "define_collection", {
+        name: "gated",
+        fields: [
+          { name: "title", label: "T", type: "text", required: true, publicRead: true },
+          { name: "api_key", label: "K", type: "text", writeOnly: true },
+          { name: "stage", label: "S", type: "enum", options: ["draft", "live"] },
+        ],
+        workflow: {
+          field: "stage",
+          initial: "draft",
+          transitions: [
+            { from: "draft", to: "live", actors: ["mcp"], actions: [{ type: "webhook", url: sink.url }] },
+          ],
+        },
+      });
+      assert.ok(def.ok, def.errorText);
+      const e = await mcp(p.mcpToken, "create_entry", {
+        collection: "gated", data: { title: "shipping", api_key: SENTINEL },
+      });
+      assert.ok(e.ok, e.errorText);
+      const move = await mcp(p.mcpToken, "update_entry", {
+        collection: "gated", id: e.value.id, data: { stage: "live" },
+      });
+      assert.ok(move.ok, move.errorText);
+      const got = await waitFor(() => (sink.received.length > 0 ? sink.received : null));
+      assert.ok(got, "expected the transition action to fire");
+      // Sanity: the payload really is the transition shape, so a pass here means
+      // this route was exercised rather than skipped.
+      assert.ok(got.some((x) => x.transition), "payload should carry the transition");
+      assertNoLeak("transition action payload", got);
+    } finally {
+      await sink.close();
+    }
+  });
+
   it("the AUDIT LOG names the field but never its value — a rotation stays visible", async () => {
     const audit = await mcp(p.mcpToken, "get_audit_log", { entryId });
     assert.ok(audit.ok, audit.errorText);
@@ -699,6 +742,46 @@ describe("SEC-1 — define-time refusals", () => {
     ], { confirm: true });
     assert.equal(flip.ok, false, "otherwise (a) is violated retroactively by editing the target");
     assert.match(flip.errorText, /write-only/);
+  });
+
+  it("a schedule's set.copyFrom cannot SOURCE it — copying is laundering, same as a computed template", async () => {
+    // Found by sweeping every place a caller-supplied field NAME is used to read a
+    // value, rather than by reasoning about read paths: the mutate sweep's
+    // copyFrom only checked that the field EXISTS, so it would have copied a
+    // write-only value into an ordinary field that never declared itself secret.
+    const ok = await define("wo_sweepable", [
+      base,
+      { name: "secret", label: "S", type: "text", writeOnly: true },
+      { name: "copy", label: "C", type: "text" },
+      { name: "stage", label: "St", type: "enum", options: ["a", "b"] },
+    ]);
+    assert.ok(ok.ok, ok.errorText);
+    const r = await mcp(p.mcpToken, "define_schedule", {
+      name: "wo_launder_sweep",
+      recurrence: { every: "1d" },
+      action: {
+        type: "mutate",
+        collection: "wo_sweepable",
+        where: [{ field: "stage", op: "eq", value: "a" }],
+        set: { copy: { copyFrom: "secret" } },
+      },
+    });
+    assert.equal(r.ok, false, "a sweep must not be able to move a write-only value into a readable field");
+    assert.match(r.errorText, /WRITE-ONLY|write-only/);
+  });
+
+  it("a schedule's where clause cannot FILTER on it either", async () => {
+    const r = await mcp(p.mcpToken, "define_schedule", {
+      name: "wo_probe_sweep",
+      recurrence: { every: "1d" },
+      action: {
+        type: "mutate",
+        collection: "wo_sweepable",
+        where: [{ field: "secret", op: "exists", value: true }],
+        set: { copy: { value: "x" } },
+      },
+    });
+    assert.equal(r.ok, false);
   });
 
   it("a checkout priceField cannot be write-only — the checkout route reads it", async () => {

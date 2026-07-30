@@ -11,7 +11,7 @@ Pluggie is an MCP-native backend platform: an agent defines a project's data
 model over MCP and gets back a branded client admin, a public delivery API, and
 declarative behaviors (authz, automation, payments, hooks, plugins) — without
 Pluggie ever hosting tenant code. **60 MCP tools · 8 delivery endpoint
-families · 630+ smoke tests green (117 suites, run against a dedicated test
+families · 834 smoke tests green (142 suites, run against a dedicated test
 DB) · live at pluggie.app** (Render + Cloudflare edge cache; public status
 page linked in the site footer).
 

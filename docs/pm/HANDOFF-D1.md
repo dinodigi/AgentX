@@ -1,5 +1,30 @@
 # Handoff — D1 / SEC-1: the write-only field type
 
+> **✅ DONE 2026-07-29** — `4de9ddb` (SEC-1) + `4e4491f` (`auth_kit` v2). Wall item
+> `0ceec805` closed with a receipt; the wall is at 0 open. Kept as written, because
+> the traps it listed were the right ones and two of them fired:
+>
+> - *"Write a test per surface, as 'this must NOT appear'"* — done, and then
+>   **verified by deliberately breaking four redaction points**. That first pass
+>   showed two tests passing anyway (storage stripping was masking the read pass
+>   they claimed to cover) and one passing vacuously (no rows in its fixture). All
+>   three fixed. The advice was necessary but not sufficient: a must-NOT-appear
+>   test also has to be shown to fail.
+> - *"Decide what an UPDATE that omits the field does"* — omit keeps, `null`
+>   unsets, a value rotates. The silent-clear risk was real and appeared in two
+>   places the list did not name: a **version restore** and a **hook transform**,
+>   both of which write a full row assembled from data the redaction had already
+>   emptied.
+> - *"`capacity`/`unique` — probably refuse"* — refused, along with
+>   `indexed`/`searchable`/`localized`/`computed`/`publicRead`, each with its
+>   reason in the error.
+>
+> **The one thing the handoff did not anticipate:** a write-only field cannot hold
+> a password hash. Verification needs a comparison and a comparison is a read, so
+> `auth_kit` v2 ships the recipe rather than the credential store, and BACKLOG
+> **SEC-3** carries platform-side verification with a trigger. See
+> [STATUS.md](STATUS.md).
+
 > **Durable**, written 2026-07-29 at the end of the burn-down session.
 > Paste the prompt at the bottom into a fresh session.
 

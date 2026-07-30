@@ -295,7 +295,7 @@ graph LR
         <tbody>
           <tr><td><strong>Freshness</strong></td><td>Reads fresh. An agent always sees its own writes immediately.</td><td>Converges within ~15s (cache TTL across a multi-instance fleet).</td></tr>
           <tr><td><strong>Row visibility</strong></td><td>All rows.</td><td><code>publicFilter</code> + <code>access</code> rules applied.</td></tr>
-          <tr><td><strong>Field visibility</strong></td><td>All fields.</td><td>Only <code>publicRead</code> fields.</td></tr>
+          <tr><td><strong>Field visibility</strong></td><td>All fields <em>except</em> <code>writeOnly</code> ones — full trust does not mean "may read a credential back".</td><td>Only <code>publicRead</code> fields.</td></tr>
           <tr><td><strong>Consequence</strong></td><td colspan="2">A row can be readable over MCP yet <strong>permanently</strong> absent from delivery. That is not a delay — it is a different question being answered.</td></tr>
         </tbody>
       </table>
@@ -346,6 +346,7 @@ graph LR
           <tr><td><code>searchable</code></td><td>Included in full-text search and delivery <code>?q=</code></td><td><span class="chip c-tenant">DB</span> GIN index</td></tr>
           <tr><td><code>computed</code></td><td>Server-derived: <code>slugify</code> · <code>template</code> · <code>now</code> · <code>uuid</code>. A client-supplied value is rejected</td><td>write path</td></tr>
           <tr><td><code>localized</code></td><td>Value is a <code>{locale: string}</code> variant map</td><td>validator</td></tr>
+          <tr><td><code>writeOnly</code></td><td><strong>The credential primitive.</strong> Written, never returned by <em>any</em> read — the field's name never appears as a key in a read payload, on <em>any</em> surface (MCP, delivery, export json + the csv column, versions, changes, webhooks, hook envelopes, the admin form). Absent, not masked. Cannot be filtered, sorted or selected: a filter is a read with extra steps. <em>Not</em> a verifier — a salted hash must be compared, and a comparison is a read</td><td>storage stripping + redaction at every read boundary</td></tr>
           <tr><td><code>writableBy</code></td><td>Delivery-only write gate: <code>"none"</code> or a claim match</td><td>delivery route</td></tr>
         </tbody>
       </table>

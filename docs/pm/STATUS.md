@@ -1,33 +1,49 @@
 # Status — where things stand
 
-> **Updated 2026-07-29.** One page. If you read nothing else, read this.
+> **Updated 2026-07-29 (wall cleared).** One page. If you read nothing else, read this.
 > Completion list: **[QUEUE.md](QUEUE.md)** · full inventory + receipt ledger:
 > **[BOARD.md](BOARD.md)** · protocol: **[BURNDOWN.md](BURNDOWN.md)**
 
 ## Right now
 
-**The feedback wall is nearly clear.** 31 of 32 items closed, each with a receipt
-the reporter can read — a commit hash, or a named condition that reopens it.
+**The feedback wall is CLEAR.** All 32 items closed, each with a receipt the
+reporter can read — a commit hash, or a named condition that reopens it.
 
 ```
-FEEDBACK WALL   ██████████████████░░  92% by effort  (31/32 items)
+FEEDBACK WALL   ████████████████████  100% by effort  (32/32 items)
 BACKLOG         ░░░░░░░░░░░░░░░░░░░░  41 items — CP10, not yet triaged
 ```
 
 **Zero repeat themes remain.** Every issue two or more unrelated testers hit is
 closed. That was the organising principle of the sprint and it is finished.
 
-**Next: CP10**, the 41-item backlog sweep (driveable without the operator), then
-**D1** — the last wall item, scoped as SEC-1 (a write-only field type) plus a
-hardened `auth_kit` v2.
+**Next: CP10**, the 41-item backlog sweep — the only thing left on the board that
+is driveable without the operator.
 
-## The three decisions, all made
+## The three decisions, all made and all shipped
 
 | | Decision | State |
 |---|---|---|
 | **D3** | Browser-safe read-only delivery token | ✅ `57bbea4` — XVibe's per-app proxy is deletable |
 | **D2** | Workflow transitions gate on the row, not just the actor | ✅ `346cdd4` |
-| **D1** | Platform primitives (SEC-1 + `auth_kit` v2), not identity provider | ⬜ next after CP10 |
+| **D1** | Platform primitives (SEC-1 + `auth_kit` v2), not identity provider | ✅ `4de9ddb` `4e4491f` |
+
+### What D1 turned out to be
+
+`SEC-1` shipped as `{type:"text", writeOnly:true}` — written, never returned by
+any read, absent rather than masked. Details in
+[CAPABILITIES](../CAPABILITIES.md#1-data-modeling).
+
+**One finding worth carrying forward, because it re-shaped the deliverable:** a
+write-only field cannot hold a password hash. Verifying a hash means comparing
+it, and a comparison is a read — argon2id embeds a random salt, so you cannot
+even recompute the hash without the stored value. So SEC-1 does not by itself
+let us hold tenant credentials; that needs platform-side verification, which is
+the identity-provider scope D1 declined. `auth_kit` v2 therefore ships the
+*recipe* (argon2id parameters, the real-dummy-hash timing defence, atomic
+lockout, single-use non-enumerating resets) rather than the mechanism, and
+**BACKLOG SEC-3** carries the platform-side option with a trigger. The wall
+receipt says all of this in the reporter's own terms.
 
 ## Domain
 
@@ -70,6 +86,7 @@ items were batched first on purpose.
 | Clerk dev → production | Platform + 11 tenant projects on dev instances; $0, needs DNS |
 | Buy `plugster.dev` + `myxvibe.com` | Decided. Start the PSL submission for `myxvibe.com` on purchase — free, but weeks to propagate, and it is what enforces the cookie boundary between tenant apps |
 | Provider-switch button · cron Runs tab | Never clicked in a browser |
+| **Write-only field in the admin form** | The SERVER side is asserted by test — the redacted `initial` prop, so nothing reaches the page payload. The rendering (an empty `type="password"` input, the red `write only` badge, "leave blank to keep") has never been *looked at*: `/admin` is Clerk-gated, so a build session cannot sign in. One glance at any collection carrying a `writeOnly` field settles it |
 
 ## The recurring lesson
 

@@ -55,7 +55,7 @@ import type { AuditActor } from "@/db/schema";
 
 const UNKNOWN_ACTOR: AuditActor = { type: "unknown" };
 import { fieldLocalized, fieldWriteOnly, type FieldDef, type ArrayItem, type BlockDef } from "./field-types";
-import { redact, redactRows, preserveWriteOnly, writeOnlyNames } from "./write-only";
+import { redact, preserveWriteOnly, writeOnlyNames } from "./write-only";
 import { z } from "zod";
 
 /**
@@ -3002,9 +3002,10 @@ export function validateSelect(fields: FieldDef[], select: string[]): void {
     }
   }
   // SEC-1: naming a write-only field in `select` is REFUSED rather than silently
-  // dropped. The redaction below would strip it either way, but an agent that
-  // asked for a field and got a row back without it has been told nothing —
-  // it will conclude the value is unset and go looking for the bug elsewhere.
+  // dropped. The read boundary strips it either way, so this changes nothing about
+  // what leaves — but an agent that asked for a field and got a row back without
+  // it has been told nothing, and will conclude the value is unset and go looking
+  // for the bug somewhere else.
   const wo = writeOnlyNames(fields).filter((n) => select.includes(n));
   if (wo.length > 0) {
     throw new ValidationError(

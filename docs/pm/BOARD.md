@@ -77,21 +77,20 @@ _31 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=66 · new=1 · reviewed=2_
+_Wall totals: done=67 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_1 open (1 new, 0 planned) · 0 theme(s) reported more than once · snapshot 2026-07-30 01:34Z_
+_0 open (0 new, 0 planned) · 0 theme(s) reported more than once · snapshot 2026-07-30 04:01Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
-| ⬜ | 07-26 | jabed test | limitation | auth_kit is credential-free by design, so every tenant hand-rolls password hashing, loc… |
 <!-- END:WALL -->
 
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_41 unshipped (9 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_41 unshipped (8 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
 **These are NOT started.** A sprint is a commitment; this is a list. High priority only:
 
@@ -103,11 +102,10 @@ _41 unshipped (9 high priority) · full detail in [../BACKLOG.md](../BACKLOG.md)
 | 📥 | **OPS-2** | Breaking-change comms: platform behavior changes shipped under live sites with zero noti |
 | 🚧 | **PLUG-2** | Base/blueprint composition model — now a full plan: [plans/PLUGIN-BASES-PLAN.md](plans/P |
 | 📥 | **QRY-3** | Publish the limits in the contract: per-IP rate budget, `429` + `retry-after`, size caps |
-| 📥 | **SEC-1** | Masked / write-only field type — today any credential in a normal field is plaintext in  |
 | 📥 | **WP-3** | Fix the hooks×bulk contract contradiction: `define_collection.hooks` says bulk is "refus |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 32 at M/L priority._
+_…plus 33 at M/L priority._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)

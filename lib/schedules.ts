@@ -14,6 +14,7 @@ import { getCollection } from "./collections";
 import { WHERE_OPS } from "./query";
 import { allowedFroms, isTransitionTarget } from "./workflow";
 import { ValidationError } from "./validation";
+import { fieldWriteOnly } from "./field-types";
 
 /**
  * Recurring schedules (G3): preset recurrence objects (no cron strings), ticked
@@ -142,6 +143,22 @@ async function validateMutateAction(
       bad(
         `set.${field} must be "now", null (unset), {value: <literal>}, or {copyFrom: "<existing field>"} — the vocabulary is closed`,
       );
+    }
+    // SEC-1: copyFrom is a laundering route — copying a write-only value into an
+    // ordinary field would make it readable everywhere, through a field that
+    // never declared itself a secret. Same shape as a computed `{{token}}`
+    // template, refused for the same reason. (`where`/`guard` clauses are already
+    // refused by buildWhere's shared field gate at fire time; this is the SET
+    // side, which never passes through it.)
+    const src =
+      typeof spec === "object" && spec !== null && "copyFrom" in spec ? String(spec.copyFrom) : null;
+    if (src) {
+      const srcDef = collection!.fields.find((f) => f.name === src);
+      if (srcDef && fieldWriteOnly(srcDef)) {
+        bad(
+          `set.${field} copies from "${src}", which is WRITE-ONLY — that would copy a value that is never readable into a field that is. Write-only values can only be replaced, not moved.`,
+        );
+      }
     }
   }
 }
