@@ -15,7 +15,8 @@ export const config = {
   matcher: [
     // Run on everything except static assets and the token-authed API routes
     // (api/stripe authenticates by webhook signature — Clerk must not gate it;
-    // api/health is a public liveness probe).
-    "/((?!_next|api/mcp|api/v1|api/jobs|api/stripe|api/health|.*\\.(?:ico|png|jpg|jpeg|svg|css|js)$).*)",
+    // api/health is a public liveness probe; api/contract + api/docs are the
+    // public, deliberately unauthenticated reference surface — DX-2).
+    "/((?!_next|api/mcp|api/v1|api/jobs|api/stripe|api/health|api/contract|api/docs|.*\\.(?:ico|png|jpg|jpeg|svg|css|js)$).*)",
   ],
 };

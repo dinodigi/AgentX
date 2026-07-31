@@ -2219,6 +2219,12 @@ export async function callTool(
             changes: `${ctx.baseUrl}/api/v1/changes`,
             changesStream: `${ctx.baseUrl}/api/v1/changes/stream`,
             stripeWebhook: `${ctx.baseUrl}/api/stripe/webhook/${projectId}`,
+            // DX-2: the contract + reference docs BY URL — quotable in client
+            // system prompts and readable by anything with HTTP, so no
+            // integrator ever needs (or copies) the repo files. Fetched, not
+            // snapshotted: a copy is how the XVibe brief drifted (15e5783b).
+            contract: `${ctx.baseUrl}/api/contract`,
+            hooksDoc: `${ctx.baseUrl}/api/docs/hooks`,
           },
           stripe: (() => {
             const s = connectorRows.find((c) => c.type === "stripe");
@@ -2262,7 +2268,7 @@ export async function callTool(
               "your endpoint writes results back through the delivery API or MCP — use idempotencyKey " +
               "(create/transact) or update_entry_if (CAS) so a retried consult/callback never double-applies. " +
               "Every hook request carries `x-agentx-hook: 1`; a loop-safe endpoint refuses to re-enter on it.",
-            docs: "get_client_code emits a ready-to-run signature-verification + envelope stub for your hook endpoint whenever this project has hooks configured (full reference: docs/hooks.md in the AgentX repo).",
+            docs: `get_client_code emits a ready-to-run signature-verification + envelope stub for your hook endpoint whenever this project has hooks configured (full reference: ${ctx.baseUrl}/api/docs/hooks — fetchable, not a repo path).`,
           },
           deliveryApi: {
             auth: "Authorization: Bearer <project token> on every request",
