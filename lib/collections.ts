@@ -1667,21 +1667,48 @@ export async function defineCollection(
   // two COMPOSE. It is still worth saying out loud, because which half governs
   // which verb is the thing authors get wrong.
   const composedWrite = (input.publicWrite ?? false) && !(writeList.length === 1 && writeList[0] === "none");
+  const accessNotes: string[] = [];
+  if (composedWrite) {
+    accessNotes.push(
+      "publicWrite + access.write COMPOSE: anonymous POST stays open (publicWrite governs it), while " +
+        "PATCH/DELETE require access.write — this is the 'anyone submits, only staff triage' shape. A " +
+        "signed-in user who does not meet access.write may still POST (they could drop the token and " +
+        "post anonymously anyway), but their row is attributed to them. To close anonymous submission, " +
+        "set publicWrite:false.",
+    );
+  }
+  // WP-9 (wall 21f4c5d5): access.read gates WHO may read; publicRead still
+  // chooses WHICH fields are served — for AUTHENTICATED readers too, which the
+  // name does not suggest. An agent that gated reads and skipped publicRead on
+  // "non-public" fields shipped an app receiving near-empty rows with no error.
+  // A NOTE rather than a warning: hidden fields on a gated collection are often
+  // exactly right (auth_kit is full of them) — the note makes the semantics
+  // impossible to misread once, and names the fields so the fix is one glance.
+  const readRules = input.access?.read;
+  const readList = readRules === undefined ? ["public"] : Array.isArray(readRules) ? readRules : [readRules];
+  const readGated = readList.some((r) => r !== "public");
+  if (readGated) {
+    const hidden = fields.filter((f) => !f.publicRead).map((f) => f.name);
+    const served = fields.length - hidden.length;
+    accessNotes.push(
+      `access.read gates WHO can read on delivery; publicRead still chooses WHICH fields are served — ` +
+        `for authenticated readers too, not just anonymous ones. This collection serves ${served} of ` +
+        `${fields.length} fields` +
+        (hidden.length > 0
+          ? ` (delivery-hidden: ${hidden.join(", ")}). If your app needs one of those, set publicRead:true on it`
+          : "") +
+        (served === 0
+          ? `. With ZERO delivery-visible fields this collection is NOT on the delivery API at all (404, identity-independent) — readable over MCP only`
+          : "") +
+        `.`,
+    );
+  }
   return {
     applied: true,
     collection: row,
     diff,
     ...(constraintWarnings.length > 0 ? { constraintWarnings } : {}),
-    ...(composedWrite
-      ? {
-          accessNote:
-            "publicWrite + access.write COMPOSE: anonymous POST stays open (publicWrite governs it), while " +
-            "PATCH/DELETE require access.write — this is the 'anyone submits, only staff triage' shape. A " +
-            "signed-in user who does not meet access.write may still POST (they could drop the token and " +
-            "post anonymously anyway), but their row is attributed to them. To close anonymous submission, " +
-            "set publicWrite:false.",
-        }
-      : {}),
+    ...(accessNotes.length > 0 ? { accessNote: accessNotes.join("\n\n") } : {}),
   };
 }
 

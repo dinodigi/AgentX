@@ -340,7 +340,11 @@ export const FIELD_TYPE_SPECS: Record<
 export const COMMON_FIELD_CONFIG = [
   "required?: boolean (enforced on create; on update the field rejects null — it can never be unset)",
   'requiredIf?: {field, equals} — required only when a sibling ENUM field equals an option (create-time)',
-  "publicRead?: boolean (delivery visibility)",
+  "publicRead?: boolean — the field is served by the DELIVERY API. Despite the name this is " +
+    "delivery VISIBILITY, not anonymity: it applies to EVERY delivery reader, authenticated ones " +
+    "included. access.read chooses WHO may read; publicRead chooses WHICH fields they get — a " +
+    "gated collection whose fields lack publicRead serves near-empty rows (and with ZERO public " +
+    "fields is absent from delivery entirely, 404). MCP reads are unaffected.",
   "indexed?: boolean — build a DB index so FILTER/SORT by this field stays fast as the " +
     "collection grows. Set it on the fields you query by (status, category, price, date); NOT " +
     "on everything (each index taxes writes). unique/searchable already imply an index. " +

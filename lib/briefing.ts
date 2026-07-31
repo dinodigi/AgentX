@@ -4,6 +4,7 @@ import { controlDb } from "@/db";
 import { platformNotices, projects, webhookDeliveries } from "@/db/schema";
 import { effectiveCatalog, enabledPluginVersions } from "./plugins";
 import { listConnectors } from "./connectors";
+import { NOT_SUPPORTED, type NotSupportedEntry } from "./not-supported";
 
 /**
  * The session briefing (Plugin Bases Plan, Track C) — what get_project_info
@@ -18,6 +19,9 @@ export interface Briefing {
   attention: string[];
   updates: { plugin: string; from: string | null; to: string; note?: string }[];
   notices: { message: string; severity: string; at: string }[];
+  /** Wall 2479b787: the boundary registry — what the platform does NOT do,
+   *  with the thing to do instead. See lib/not-supported.ts. */
+  notSupported: NotSupportedEntry[];
   health: {
     /**
      * E1 — `checkedAt` is load-bearing, not decoration.
@@ -140,5 +144,11 @@ export async function buildBriefing(projectId: string): Promise<Briefing> {
     updates,
     notices,
     health: { connectors: connectorHealth, failedDeliveries24h: failed },
+    // Wall 2479b787: the boundary registry, so every agent gets the current
+    // truth about what the platform does NOT do at orientation — instead of
+    // each client hand-maintaining a list that goes stale (the one that
+    // motivated this was wrong in two places when filed). A smoke test
+    // cross-checks every entry's ref against BACKLOG.md's shipped rows.
+    notSupported: NOT_SUPPORTED,
   };
 }

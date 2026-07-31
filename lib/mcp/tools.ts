@@ -186,7 +186,12 @@ export const TOOL_DEFS: ToolDef[] = [
       "get_plugin, reconciling the new spec via define_collection (all safety gates apply), then " +
       "calling enable_plugin again to acknowledge the version; `briefing.notices` are platform " +
       "changes since this project's last session (shown once); `briefing.health` summarizes " +
-      "connectors and failed deliveries. Pair with list_collections to fully orient yourself.",
+      "connectors and failed deliveries; `briefing.notSupported` is the BOUNDARY REGISTRY — " +
+      "capabilities the platform does NOT have, each with status " +
+      "(not_supported|scheduled|declined) and the thing to do INSTEAD. Trust it over any " +
+      "hand-maintained list in your own prompt (the registry exists because such lists go stale), " +
+      "decline out-of-boundary asks honestly, and use send_feedback when you need something it " +
+      "names. Pair with list_collections to fully orient yourself.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
