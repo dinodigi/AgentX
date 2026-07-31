@@ -515,6 +515,40 @@ const RESOLUTIONS = {
       "plugin's guidance and in its acceptance list, so the next integrator gets it for free " +
       "instead of deriving it the way you had to.",
   },
+
+  // --- XVibe wall batch 2026-07-30 ------------------------------------------
+  "15e5783b": {
+    disposition: "ANSWERED",
+    date: "2026-07-30",
+    ref: "d0a7f89",
+    note:
+      "Confirmed, and thank you for the precise citation — it let us find the root cause in " +
+      "minutes. You were reading a SNAPSHOT COPY of the contract (the xvibe-brief docs), frozen " +
+      "before the composition change shipped; the live platform and the live tool description " +
+      "have said \"they COMPOSE, per verb\" since then. The fix is structural, not editorial: the " +
+      "copy is DELETED, and the contract is now served by URL — GET /api/contract (markdown, or " +
+      "?format=json for the verbatim tools/list payload) — rendered at request time from the same " +
+      "TOOL_DEFS the MCP server answers with, so a stale copy of the contract can no longer " +
+      "exist. get_project_info.urls.contract carries the link; point your system prompt at the " +
+      "URL rather than pasting the text. A regression test now asserts the endpoint contains the " +
+      "composed semantics and never again the phrase you quoted.",
+  },
+  "6e5af8cd": {
+    disposition: "TRIGGER",
+    date: "2026-07-30",
+    ref: "a tenant asks for a SPECIFIC credential category (llm, sms, …)",
+    note:
+      "Split decision, and the split is the honest part. The BOUNDED version — per-category " +
+      "adapters (an `llm` category holding an OpenAI-class key, invocable through a deliberate, " +
+      "metered action, exactly like the email/payments adapters you cited) — is agreed and " +
+      "recorded as backlog CONN-3, opening per category the moment a tenant asks for that " +
+      "category (the SMS category is already queued the same way). The GENERIC half — store any " +
+      "API credential and invoke any third-party API from the delivery surface — is DECLINED, " +
+      "with the reason written down: that is an API gateway product (SSRF surface, egress " +
+      "metering, credential liability), and the platform's answer for arbitrary server-side " +
+      "calls from static apps is XVibe's bounded server-side phase, not a generic proxy. So: " +
+      "name the specific integration you need next and it becomes the first adapter.",
+  },
 };
 
 const stamp = (r) =>

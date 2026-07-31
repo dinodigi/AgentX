@@ -110,11 +110,13 @@ describe("CP10 — contract answers stay answered", () => {
     assert.ok(def.ok, def.errorText);
     const ip = "203.0.113.77";
     let got429 = null;
-    // 25 attempts, counted per wall-clock minute bucket like expectRateLimit429 —
-    // a window boundary mid-run resets the count, so only >20 in ONE bucket
-    // without a 429 is a real failure.
+    // Up to 60 attempts, counted per wall-clock minute bucket (mirroring
+    // expectRateLimit429's cap): a window boundary mid-run resets the count, and
+    // guaranteeing 21 requests land in ONE bucket needs up to 41 attempts — the
+    // first version capped at 25 and flaked on exactly the straddle its own
+    // comment predicted. Only >20 successes in a single bucket is a real failure.
     const perBucket = new Map();
-    for (let i = 0; i < 25 && !got429; i++) {
+    for (let i = 0; i < 60 && !got429; i++) {
       const bucket = Math.floor(Date.now() / 60_000);
       const res = await fetch(`${BASE}/api/v1/paced`, {
         method: "POST",
@@ -133,7 +135,7 @@ describe("CP10 — contract answers stay answered", () => {
       perBucket.set(bucket, n);
       assert.ok(n <= 20, `request ${n} in one minute bucket succeeded — the published budget of 20 is wrong`);
     }
-    assert.ok(got429, "never hit 429 — either the limiter is off or the loop straddled two windows twice");
+    assert.ok(got429, "never hit 429 in 60 attempts — the limiter is off or the budget is far above the published 20");
     assert.ok(got429.headers.get("retry-after"), "the 429 must carry Retry-After, as published");
     const body = await got429.json();
     assert.equal(body.code, "E_RATE_LIMITED", "the 429 must carry the published code");

@@ -1,6 +1,6 @@
 # The completion list — every item, and what happened to it
 
-> **Living — last synced 2026-07-29.** Protocol: [BURNDOWN.md](BURNDOWN.md) ·
+> **Living — last synced 2026-07-30.** Protocol: [BURNDOWN.md](BURNDOWN.md) ·
 > decisions: [DECISIONS-CP9.md](DECISIONS-CP9.md)
 >
 > Run `npm run pm` for live counts and the **receipt ledger** in
@@ -10,13 +10,21 @@
 ## Where the burn-down stands
 
 ```
-FEEDBACK WALL   ████████████████████  100% by effort
-                32/32 items closed (100% by count) · 99/99 effort points
-BACKLOG         ████████████████████  100% dispositioned — 13 scheduled · 22 ⏳ · 1 ⚑
+FEEDBACK WALL   █████████████████░░░  83% by effort — burn-down met at 100%,
+                then POST-FREEZE INTAKE arrived (by design, the wall never closes)
+                34/40 items closed (85% by count) · 101/122 effort points
+BACKLOG         ████████████████████  100% dispositioned — 16 scheduled · 23 ⏳ · 1 ⚑
 ```
 
 **Zero repeat themes remain.** Every issue two or more independent testers
 reported is closed. That counter hit 0 at CP4.
+
+**Post-freeze intake, 2026-07-30 (xvibe, 8 items):** triaged same-day with the
+operator — 2 closed with receipts (`15e5783b` ANSWERED with the DX-2 build,
+`6e5af8cd` split TRIGGER/decline), 6 set `planned` with reporter-visible notes
+naming their backlog ids (WF-1, WP-9, DX-7, OPS-6, CONTRACT-1's registry, and
+QRY-4's branching absorption). Open-wall = scheduled work now, not un-triaged
+signal.
 
 ---
 
@@ -84,6 +92,8 @@ eff3e105 L   0ceec805 L   a1fb8001 M   34acd74d S   cbf4db8f L   6809681c M
 a61039c4 M   75f9f4f7 S   e9628701 M   9c61bc7a S   95b660d1 M   74e7016d S
 d128f35a M   ad690ade M   4fae3449 M   5e8146d8 S   1a24b96b M   4847bc14 M
 58aaca1e M   921f9ec7 M
+0cd6dce5 M   21f4c5d5 S   61f9b82e M   ad7568ba M   2479b787 M   d42e248b L
+15e5783b S   6e5af8cd S
 -->
 
 **Effort sizes** above are parsed by `npm run pm`. `(S)`=1 `(M)`=3 `(L)`=8. A

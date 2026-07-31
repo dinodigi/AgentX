@@ -1,6 +1,6 @@
 # Pluggie (AgentX) — System Capabilities
 
-> **Living — last synced 2026-07-29.** What the platform can do **today**,
+> **Living — last synced 2026-07-30.** What the platform can do **today**,
 > grouped by surface. Sync this doc whenever a batch changes the tool surface
 > or platform behavior (see CLAUDE.md ship ritual). For what's next, see
 > [BACKLOG.md](BACKLOG.md) and [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md);
@@ -66,6 +66,14 @@ page linked in the site footer).
   `constraintWarnings[]`.
 - **Structured errors everywhere**: `ConstraintIssue[]` + stable `E_*` codes —
   an agent repairs its own mistake from the error alone.
+- **The contract by URL** (DX-2): public `GET /api/contract` (markdown;
+  `?format=json` = the verbatim `tools/list` payload) rendered **live** from the
+  tool registry — one renderer shared with the repo snapshot, so the
+  consumer-facing contract cannot drift (the failure that motivated it: a copied
+  brief froze pre-CP5 semantics and an integrator planned against it).
+  `GET /api/docs/hooks` serves the hooks reference from an allowlist;
+  `get_project_info.urls` carries both links, and no agent-facing text
+  references a repo file anymore.
 - **Published budgets** (QRY-3, CP10): `get_project_info.deliveryApi.limits`
   states the real numbers — delivery mutations/search/uploads/checkout/batch at
   20/min per IP per project (fixed windows, `429` + `Retry-After` +

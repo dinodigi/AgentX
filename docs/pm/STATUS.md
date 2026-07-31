@@ -1,17 +1,20 @@
 # Status — where things stand
 
-> **Updated 2026-07-29 (wall cleared).** One page. If you read nothing else, read this.
+> **Updated 2026-07-30 (post-freeze intake).** One page. If you read nothing else, read this.
 > Completion list: **[QUEUE.md](QUEUE.md)** · full inventory + receipt ledger:
 > **[BOARD.md](BOARD.md)** · protocol: **[BURNDOWN.md](BURNDOWN.md)**
 
 ## Right now
 
-**The feedback wall is CLEAR.** All 32 items closed, each with a receipt the
-reporter can read — a commit hash, or a named condition that reopens it.
+**The burn-down finished at 32/32; post-freeze intake has begun** — XVibe's
+first field batch (8 items, 2026-07-30) was triaged same-day: 2 closed with
+receipts, 6 scheduled as named backlog items and set `planned` where the
+reporter can see the mapping. An open wall item now means scheduled work, not
+untriaged signal.
 
 ```
-FEEDBACK WALL   ████████████████████  100% by effort  (32/32 items)
-BACKLOG         ████████████████████  100% dispositioned — 13 scheduled · 22 ⏳ · 1 ⚑
+FEEDBACK WALL   █████████████████░░░  83% by effort  (34/40 · intake is a feature)
+BACKLOG         ████████████████████  100% dispositioned — 16 scheduled · 23 ⏳ · 1 ⚑
 ```
 
 **Zero repeat themes remain.** Every issue two or more unrelated testers hit is
