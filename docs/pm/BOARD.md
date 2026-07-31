@@ -17,7 +17,7 @@
 Protocol: **[BURNDOWN.md](BURNDOWN.md)** · dispositioned queue: **[QUEUE.md](QUEUE.md)**
 
 <!-- BEGIN:LEDGER -->
-_33 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
+_35 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
 
 | | id | project | item | receipt |
 |---|---|---|---|---|
@@ -53,6 +53,8 @@ _33 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 | ✅ | `75f9f4f7` | jabed test | The workflow docs note that the 'admin' actor includes client-role members, which quietly means an actor-gated | `2798606` |
 | ✅ | `74e7016d` | jabed test | The MCP endpoint is stateless — tools/call works with no initialize handshake or session id — which let me wri | `66ad28e` |
 | ⏳ | `6e5af8cd` | xvibe | New connector category: tenant-stored third-party API credentials (OpenAI/Twilio/SendGrid-class) invocable fro | reopens: a tenant asks for a SPECIFIC credential category (llm, sms, …) |
+| ✅ | `21f4c5d5` | xvibe | publicRead naming misleads on access-gated collections: an agent set access.read=authenticated and (reasonably | `a0cfb72` |
+| ✅ | `2479b787` | xvibe | Machine-readable not-supported registry in the session briefing: a short list of known unsupported capabilitie | `a0cfb72` |
 | 📝 | `15e5783b` | xvibe | Contract docs contradict live behavior on publicWrite + access.write: docs say a non-none access.write REPLACE | `d0a7f89` |
 <!-- END:LEDGER -->
 
@@ -79,26 +81,24 @@ _33 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=69 · planned=6 · reviewed=2_
+_Wall totals: done=71 · planned=4 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_6 open (0 new, 6 planned) · 0 theme(s) reported more than once · snapshot 2026-07-31 02:18Z_
+_4 open (0 new, 4 planned) · 0 theme(s) reported more than once · snapshot 2026-07-31 06:17Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
 | 🗓️ | 07-30 | xvibe | limitation | No declarative way to stamp a field on a workflow transition (e.g. resolved_at = now wh… |
-| 🗓️ | 07-30 | xvibe | friction | publicRead naming misleads on access-gated collections: an agent set access.read=authen… |
 | 🗓️ | 07-31 | xvibe | idea | Project branches backed by Neon branching: branch a project (schema + data), work again… |
 | 🗓️ | 07-31 | xvibe | limitation | No one-call project reset: wiping a burn/test project takes N delete_collection calls i… |
 | 🗓️ | 07-31 | xvibe | idea | dryRun on define_collection (validate + full diff plan, apply nothing) — transact alrea… |
-| 🗓️ | 07-31 | xvibe | idea | Machine-readable not-supported registry in the session briefing: a short list of known … |
 <!-- END:WALL -->
 
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_16 scheduled (6 high) · 24 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_15 scheduled (6 high) · 24 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
 **Scheduled = decided, not started.** A sprint is a commitment; this is a list. High priority:
 
@@ -111,7 +111,7 @@ _16 scheduled (6 high) · 24 closed-with-a-condition (⏳ trigger / ⚑ operator
 | 📥 | **QRY-4** | Entry-level import + project environments (`import_project` is schema-only). H: named bl |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 10 scheduled at M/L, and 24 ⏳/⚑ rows that reopen on their named condition._
+_…plus 9 scheduled at M/L, and 24 ⏳/⚑ rows that reopen on their named condition._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)

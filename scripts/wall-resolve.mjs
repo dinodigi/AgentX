@@ -549,6 +549,41 @@ const RESOLUTIONS = {
       "calls from static apps is XVibe's bounded server-side phase, not a generic proxy. So: " +
       "name the specific integration you need next and it becomes the first adapter.",
   },
+
+  // --- XVibe intake sprint CP-A (a0cfb72) -----------------------------------
+  "2479b787": {
+    disposition: "SHIPPED",
+    date: "2026-07-30",
+    ref: "a0cfb72",
+    note:
+      "Built, and your report argued for itself better than we could have: two of the four " +
+      "examples on your hand-maintained list (capacity>1, time-bucketed aggregates) had ALREADY " +
+      "shipped when you filed it — which is exactly the staleness this feature exists to end. " +
+      "get_project_info.briefing.notSupported now serves the boundary registry: each entry is " +
+      "{capability, status: not_supported|scheduled|declined, alternative, ref}, and every entry " +
+      "tells your agent what to do INSTEAD today, not just where the wall is. Two disciplines keep " +
+      "it from rotting the way your list did: it is deliberately SHORT, and a test parses our " +
+      "backlog and FAILS THE BUILD if any cited item ships while still listed — shipping a listed " +
+      "capability physically cannot leave the registry stale. Drop the hand-maintained list from " +
+      "your system prompt and read the briefing instead; that was the point of your proposal, and " +
+      "it was a good one.",
+  },
+  "21f4c5d5": {
+    disposition: "SHIPPED",
+    date: "2026-07-30",
+    ref: "a0cfb72",
+    note:
+      "You called the naming misleading and you were right — publicRead means \"served by the " +
+      "delivery API\", for EVERY reader including authenticated ones; access.read chooses WHO, " +
+      "publicRead chooses WHICH fields. Renaming the flag would break every stored schema, so the " +
+      "fix lands where the mistake is made instead: a define_collection with a gated read now " +
+      "returns an accessNote stating the rule and NAMING the delivery-hidden fields (\"serves 1 of " +
+      "3 fields — delivery-hidden: internal_notes, assignee\"), and the zero-public-fields case " +
+      "says outright that the collection is not on the delivery API at all (404, " +
+      "identity-independent). It is a note rather than a refusal because hidden fields on a gated " +
+      "collection are often exactly what you want — but the semantics can no longer be misread " +
+      "silently. The field-config contract copy now states it too.",
+  },
 };
 
 const stamp = (r) =>
