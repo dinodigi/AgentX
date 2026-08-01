@@ -182,7 +182,14 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "get_project_info",
     description:
       "START EVERY SESSION HERE. Returns the project's name/branding, every URL you need " +
-      "(delivery API base, admin URL, MCP endpoint, changes feed), and the session BRIEFING: " +
+      "(delivery API base, admin URL, MCP endpoint, changes feed, the full contract, the hooks " +
+      "reference), and `answers` — a ROUTING TABLE from the questions integrators actually ask " +
+      "(how do I upload from a browser · which token where · paginate/search · handle a 429 · " +
+      "read 401 vs 403 vs 404 · why is my MCP write missing from delivery · verify a webhook " +
+      "signature · custom validation · realtime · sell something · call it from a serverless " +
+      "function · what is NOT supported) to the exact key in this response that answers each " +
+      "one. Check `answers` BEFORE concluding something is undocumented or unsupported. " +
+      "Also the session BRIEFING: " +
       "`briefing.attention` is your do-first list (handle or explicitly defer before new work); " +
       "`briefing.updates` are plugin update OFFERS — nothing auto-applies; adopt one by reading " +
       "get_plugin, reconciling the new spec via define_collection (all safety gates apply), then " +
@@ -1690,7 +1697,14 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "upload_asset",
     description:
-      "Upload a file and get back an asset id to store in an `asset` field. Provide EITHER " +
+      "Upload a file and get back an asset id to store in an `asset` field. THIS TOOL IS FOR " +
+      "YOU, NOT FOR YOUR USERS: it needs an MCP token, and an MCP token must never reach a " +
+      "browser. For an END-USER upload (a web form, an SPA, a file picker) use the delivery " +
+      "endpoint instead — POST {deliveryBase}/{collection}/uploads, multipart 'file', with the " +
+      "DELIVERY token; it returns {id,url} to put in the asset field (see get_project_info " +
+      "deliveryApi.uploads). Reaching for this tool from client code, or shipping R2/MCP " +
+      "credentials to the browser to avoid it, is the anti-pattern that endpoint exists to " +
+      "remove. Provide EITHER " +
       "dataBase64 (inline bytes) OR url — a public https source fetched server-side. Prefer " +
       "url for images: inline base64 costs ~70k tokens per web-sized image, while url costs " +
       "none (bulk seeding = one call per image, bytes never enter your context). Same 10MB " +
@@ -2280,6 +2294,33 @@ export async function callTool(
           },
           // Track C: the session briefing — attention first, then offers.
           briefing,
+          // CONTRACT-1, the structural half. This blob answers a lot of
+          // questions and answers them in prose, so the failure mode is not
+          // "undocumented" but "documented where I didn't look": the dogfood
+          // agent missed the DOCUMENTED uploads endpoint and shipped keys to a
+          // browser instead. So: a ROUTING TABLE from the question an agent
+          // actually asks to the key that answers it.
+          //
+          // Deliberately pointers, never prose. A second copy of an answer is
+          // how the XVibe brief drifted (15e5783b) — every `see` is a dotted
+          // path INTO this same response, and suite 114 resolves every one of
+          // them against the payload, so a renamed key breaks the build instead
+          // of quietly dangling.
+          answers: [
+            { q: "How do I let a website visitor or end user upload a file?", see: "deliveryApi.uploads" },
+            { q: "Which token goes where, and can one be safe in a browser?", see: "deliveryApi.tokenScopes", tool: "mint_delivery_token" },
+            { q: "How do I paginate, filter, sort or full-text search?", see: "deliveryApi.read", tool: "query_entries" },
+            { q: "How fast may I call, and what do I do about a 429?", see: "deliveryApi.limits" },
+            { q: "My read got a 401 / 403 / 404 — which failure is it?", see: "deliveryApi.statusCodes" },
+            { q: "I wrote it over MCP but the delivery API doesn't show it", see: "deliveryApi.convergence" },
+            { q: "How do I verify a webhook really came from this platform?", see: "compute.webhookSigning" },
+            { q: "How do I run custom validation or rewrite a write?", see: "compute.beforeWriteHooks", tool: "test_hook" },
+            { q: "How do I react to a change (webhook, email, deferred action)?", see: "compute.events", tool: "get_deliveries" },
+            { q: "How do I get near-realtime updates into my app?", see: "deliveryApi.realtime", tool: "get_changes" },
+            { q: "How do I sell something — and can I do subscriptions?", see: "deliveryApi.checkout" },
+            { q: "How do I call this from a serverless function without an SDK?", see: "deliveryApi.statelessTransport" },
+            { q: "What can this platform NOT do, so I stop looking?", see: "briefing.notSupported", tool: "send_feedback" },
+          ],
           locales: project.locales ?? null,
           ...(project.locales
             ? {}
@@ -2340,9 +2381,33 @@ export async function callTool(
               "declare a field's computed:{fn} (slugify|template|now|uuid) to derive its value server-side " +
               "from the closed vocabulary — no endpoint, no round-trip.",
             writeBack:
-              "your endpoint writes results back through the delivery API or MCP — use idempotencyKey " +
-              "(create/transact) or update_entry_if (CAS) so a retried consult/callback never double-applies. " +
+              "your endpoint writes results back over MCP — use idempotencyKey (create_entry/transact) " +
+              "or update_entry_if (CAS) so a retried consult/callback never double-applies. Those two " +
+              "are MCP-ONLY: the delivery API has NO Idempotency-Key and NO If-Match, so a write-back " +
+              "path that must not double-apply belongs on the MCP surface (see statelessTransport — a " +
+              "bare JSON-RPC POST, no SDK) rather than on {deliveryBase}. briefing.notSupported carries " +
+              "this boundary as a machine-readable entry. " +
               "Every hook request carries `x-agentx-hook: 1`; a loop-safe endpoint refuses to re-enter on it.",
+            // WP-6, doc half. The signing SCHEME was documented only in
+            // docs/hooks.md — a BEFORE-WRITE-HOOK reference. An agent wiring an
+            // events:[{type:'webhook'}] action has no reason to open the hooks
+            // doc, so the receiving end of the platform's most-used outbound
+            // integration was undocumented on the surface agents read.
+            // The unsigned case is stated out loud on purpose: it is a real
+            // fail-open today (WP-6's code half closes it at define time), and a
+            // receiver that assumes "signed" would accept forged posts.
+            webhookSigning:
+              "VERIFY EVERY INBOUND WEBHOOK. Event actions (events.created/updated/deleted, workflow " +
+              "transition actions) and before-write hooks all POST to your URL with the SAME signature: " +
+              "header `x-agentx-signature: t=<unix-seconds>,v1=<hex>` where v1 = " +
+              "HMAC_SHA256(project signing secret, `${t}.${raw request body}`). Verify over the RAW " +
+              "bytes before parsing, compare with a timing-safe equal, and reject a `t` older than ~300s " +
+              "(that is what stops replay). ⚠️ The signature is present ONLY when the project has a " +
+              "webhook signing secret set (project settings): with no secret the POST is sent UNSIGNED, " +
+              "so a receiver that treats a missing header as acceptable will accept anything on the " +
+              "internet — set the secret, then require the header. Before-write hooks additionally " +
+              "carry `x-agentx-hook: 1`. Copy-paste verifier (Node) + the full envelope: fetch " +
+              `${ctx.baseUrl}/api/docs/hooks — the scheme is identical for event webhooks.`,
             docs: `get_client_code emits a ready-to-run signature-verification + envelope stub for your hook endpoint whenever this project has hooks configured (full reference: ${ctx.baseUrl}/api/docs/hooks — fetchable, not a repo path).`,
           },
           deliveryApi: {
@@ -2402,8 +2467,20 @@ export async function callTool(
               "whole-collection delete, or a field rename, do a full list GET to reconcile. Push to " +
               "YOUR server stays events:{webhook} on define_collection.",
             conventions:
-              "errors are {error, code} with stable E_* codes; GETs carry ETags " +
+              "errors are {error, code} with stable E_* codes (the full registry is in the contract " +
+              `at ${ctx.baseUrl}/api/contract); GETs carry ETags ` +
               "(send If-None-Match, get 304)",
+            // A2's convergence contract used to ride only on entry-write
+            // RESPONSES — you learned it after being surprised by it. A field
+            // report (jabed, 07-26) lost debugging time hunting a publicFilter
+            // misconfiguration that did not exist. Orientation is where a
+            // surprise like this belongs, so it can be designed around.
+            convergence: `MCP WRITES DO NOT APPEAR ON DELIVERY INSTANTLY: ${ENTRY_CONVERGENCE}. Two ` +
+              "distinct causes, and the second is the one nobody expects — TIMING (a ~15s cross-instance " +
+              "cache; wait and re-read) and VISIBILITY (delivery enforces publicRead/publicFilter/access " +
+              "while MCP reads do not, so a row can be PERMANENTLY absent from delivery while reading " +
+              "perfectly here). Before hunting a bug: confirm the fields are publicRead and the row " +
+              "matches publicFilter — describe_collection shows both.",
             // QRY-3: the budgets, published. Every number here is read from (or
             // asserted against) the constant that enforces it — an unpublished
             // limit is a wall clients discover by hitting it, and a published
@@ -2425,7 +2502,13 @@ export async function callTool(
               "{mcpEndpoint} (define_collection, entries, config — this connection); a DELIVERY-scoped " +
               "token reads/writes published content at {deliveryBase} (public API your site/app uses). " +
               "A delivery token on the MCP endpoint (or vice versa) is rejected with E_SCOPE — mint the " +
-              "right scope in Settings → Tokens.",
+              "right scope in Settings → Tokens, or call mint_delivery_token for a delivery one. " +
+              "THIRD OPTION, and the right one for a STATIC SITE / SPA: mint_delivery_token " +
+              "{readOnly:true} returns a BROWSER-SAFE delivery token — it can do exactly what " +
+              "publicRead already exposes to the anonymous internet and nothing more (every write " +
+              "path refuses it with E_SCOPE), so it may be embedded in a client bundle. Reach for it " +
+              "before building a server-side proxy whose only job is holding a credential; writes then " +
+              "go server-side with a full delivery token or over MCP.",
             // A4 — THREE independent testers (Hatchly, Fatsoz 2026-07-20,
             // jabed 2026-07-26) each discovered this by PROBING the endpoint,
             // and each called it a significant integration advantage. One
