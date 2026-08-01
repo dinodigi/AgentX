@@ -1,5 +1,5 @@
 import type { Collection } from "@/db/schema";
-import { fieldLocalized, fieldWriteOnly, type FieldDef } from "@/lib/field-types";
+import { fieldLocalized, fieldSearchable, fieldWriteOnly, type FieldDef } from "@/lib/field-types";
 import { isScalarArray } from "@/lib/query";
 import { toList, isClaimRule } from "@/lib/access-rules";
 
@@ -94,6 +94,10 @@ interface CollectionPlan {
   canCreate: boolean;
   canMutate: boolean;
   canUpload: boolean;
+  /** DX-1: `?q=` needs at least one field that is BOTH searchable and publicRead
+   *  — the delivery route 422s otherwise, naming that exact fix. Deriving it here
+   *  means the method only exists where it works, like every other accessor. */
+  canSearch: boolean;
   needsUser: boolean;
 }
 
@@ -120,6 +124,7 @@ function plan(c: Collection): CollectionPlan {
     // Derived through the gate's OWN helpers so the two cannot drift apart.
     canMutate: toList(write).some((w) => w === "owner" || isClaimRule(w)),
     canUpload: canCreate && c.fields.some((f) => f.type === "asset"),
+    canSearch: publicFieldDefs.some(fieldSearchable),
     needsUser: (c.access?.read ?? "public") !== "public" || write !== "none",
   };
 }
@@ -164,6 +169,18 @@ function typeBlock(p: CollectionPlan): string {
       `  offset?: number;`,
       `}`,
     );
+    if (p.canSearch) {
+      // Search results are RANK-ordered, and passing ?sort with ?q is a 422 —
+      // so the option is removed from the type rather than documented away.
+      const searchable = p.publicFields.filter(fieldSearchable).map((f) => f.name);
+      parts.push(
+        ``,
+        `/** Opts for ${p.typeName} full-text search. No \`sort\`: results are RANK-ordered`,
+        ` *  (best match first) and combining ?q with ?sort is rejected. Searched fields:`,
+        ` *  ${searchable.join(", ")}. */`,
+        `export type ${p.typeName}SearchOpts = Omit<${p.typeName}ListOpts, "sort">;`,
+      );
+    }
   }
   if (p.canCreate || p.canMutate) {
     const writable = p.fields.filter((f) => f.name !== p.ownerField);
@@ -207,6 +224,26 @@ function accessorBlock(p: CollectionPlan): string {
         return (await request<{ data: ${p.typeName} }>("GET", "/${p.slug}/" + encodeURIComponent(id))).data;
       },`,
     );
+    if (p.canSearch) {
+      methods.push(
+        `      /**
+       * Full-text search over this collection's public searchable fields
+       * (${p.publicFields.filter(fieldSearchable).map((f) => f.name).join(", ")}).
+       * websearch syntax: "quoted phrases", OR, -exclude. Results are
+       * rank-ordered — best match first — so \`sort\` is not accepted.
+       * Filters still apply, and narrowing with them is cheaper than a
+       * broader query. NOTE: search is METERED like a write (it is CPU-bound
+       * SQL, not a cached GET) — it shares the 20-req/min/IP budget, so a
+       * 429 here carries retryAfter. Debounce type-ahead callers.
+       */
+      async search(q: string, opts: ${p.typeName}SearchOpts = {}): Promise<${p.typeName}[]> {
+        const query: Record<string, unknown> = { q, limit: opts.limit, offset: opts.offset, ...(opts.filter ?? {}) };${
+          localized ? `\n        if (opts.locale) query.locale = opts.locale;` : ``
+        }
+        return (await request<{ data: ${p.typeName}[] }>("GET", "/${p.slug}", query)).data;
+      },`,
+      );
+    }
   }
   if (p.canCreate) {
     methods.push(
@@ -227,7 +264,7 @@ function accessorBlock(p: CollectionPlan): string {
         const json = (await res.json().catch(() => null)) as
           | { id?: string; url?: string; error?: string; code?: string }
           | null;
-        if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status, json?.code);
+        if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status, json?.code, retryAfterOf(res));
         return json as { id: string; url: string };
       },`,
     );
@@ -256,6 +293,14 @@ export function generateClientCode(opts: {
   projectName: string;
   deliveryBase: string;
   collections: Collection[];
+  /**
+   * Origin the hooks reference is served from, so the emitted stub cites a
+   * FETCHABLE url. The stub used to say "Full reference: docs/hooks.md" — a repo
+   * path, in a file handed to a tenant who has no repo. Same self-containment
+   * defect DX-2 fixed in the contract; the generated client is a contract
+   * surface too.
+   */
+  docsBase?: string;
 }): { code: string; collections: string[]; skipped: string[] } {
   const plans = opts.collections.map(plan);
   const included = plans.filter((p) => p.canRead || p.canCreate);
@@ -300,8 +345,20 @@ export function generateClientCode(opts: {
  * The token is a delivery-scoped project token — keep it server-side.
  * Collections with authenticated/owner access rules also need the signed-in
  * user's JWT: call ax.setUserToken(jwt) (sent as X-User-Token).
- * Errors throw AgentXError with the HTTP status, the server's message, and a
- * stable machine code (E_VALIDATION, E_AUTH, E_NOT_FOUND, E_RATE_LIMITED, …).
+ * Errors throw AgentXError with the HTTP status, the server's message, a
+ * stable machine code (E_VALIDATION, E_AUTH, E_NOT_FOUND, E_RATE_LIMITED, …)
+ * and, on a 429, \`retryAfter\` seconds.
+ *
+ * PACING + RETRIES. Writes, uploads, checkout and search share a budget of 20
+ * requests per minute per IP; cached public GETs are free. On E_RATE_LIMITED,
+ * sleep \`err.retryAfter\` — the windows are fixed one-minute buckets, so that
+ * value is exactly when yours resets. Guessing a backoff just re-hits it.
+ * Reads and by-id PATCH/DELETE are safe to retry. \`create()\`, \`upload()\` and
+ * \`checkout()\` are NOT: this API has no Idempotency-Key, so a retry of a POST
+ * that actually succeeded server-side creates a SECOND row. If a submission
+ * must never double-apply, put it behind your own server and write it over
+ * MCP, where \`create_entry\` takes an \`idempotencyKey\` and \`transact\` replays
+ * a whole batch safely.
  *
  * FIRST RUN? Call \`await ax.verifyConnection()\` once — it separates
  * "wrong base URL" from "bad token" from "wrong path shape" in one answer.
@@ -322,7 +379,24 @@ export interface AgentXClientOptions {
 }
 
 export class AgentXError extends Error {
-  constructor(readonly status: number, message: string, readonly code?: string) {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly code?: string,
+    /**
+     * Seconds to wait, from the server's Retry-After header. Present on 429
+     * (code E_RATE_LIMITED). Sleep this long — do not retry immediately and do
+     * not guess a backoff: the limiter uses fixed one-minute windows, so this
+     * value is exactly when the window resets.
+     *
+     * SAFE TO RETRY: reads (list/get/search) and idempotent PATCH/DELETE by id.
+     * NOT SAFE: create(), upload(), checkout() — the delivery API has no
+     * Idempotency-Key, so a retried POST that actually succeeded server-side
+     * creates a SECOND row. Route must-not-double-apply writes through your own
+     * server over MCP (create_entry idempotencyKey / transact / update_entry_if).
+     */
+    readonly retryAfter?: number,
+  ) {
     super(message);
     this.name = "AgentXError";
   }
@@ -344,6 +418,12 @@ export interface ChangeEvent {
   const baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\\/+$/, "");
   let userToken = options.userToken ?? null;
 
+  /** Retry-After seconds, when the server sent one (429). */
+  function retryAfterOf(res: Response): number | undefined {
+    const v = Number(res.headers.get("retry-after"));
+    return Number.isFinite(v) && v >= 0 ? v : undefined;
+  }
+
   async function request<T>(
     method: string,
     path: string,
@@ -364,7 +444,7 @@ export interface ChangeEvent {
     });
     if (res.status === 204) return undefined as T;
     const json = (await res.json().catch(() => null)) as { error?: string; code?: string } | null;
-    if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status, json?.code);
+    if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status, json?.code, retryAfterOf(res));
     return json as T;
   }
 
@@ -388,7 +468,7 @@ export interface ChangeEvent {
     const json = (await res.json().catch(() => null)) as
       | { changes?: ChangeEvent[]; cursor?: string; hasMore?: boolean; error?: string; code?: string }
       | null;
-    if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status, json?.code);
+    if (!res.ok) throw new AgentXError(res.status, json?.error ?? "HTTP " + res.status, json?.code, retryAfterOf(res));
     return { changes: json?.changes ?? [], cursor: json?.cursor ?? "", hasMore: Boolean(json?.hasMore), notModified: false, etag };
   }
 
@@ -513,9 +593,13 @@ ${checkoutBlock}${included.map(accessorBlock).join("\n")}
 }`;
 
   // I6: when this project has before-write hooks, append a ready-to-run stub for
-  // the hook ENDPOINT the tenant implements on their own server (full reference:
-  // docs/hooks.md). It is a trailing comment — not part of the delivery client.
+  // the hook ENDPOINT the tenant implements on their own server. It is a trailing
+  // comment — not part of the delivery client. The reference is cited as a URL,
+  // never a repo path: the reader of this file has no repo.
   const hasHooks = opts.collections.some((c) => c.hooks?.beforeCreate || c.hooks?.beforeUpdate);
+  const hooksRef = opts.docsBase
+    ? `${opts.docsBase.replace(/\/+$/, "")}/api/docs/hooks`
+    : opts.deliveryBase.replace(/\/api\/v1\/?$/, "") + "/api/docs/hooks";
   const hookStub = hasHooks
     ? `
 
@@ -524,7 +608,7 @@ ${checkoutBlock}${included.map(accessorBlock).join("\n")}
  * This project has hooks configured: AgentX POSTs the candidate to your endpoint
  * (signed) BEFORE a write commits, and the write is gated on your reply. Implement
  * this on YOUR server (this is the SERVER side, not the delivery client above).
- * Full reference: docs/hooks.md.
+ * Full reference (fetch it — copy-paste verifier included): ${hooksRef}
  *
  *   import { createHmac, timingSafeEqual } from "node:crypto";
  *   const SECRET = process.env.AGENTX_WEBHOOK_SECRET; // the project signing secret

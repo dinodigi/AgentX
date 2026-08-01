@@ -1531,8 +1531,14 @@ export const TOOL_DEFS: ToolDef[] = [
     description:
       "Generate a typed, dependency-free TypeScript client for this project's delivery API " +
       "from the live schema — use it in the site instead of hand-rolling fetch calls. " +
-      "Per-collection types + list/get/create/update/remove (each generated only where the " +
-      "schema allows it), delivery-token and X-User-Token handling built in. The client needs " +
+      "Per-collection types + list/get/search/create/update/remove/upload (each generated only " +
+      "where the schema allows it — search appears on collections with a field that is both " +
+      "searchable and publicRead, upload where there is an asset field), plus checkout when " +
+      "anything is sellable and a realtime changes poll/stream. " +
+      "Delivery-token and X-User-Token handling built in; errors throw AgentXError carrying the " +
+      "stable E_* code and, on a 429, retryAfter seconds. It does NOT wrap writes in retries: " +
+      "the delivery API has no Idempotency-Key, so the generated docs route " +
+      "must-not-double-apply submissions through your own server over MCP instead. The client needs " +
       "a delivery-scoped token: mint one with mint_delivery_token if the project has none. " +
       "Save the returned code as a file (e.g. lib/agentx.ts) and RE-CALL THIS TOOL after any " +
       "define_collection change — the client is a snapshot of the schema.",
@@ -3451,6 +3457,9 @@ export async function callTool(
           projectName: project.name,
           deliveryBase: `${ctx.baseUrl}/api/v1`,
           collections: all,
+          // Self-containment: the emitted hook stub cites a fetchable URL, not
+          // a repo path a tenant cannot open.
+          docsBase: ctx.baseUrl,
         });
         return ok({
           filename: "agentx.ts",

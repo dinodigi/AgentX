@@ -45,7 +45,7 @@ describe("get_client_code: generated client compiles and runs", () => {
     await mcp(p.mcpToken, "define_collection", {
       name: "posts",
       fields: [
-        { name: "title", label: "Title", type: "text", required: true, publicRead: true },
+        { name: "title", label: "Title", type: "text", required: true, publicRead: true, searchable: true },
         { name: "price", label: "Price", type: "number", publicRead: true },
         { name: "status", label: "Status", type: "enum", options: ["draft", "live"], publicRead: true },
         { name: "internal", label: "Internal", type: "text" },
@@ -63,6 +63,19 @@ describe("get_client_code: generated client compiles and runs", () => {
     await mcp(p.mcpToken, "define_collection", {
       name: "secrets",
       fields: [{ name: "note", label: "Note", type: "text" }],
+    });
+    // DX-1 control fixture: PUBLICLY READABLE but with no searchable field. The
+    // first version of this test had no such collection, so "search is only
+    // generated where ?q= works" passed even when canSearch was widened to
+    // "has any public field" — every other fixture is either searchable or has
+    // no public fields at all. Without this row the over-generation direction
+    // is untestable.
+    await mcp(p.mcpToken, "define_collection", {
+      name: "events",
+      fields: [
+        { name: "when", label: "When", type: "date", publicRead: true },
+        { name: "seats", label: "Seats", type: "number", publicRead: true },
+      ],
     });
     // Hatchly bug repro: owner-only collection with ZERO publicRead fields —
     // the read interface is (correctly) skipped, but update() must not
@@ -93,7 +106,7 @@ describe("get_client_code: generated client compiles and runs", () => {
   it("generates, typechecks under --strict, and compiles", async () => {
     const r = await mcp(p.mcpToken, "get_client_code", {});
     assert.ok(r.ok, r.errorText);
-    assert.deepEqual(r.value.collections.sort(), ["artifacts", "messages", "posts"]);
+    assert.deepEqual(r.value.collections.sort(), ["artifacts", "events", "messages", "posts"]);
     assert.deepEqual(r.value.skipped, ["secrets"]);
     // Owner-only, no public fields: write shapes exist, the read interface
     // does NOT, and update() returns the truthful { id: string } public view.
@@ -103,6 +116,26 @@ describe("get_client_code: generated client compiles and runs", () => {
     assert.equal(r.value.filename, "agentx.ts");
     assert.match(r.value.code, /export interface Posts \{/);
     assert.match(r.value.code, /"draft" \| "live"/);
+    // DX-1: search() is emitted for posts (title is searchable AND publicRead)
+    // and NOWHERE else — the delivery route 422s a ?q= on a collection with no
+    // public searchable field, so a method that existed there would typecheck
+    // and then fail at runtime. This pair is the control.
+    assert.match(r.value.code, /export type PostsSearchOpts = Omit<PostsListOpts, "sort">;/);
+    assert.match(r.value.code, /async search\(q: string, opts: PostsSearchOpts/);
+    assert.ok(
+      !/MessagesSearchOpts|ArtifactsSearchOpts|EventsSearchOpts/.test(r.value.code),
+      "search() must not be generated for collections with no public searchable field",
+    );
+    // `events` is the discriminating case: publicly READABLE (so it has a list
+    // type) yet nothing searchable. It must get list/get and no search.
+    assert.match(r.value.code, /export interface Events \{/);
+    assert.ok(!/async search\(q: string, opts: EventsSearchOpts/.test(r.value.code));
+    // …and the 429 contract is carried through to the typed error.
+    assert.match(r.value.code, /readonly retryAfter\?: number/);
+    assert.match(r.value.code, /retryAfterOf\(res\)/);
+    // Self-containment: the hook stub (absent here, no hooks) and every emitted
+    // reference must be fetchable, never a repo path.
+    assert.ok(!r.value.code.includes("docs/hooks.md"), "a repo path leaked into generated code");
     // H5: the generated client ships a realtime feed accessor + reconcile guidance.
     assert.match(r.value.code, /export interface ChangeEvent/);
     assert.match(r.value.code, /changes: \{/);
@@ -125,6 +158,9 @@ export async function main(): Promise<void> {
     limit: 5,
   });
   const one: Posts = await ax.posts.get(rows[0].id);
+  // DX-1: search is typed, filterable, and has NO sort (rank-ordered).
+  const found: Posts[] = await ax.posts.search("alpha", { filter: { status: "live" }, limit: 3 });
+  void found;
   const msg: MessagesCreate = { email: "a@b.c", body: "hi" };
   const created: { id: string } = await ax.messages.create(msg);
   const up: { id: string; url: string } = await ax.messages.upload(new Blob(["x"]), "x.txt");
@@ -170,6 +206,21 @@ export async function main(): Promise<void> {
 
     const one = await ax.posts.get(rows[0].id);
     assert.equal(one.title, "Alpha");
+  });
+
+  it("DX-1: compiled client searches the delivery API, rank-ordered, filters intact", async () => {
+    const ax = client.createClient({ baseUrl: `${BASE}/api/v1`, token: p.deliveryToken });
+    const hits = await retryTransient(() => ax.posts.search("Alpha"));
+    assert.deepEqual(hits.map((r) => r.title), ["Alpha"], "search must actually reach ?q=");
+    assert.ok(!("internal" in hits[0]), "the public projection still applies to search results");
+    // Filters compose with the query.
+    const filtered = await ax.posts.search("Alpha", { filter: { status: "draft" } });
+    assert.deepEqual(filtered, [], "a filter that excludes the match must return nothing");
+    // websearch syntax reaches the engine rather than being escaped away.
+    const excluded = await ax.posts.search("-Alpha");
+    assert.ok(!excluded.some((r) => r.title === "Alpha"), "-exclude must exclude");
+    // A term matching nothing is an empty list, not an error.
+    assert.deepEqual(await ax.posts.search("zzzznomatch"), []);
   });
 
   it("compiled client polls the realtime change feed (H5)", async () => {
