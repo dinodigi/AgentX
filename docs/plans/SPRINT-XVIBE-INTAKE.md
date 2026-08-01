@@ -1,5 +1,12 @@
 # Sprint — XVibe intake: the five scheduled items
 
+> **✅ COMPLETE 2026-07-30, same day.** CP-A `a0cfb72` · CP-B `91edc77` ·
+> CP-C `6992092` · CP-D `60d4c59` · CP-E receipts + full verify. All five wall
+> items closed with receipts. Two bonus finds en route, both fixed in CP-D:
+> schedule-mutate where/guard clauses skipped the shared field gate at define
+> time, and suite 107's schedule tests were passing on a broken recurrence
+> grammar rather than on the gates they named.
+
 > **Living — started 2026-07-30.** Executes the SHIP half of the first
 > post-freeze wall batch (8 items from xvibe, triaged with the operator
 > 2026-07-30 — 2 already closed with receipts, DX-2 already shipped `d0a7f89`).

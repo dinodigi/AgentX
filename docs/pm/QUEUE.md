@@ -10,10 +10,11 @@
 ## Where the burn-down stands
 
 ```
-FEEDBACK WALL   █████████████████░░░  83% by effort — burn-down met at 100%,
-                then POST-FREEZE INTAKE arrived (by design, the wall never closes)
-                34/40 items closed (85% by count) · 101/122 effort points
-BACKLOG         ████████████████████  100% dispositioned — 16 scheduled · 23 ⏳ · 1 ⚑
+FEEDBACK WALL   ██████████████████░░  91% by effort — burn-down met at 100%;
+                intake keeps arriving and keeps being triaged same-day
+                41/43 items closed (95% by count) · 116/127 effort points
+                open = d42e248b (rides QRY-4) + 39d8064f (rides CONN-2)
+BACKLOG         ████████████████████  100% dispositioned — 13 scheduled · 22 ⏳ · 1 ⚑
 ```
 
 **Zero repeat themes remain.** Every issue two or more independent testers
@@ -46,6 +47,11 @@ signal.
 | **D2** | Workflow transitions gate on the **row**, not just the actor | `346cdd4` |
 | **D1** | **SEC-1 write-only fields** — written, never returned by any read, on all five surfaces plus webhooks, hooks and the admin. Absent rather than masked, in two layers, with a test per surface that fails when its own redaction is removed (verified by breaking four of them) | `4de9ddb` |
 | **D1** | **`auth_kit` v2** — the credential *recipe*: atomic lockout, single-use non-enumerating resets, argon2id parameters, and the real-dummy-hash trap. Verification stays with the tenant, because a comparison is a read → BACKLOG **SEC-3** carries the platform-side option with a trigger | `4e4491f` |
+| **XV-A** | XVibe sprint: **notSupported boundary registry** (self-checking vs the backlog) + the **publicRead trap named at define time** | `a0cfb72` |
+| **XV-B** | XVibe sprint: **`transitions[].set`** — fields stamped atomically with the move, both write paths, per branch | `91edc77` |
+| **XV-C** | XVibe sprint: **`dryRun` on define_collection** — full plan, nothing applied, test-equal to the confirm plan | `6992092` |
+| **XV-D** | XVibe sprint: **`reset_project`** (61st tool) + the schedule-mutate define-time gate fix found by negative control | `60d4c59` |
+| **—** | **DX-2 the contract by URL** — /api/contract + /api/docs/hooks rendered live; the drifting xvibe-brief copy deleted | `d0a7f89` |
 
 **The wall is now at 0 open — 32/32, 99/99 effort points.**
 
@@ -94,6 +100,7 @@ d128f35a M   ad690ade M   4fae3449 M   5e8146d8 S   1a24b96b M   4847bc14 M
 58aaca1e M   921f9ec7 M
 0cd6dce5 M   21f4c5d5 S   61f9b82e M   ad7568ba M   2479b787 M   d42e248b L
 15e5783b S   6e5af8cd S
+5e7ff188 S   30cf6659 S   39d8064f M
 -->
 
 **Effort sizes** above are parsed by `npm run pm`. `(S)`=1 `(M)`=3 `(L)`=8. A

@@ -452,7 +452,21 @@ describe("authz: Phase-12 review regressions", () => {
       access: { read: "authenticated" },
     });
     assert.ok(d.ok, d.errorText);
-    assert.ok(!d.value.accessNote, "read-only access must not warn about anonymous writes");
+    // The original intent, stated precisely: no COMPOSED-WRITE warning (access
+    // here is read-only, so there is nothing to say about anonymous writes).
+    // Since WP-9 (CP-A of the xvibe sprint) a gated read DOES carry a
+    // field-visibility note — and this fixture, with zero publicRead fields, is
+    // the exact trap that note exists for — so "no accessNote at all" would now
+    // assert against a deliberate contract change.
+    assert.ok(
+      !(d.value.accessNote ?? "").includes("COMPOSE"),
+      "read-only access must not warn about anonymous writes",
+    );
+    assert.match(
+      d.value.accessNote ?? "",
+      /ZERO delivery-visible fields/,
+      "…and this zero-publicRead fixture should get exactly the WP-9 note",
+    );
     const anon = await delivery(p.deliveryToken, "/inbox", { method: "POST", body: { message: "hello" } });
     assert.equal(anon.status, 201, JSON.stringify(anon.json));
   });

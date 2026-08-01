@@ -6,14 +6,17 @@
 
 ## Right now
 
-**The burn-down finished at 32/32; post-freeze intake has begun** — XVibe's
-first field batch (8 items, 2026-07-30) was triaged same-day: 2 closed with
-receipts, 6 scheduled as named backlog items and set `planned` where the
-reporter can see the mapping. An open wall item now means scheduled work, not
+**The burn-down finished at 32/32, and the XVibe intake sprint is COMPLETE** —
+all five scheduled items from the first field batch shipped same-day with
+receipts (registry, publicRead note, transition stamps, define dryRun,
+reset_project — plan: plans/SPRINT-XVIBE-INTAKE.md). A second mini-batch
+arrived during the sprint: a bug report RETRACTED by its own reporter (closed
+as the pair), and an SMS ask that FIRED CONN-2's trigger — the SMS adapter
+category is now scheduled work. An open wall item means scheduled work, not
 untriaged signal.
 
 ```
-FEEDBACK WALL   █████████████████░░░  83% by effort  (34/40 · intake is a feature)
+FEEDBACK WALL   ██████████████████░░  91% by effort  (41/43 · the 2 open ride QRY-4 + CONN-2)
 BACKLOG         ████████████████████  100% dispositioned — 16 scheduled · 23 ⏳ · 1 ⚑
 ```
 

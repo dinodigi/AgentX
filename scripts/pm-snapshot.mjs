@@ -147,11 +147,14 @@ for (const r of [...shippedRows, ...bl]) {
 // run of this check proved bodies are all noise (docs commits editing this very
 // file trip it).
 const subjects = (git("log", "--all", "--format=%h %s") ?? "").split("\n");
-/** Does this commit change anything OUTSIDE docs/? A docs-only commit that names
- *  an id is the entry that CREATED the row, not the ship that closed it. */
+/** Does this commit change RUNTIME code (lib/app/db)? docs/ commits are the
+ *  entries that CREATE rows; scripts/ commits are board tooling and receipts
+ *  (wall-resolve, pm-snapshot) — a receipts commit whose subject NAMES the id it
+ *  is closing tripped this check the first week it existed. A real ship always
+ *  touches lib/, app/, or db/. */
 const touchesCode = (hash) =>
   ((git("show", "--name-only", "--format=", hash) ?? "").split("\n")).some(
-    (f) => f.trim() && !f.startsWith("docs/"),
+    (f) => f.trim() && !f.startsWith("docs/") && !f.startsWith("scripts/"),
   );
 for (const r of bl) {
   if (r.mark !== "📥" && r.mark !== "🚧" && r.mark !== "🗓️") continue;

@@ -584,6 +584,53 @@ const RESOLUTIONS = {
       "collection are often exactly what you want — but the semantics can no longer be misread " +
       "silently. The field-config contract copy now states it too.",
   },
+
+  // --- XVibe intake sprint CP-B/C/D -----------------------------------------
+  "0cd6dce5": {
+    disposition: "SHIPPED",
+    date: "2026-07-30",
+    ref: "91edc77",
+    note:
+      "Built as transitions[].set, and your framing decided the design: the stamp lands IN THE SAME " +
+      "UPDATE as the state move, on both write paths — update_entry, update_entry_if, and therefore " +
+      "scheduled mutate-transitions, which ride the CAS path. Your exact case is the test's lead: " +
+      'set: {"resolved_at": "now"} on a →resolved transition records transition time, not sweep ' +
+      "time, with no second write for anyone to remember. Vocabulary is the schedule-mutate closed " +
+      'set: "now" (date fields), {value: literal} (define-time validated), null (unset; refused on ' +
+      "required fields). Per-branch like the `when` preconditions — two transitions into the same " +
+      "state stamp independently — and a stamp OVERRIDES the caller's same-key patch value, because " +
+      "the machine's record of the move beats a client's claim about it.",
+  },
+  "61f9b82e": {
+    disposition: "SHIPPED",
+    date: "2026-07-30",
+    ref: "6992092",
+    note:
+      "Built. define_collection now takes dryRun:true and returns the FULL plan — the complete diff " +
+      "(added/removed/retyped, renames, locale toggles), constraint-tightening warnings, the access " +
+      "coaching notes, and whether the real call would demand confirm — with nothing applied; new " +
+      "collections report wouldCreate, and addFields composes so you can preview an append. One " +
+      "planner, two exits: a test asserts the dry diff EQUALS the destructive-confirm plan for the " +
+      "same proposal, because a preview that disagreed with the gate would be worse than none. " +
+      "Your plan-mode loop is now: propose with dryRun, show the diff, re-send without it.",
+  },
+  ad7568ba: {
+    disposition: "SHIPPED",
+    date: "2026-07-30",
+    ref: "60d4c59",
+    note:
+      "Built as reset_project — and your E_BLOCKED ordering pain is the test's opening fixture. " +
+      "Without confirm it returns the PLAN: exact counts of everything a wipe would remove " +
+      "(collections, entries, trash, version history, the change feed, assets, blocks, schedules, " +
+      "jobs, plugin enables, locales, inbound, the delivery log) plus an explicit KEPT list — " +
+      "tokens (revoking your own credential mid-call is a trap), connectors, the audit log, usage " +
+      "counters, branding, your authored plugin defs. With confirm:true it is one call to a clean, " +
+      "immediately-reusable slate; dependency ordering does not apply because everything goes. " +
+      "Two honesty notes: trash does NOT survive a reset (it is a factory reset, not a soft " +
+      "delete), and the change feed is wiped — synced clients must treat a reset as a full " +
+      "resync. The wipe itself lands on the operator's platform trail with the counts. " +
+      "schema.manage scope required, which is the scope your eval harness token should hold anyway.",
+  },
 };
 
 const stamp = (r) =>

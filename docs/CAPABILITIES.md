@@ -10,8 +10,8 @@
 Pluggie is an MCP-native backend platform: an agent defines a project's data
 model over MCP and gets back a branded client admin, a public delivery API, and
 declarative behaviors (authz, automation, payments, hooks, plugins) — without
-Pluggie ever hosting tenant code. **60 MCP tools · 8 delivery endpoint
-families · 834 smoke tests green (142 suites, run against a dedicated test
+Pluggie ever hosting tenant code. **61 MCP tools · 8 delivery endpoint
+families · 873 smoke tests green (150 suites, run against a dedicated test
 DB) · live at pluggie.app** (Render + Cloudflare edge cache; public status
 page linked in the site footer).
 
@@ -63,7 +63,10 @@ page linked in the site footer).
   destructive changes (dropped/retyped fields, **dropped workflow**,
   delocalize) return a **plan + confirm gate** read FRESH from the DB (never
   through cache); renames backfill atomically; tightening scans report
-  `constraintWarnings[]`.
+  `constraintWarnings[]`. **`dryRun: true`** (DX-7) returns the complete plan —
+  diff, warnings, access notes, whether the real call would need confirm — and
+  applies nothing (test-asserted equal to the confirm-gate plan; composes with
+  `addFields`).
 - **Structured errors everywhere**: `ConstraintIssue[]` + stable `E_*` codes —
   an agent repairs its own mistake from the error alone.
 - **The contract by URL** (DX-2): public `GET /api/contract` (markdown;
@@ -81,13 +84,13 @@ page linked in the site footer).
   calls/min + 16 MiB bodies — each pinned by a contract test that also exercises
   the wire (a published wrong number would be worse than an unpublished one).
 
-## 2. MCP tool surface (60 tools)
+## 2. MCP tool surface (61 tools)
 
 | Group | Tools |
 |---|---|
 | Project/meta | `get_project_info`, `list_field_types`, `list_connectors`, `get_client_code` |
 | Tokens (TOK-1) | `mint_delivery_token` (delivery-scope ONLY — no scope parameter exists; label required; cap 25/project; parentage-stamped, so revoking the minter cascades), `list_delivery_tokens` (ids/labels/origin, never values; rows carry `id` AND `tokenId`), `revoke_delivery_token` (delivery-only; accepts `id` or `tokenId`; cascade counted). Mint/revoke results **name their project** (self-identifying, so a multi-project session catches a wrong target); console token list revalidates live on agent mint/revoke. |
-| Schema | `define_collection`, `list_collections`, `describe_collection`, `delete_collection`, `set_locales` |
+| Schema | `define_collection` (+ `dryRun` full-plan preview, DX-7), `list_collections`, `describe_collection`, `delete_collection`, `reset_project` (OPS-6 — confirm-gated factory reset; keeps tokens/connectors/audit), `set_locales` |
 | Blocks | `define_block`, `list_blocks`, `delete_block` |
 | Writes | `create_entry`, `update_entry`, `update_entry_if` (CAS), `delete_entry`, `bulk_create_entries`, `transact` |
 | Reads | `query_entries`, `get_entry`, `count_entries`, `aggregate_entries`, `search_entries` |
@@ -198,8 +201,12 @@ page linked in the site footer).
   schedule name; idempotent re-runs. The CRM recycle sweep now self-hosts —
   no external compute required.
 - **Declarative state machines**: `collections.workflow` — enum transitions
-  with actor gates + per-transition actions, enforced at the entries choke
-  point on every write path; dropping a workflow on redefine requires
+  with actor gates, `when` row-preconditions (D2, compiled into the same
+  conditional UPDATE as the state guard), **`set` field stamps (WF-1)** —
+  `{resolved_at: "now"}` lands in the SAME atomic UPDATE as the move, on both
+  the plain and CAS paths, per branch, define-time validated, overriding the
+  caller's same-key value — plus per-transition actions, enforced at the
+  entries choke point on every write path; dropping a workflow on redefine requires
   `confirm:true`; import escape hatch is audit-stamped (§2).
 - **Inbound email → collection**: `configure_inbound` routes a secret-gated
   inbound address into a collection (trusted `{type:"inbound"}` audit actor).
