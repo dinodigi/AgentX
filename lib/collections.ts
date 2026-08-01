@@ -1770,6 +1770,137 @@ function buildAccessNotes(input: DefineCollectionInput, fields: FieldDef[]): str
   return accessNotes.length > 0 ? accessNotes.join("\n\n") : undefined;
 }
 
+/**
+ * OPS-6 (wall `ad7568ba`, xvibe) — one-call factory reset for burn/test
+ * projects. Before this, a clean slate took N delete_collection calls in
+ * dependency order (E_BLOCKED on relation targets) plus schedule/plugin
+ * cleanup — painful for agent eval harnesses, and for our own smoke suite,
+ * whose stranded-project sweeper exists because teardown is hard.
+ *
+ * Scope decisions, stated because each is a judgment call:
+ *  - KEEPS tokens (deleting the caller's own credential mid-call is a trap)
+ *    and connectors (project identity — provider keys survive a content wipe).
+ *  - KEEPS the audit log and platform usage counters: the trail of what
+ *    happened — including this reset — is not the project's content.
+ *  - WIPES the change feed. Synced clients must treat a reset as a full
+ *    resync; no tombstone stream survives a factory reset, and pretending
+ *    otherwise would be a lie shaped like convergence.
+ *  - Deletes tenant asset ROWS but keeps control-side assetPointers — the
+ *    existing R2 orphan sweep reaps the bytes from exactly that diff.
+ *  - Inbound relation ordering does not apply: everything goes, so the
+ *    E_BLOCKED protection (which exists to prevent dangling references) has
+ *    nothing left to protect.
+ */
+export interface ResetPlan {
+  collections: number;
+  liveEntries: number;
+  trashedEntries: number;
+  versionSnapshots: number;
+  feedRows: number;
+  assets: number;
+  libraryBlocks: number;
+  schedules: number;
+  jobs: number;
+  pluginEnables: number;
+  localesConfigured: boolean;
+  inboundConfigured: boolean;
+  deliveryLogRows: number;
+  /** What a reset deliberately does NOT touch. */
+  kept: string[];
+}
+
+const RESET_KEEPS = [
+  "tokens (revoking your own credential mid-call is a trap — revoke_delivery_token exists)",
+  "connectors (provider keys are project identity, not content)",
+  "audit log + platform usage counters (the record of what happened, including this reset)",
+  "branding/settings",
+  "project-authored plugin definitions (delete_plugin removes them individually)",
+];
+
+export async function planResetProject(projectId: string): Promise<ResetPlan> {
+  const tdb = await tenantDb(projectId);
+  const [
+    cols,
+    [live],
+    [trashed],
+    [versions],
+    [feed],
+    [assetRows],
+    [proj],
+    scheds,
+    jobRows,
+    plugRows,
+    [deliveries],
+  ] = await Promise.all([
+    db.select({ n: count() }).from(collections).where(eq(collections.projectId, projectId)),
+    tdb.select({ n: count() }).from(entries).where(eq(entries.projectId, projectId)),
+    tdb.select({ n: count() }).from(entriesTrash).where(eq(entriesTrash.projectId, projectId)),
+    tdb.select({ n: count() }).from(entryVersions).where(eq(entryVersions.projectId, projectId)),
+    tdb.execute(sql`SELECT count(*)::int AS n FROM entry_changes WHERE project_id = ${projectId}`).then(
+      (r) => ((r as unknown as { rows?: { n: number }[] }).rows ?? (r as unknown as { n: number }[])) as { n: number }[],
+    ),
+    tdb.execute(sql`SELECT count(*)::int AS n FROM assets WHERE project_id = ${projectId}`).then(
+      (r) => ((r as unknown as { rows?: { n: number }[] }).rows ?? (r as unknown as { n: number }[])) as { n: number }[],
+    ),
+    db.select({ locales: projects.locales, blockLibrary: projects.blockLibrary, inboundConfig: projects.inboundConfig })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1),
+    db.execute(sql`SELECT count(*)::int AS n FROM project_schedules WHERE project_id = ${projectId}`),
+    db.execute(sql`SELECT count(*)::int AS n FROM jobs WHERE project_id = ${projectId}`),
+    db.execute(sql`SELECT count(*)::int AS n FROM project_plugins WHERE project_id = ${projectId}`),
+    db.execute(sql`SELECT count(*)::int AS n FROM webhook_deliveries WHERE project_id = ${projectId}`).then(
+      (r) => ((r as unknown as { rows?: { n: number }[] }).rows ?? (r as unknown as { n: number }[])) as { n: number }[],
+    ),
+  ]);
+  const one = (r: unknown): number => {
+    const rows = ((r as unknown as { rows?: { n: number }[] }).rows ?? (r as unknown as { n: number }[])) as { n: number }[];
+    return Number(rows[0]?.n ?? 0);
+  };
+  return {
+    collections: Number(cols[0]?.n ?? 0),
+    liveEntries: Number(live?.n ?? 0),
+    trashedEntries: Number(trashed?.n ?? 0),
+    versionSnapshots: Number(versions?.n ?? 0),
+    feedRows: Number(feed?.n ?? 0),
+    assets: Number(assetRows?.n ?? 0),
+    libraryBlocks: Object.keys(proj?.blockLibrary ?? {}).length,
+    schedules: one(scheds),
+    jobs: one(jobRows),
+    pluginEnables: one(plugRows),
+    localesConfigured: proj?.locales != null,
+    inboundConfigured: proj?.inboundConfig != null,
+    deliveryLogRows: Number(deliveries?.n ?? 0),
+    kept: RESET_KEEPS,
+  };
+}
+
+/** Execute the wipe the plan describes. Returns the plan it acted on. */
+export async function resetProject(projectId: string): Promise<ResetPlan> {
+  const plan = await planResetProject(projectId);
+  const tdb = await tenantDb(projectId);
+
+  // Tenant plane first: content and its histories. Order is cosmetic (no FKs
+  // across these), but children-before-parents reads sanely in a failure log.
+  for (const table of ["entry_changes", "entry_versions", "entries_trash", "entries", "assets", "transact_receipts"]) {
+    await tdb.execute(sql`DELETE FROM ${sql.raw(table)} WHERE project_id = ${projectId}`);
+  }
+
+  // Control plane: schema + automation + plugin enables + the delivery log.
+  await db.execute(sql`DELETE FROM collections WHERE project_id = ${projectId}`);
+  await db.execute(sql`DELETE FROM project_schedules WHERE project_id = ${projectId}`);
+  await db.execute(sql`DELETE FROM jobs WHERE project_id = ${projectId}`);
+  await db.execute(sql`DELETE FROM project_plugins WHERE project_id = ${projectId}`);
+  await db.execute(sql`DELETE FROM webhook_deliveries WHERE project_id = ${projectId}`);
+  await db
+    .update(projects)
+    .set({ locales: null, blockLibrary: null, inboundConfig: null })
+    .where(eq(projects.id, projectId));
+
+  revalidateTag(collectionsTag(projectId));
+  return plan;
+}
+
 export interface DeletePlan {
   entryCount: number;
   /** Trashed entries in this collection that a cascade would also destroy. */

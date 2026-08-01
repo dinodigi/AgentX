@@ -924,6 +924,20 @@
       }
     },
     {
+      "name": "reset_project",
+      "description": "OPS-6: FACTORY-RESET this project in one call — for burn/test/eval projects that need a clean slate per run (the alternative was N delete_collection calls in dependency order). Without confirm:true it only returns the PLAN: exact counts of what would be wiped (collections, entries, trash, version history, the change feed, assets, blocks, schedules, jobs, plugin enables, locales, inbound config, the delivery log) and what is KEPT — tokens, connectors, audit log, usage counters, branding, project-authored plugin defs. DESTRUCTIVE AND UNRECOVERABLE for everything it wipes (trash included — there is no restore after a reset), and the change feed does not survive: synced clients must treat a reset as a full resync. Requires the schema.manage scope.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "confirm": {
+            "type": "boolean",
+            "description": "must be true to actually wipe"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "create_entry",
       "description": "Create one entry in a collection. `data` is validated strictly against the collection's schema — unknown fields, wrong types, bad enum values, and dangling relation/asset ids are rejected. Pass idempotencyKey to make retries safe: a repeated call with the same key returns the original entry instead of duplicating. allowExplicitWorkflowState is the MIGRATION escape hatch: import historical records at their real workflow states (any declared enum option) instead of being forced to `initial`. Use it ONLY for imports/backfills — normal creates must start at initial. Its use is stamped into the audit log. CRUD only.",
       "inputSchema": {

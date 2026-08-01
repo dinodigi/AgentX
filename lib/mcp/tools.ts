@@ -9,6 +9,8 @@ import {
   defineCollection,
   planDeleteCollection,
   deleteCollection,
+  planResetProject,
+  resetProject,
 } from "@/lib/collections";
 import {
   createEntry,
@@ -826,6 +828,26 @@ export const TOOL_DEFS: ToolDef[] = [
         confirm: { type: "boolean", description: "must be true to actually delete" },
       },
       required: ["name"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "reset_project",
+    description:
+      "OPS-6: FACTORY-RESET this project in one call — for burn/test/eval projects that need a " +
+      "clean slate per run (the alternative was N delete_collection calls in dependency order). " +
+      "Without confirm:true it only returns the PLAN: exact counts of what would be wiped " +
+      "(collections, entries, trash, version history, the change feed, assets, blocks, schedules, " +
+      "jobs, plugin enables, locales, inbound config, the delivery log) and what is KEPT — tokens, " +
+      "connectors, audit log, usage counters, branding, project-authored plugin defs. " +
+      "DESTRUCTIVE AND UNRECOVERABLE for everything it wipes (trash included — there is no " +
+      "restore after a reset), and the change feed does not survive: synced clients must treat a " +
+      "reset as a full resync. Requires the schema.manage scope.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        confirm: { type: "boolean", description: "must be true to actually wipe" },
+      },
       additionalProperties: false,
     },
   },
@@ -2673,6 +2695,39 @@ export async function callTool(
         return ok({
           deleted: a.name,
           entriesDeleted: plan.entryCount,
+          convergence:
+            "gone from this MCP surface immediately; the delivery API, admin, and other instances converge within ~15s",
+        });
+      }
+
+      case "reset_project": {
+        const a = z.object({ confirm: z.boolean().optional() }).parse(rawArgs ?? {});
+        if (!a.confirm) {
+          const plan = await planResetProject(projectId);
+          return ok({
+            requiresConfirmation: true,
+            code: "E_CONFIRM_REQUIRED",
+            plan,
+            hint:
+              "re-run with confirm: true to wipe. Everything in the plan is deleted PERMANENTLY " +
+              "(including trash — nothing is restorable afterwards); the `kept` list survives.",
+          });
+        }
+        const wiped = await resetProject(projectId);
+        // OPS-6: the wipe itself goes on the PLATFORM trail (control-plane, kept
+        // forever) — the tenant audit log survives the reset but records entry
+        // ops, and a factory reset deserves an operator-visible line.
+        const resetProj = await getProject(projectId);
+        recordPlatformEvent({
+          projectId,
+          projectName: resetProj?.branding?.displayName ?? "?",
+          type: "project_reset",
+          actorEmail: ctx.callerTokenId ? `mcp-token:${ctx.callerTokenId}` : "mcp",
+          note: `reset over MCP: ${wiped.collections} collections, ${wiped.liveEntries} entries, ${wiped.trashedEntries} trashed, ${wiped.schedules} schedules wiped`,
+        });
+        return ok({
+          reset: true,
+          wiped,
           convergence:
             "gone from this MCP surface immediately; the delivery API, admin, and other instances converge within ~15s",
         });

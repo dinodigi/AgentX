@@ -469,7 +469,8 @@ export type PlatformEventType =
   | "support_access"
   | /** TOK-1: a delivery token minted over MCP (never the token value — id + label only). */ "token_mint"
   | /** TOK-1: a delivery token revoked over MCP; note records any cascade. */ "token_revoke"
-  | /** DX-6: a human approved an OAuth client for this project, with scopes. */ "oauth_grant";
+  | /** DX-6: a human approved an OAuth client for this project, with scopes. */ "oauth_grant"
+  | /** OPS-6: factory reset — the wiped counts ride in `note` (the audit trail of the wipe itself). */ "project_reset";
 
 export const platformEvents = pgTable(
   "platform_events",

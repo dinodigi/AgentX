@@ -11,7 +11,7 @@ import {
 import { enqueueJob } from "./jobs";
 import { getConnector, hasProvider } from "./connectors";
 import { getCollection } from "./collections";
-import { WHERE_OPS } from "./query";
+import { WHERE_OPS, buildWhere } from "./query";
 import { allowedFroms, isTransitionTarget } from "./workflow";
 import { ValidationError } from "./validation";
 import { fieldWriteOnly } from "./field-types";
@@ -111,6 +111,18 @@ async function validateMutateAction(
     if (!(WHERE_OPS as readonly string[]).includes(c.op)) {
       bad(`clause op "${c.op}" — allowed: ${WHERE_OPS.join(", ")}`);
     }
+  }
+  // Compile the clauses through the SHARED gate at DEFINE time too. The checks
+  // above give friendlier unknown-field messages, but only fieldOrThrow knows
+  // the per-field refusals (write-only, localized, op-type fit) — without this,
+  // a clause on a write-only field was accepted here and only refused at the
+  // sweep's first TICK, which is the worst time to learn it. (Found by a
+  // negative-control tightening in suite 107: the old test passed on a broken
+  // recurrence, not on this gate.)
+  try {
+    buildWhere(collection!.fields, [...a.where, ...(a.guard ?? [])] as Parameters<typeof buildWhere>[1]);
+  } catch (e) {
+    bad(e instanceof ValidationError ? e.message : String(e));
   }
 
   const setEntries = Object.entries(a.set ?? {});

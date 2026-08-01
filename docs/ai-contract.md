@@ -2,7 +2,7 @@
 
 > Rendered live from the tool registry — this document cannot drift from the running platform. JSON form: `/api/contract?format=json`.
 
-This is the exact payload of the MCP **`tools/list`** call: **60 tools**, each with a name, a description, and a JSON input schema. An agent connecting to a project reads this plus the runtime **`get_project_info`** orientation blob (URLs, boundaries, delivery-API reference) — those two are the whole surface it plans against.
+This is the exact payload of the MCP **`tools/list`** call: **61 tools**, each with a name, a description, and a JSON input schema. An agent connecting to a project reads this plus the runtime **`get_project_info`** orientation blob (URLs, boundaries, delivery-API reference) — those two are the whole surface it plans against.
 
 ## Tool index
 
@@ -29,6 +29,7 @@ This is the exact payload of the MCP **`tools/list`** call: **60 tools**, each w
 - `list_collections`
 - `describe_collection`
 - `delete_collection`
+- `reset_project`
 - `create_entry`
 - `update_entry`
 - `update_entry_if`
@@ -1103,6 +1104,25 @@ Delete a collection AND all its entries. Without confirm:true this only returns 
   "required": [
     "name"
   ],
+  "additionalProperties": false
+}
+```
+
+## `reset_project`
+
+OPS-6: FACTORY-RESET this project in one call — for burn/test/eval projects that need a clean slate per run (the alternative was N delete_collection calls in dependency order). Without confirm:true it only returns the PLAN: exact counts of what would be wiped (collections, entries, trash, version history, the change feed, assets, blocks, schedules, jobs, plugin enables, locales, inbound config, the delivery log) and what is KEPT — tokens, connectors, audit log, usage counters, branding, project-authored plugin defs. DESTRUCTIVE AND UNRECOVERABLE for everything it wipes (trash included — there is no restore after a reset), and the change feed does not survive: synced clients must treat a reset as a full resync. Requires the schema.manage scope.
+
+**Input schema:**
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "confirm": {
+      "type": "boolean",
+      "description": "must be true to actually wipe"
+    }
+  },
   "additionalProperties": false
 }
 ```

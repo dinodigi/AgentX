@@ -113,6 +113,7 @@ export const TOOL_SCOPE: Record<string, McpScope> = {
   // ── schema.manage — mutations to the content model ──────────────────────
   define_collection: "schema.manage",
   delete_collection: "schema.manage",
+  reset_project: "schema.manage",
   define_block: "schema.manage",
   delete_block: "schema.manage",
   set_locales: "schema.manage",

@@ -758,7 +758,7 @@ describe("SEC-1 — define-time refusals", () => {
     assert.ok(ok.ok, ok.errorText);
     const r = await mcp(p.mcpToken, "define_schedule", {
       name: "wo_launder_sweep",
-      recurrence: { every: "1d" },
+      recurrence: { frequency: "daily", at: "03:00" },
       action: {
         type: "mutate",
         collection: "wo_sweepable",
@@ -773,7 +773,7 @@ describe("SEC-1 — define-time refusals", () => {
   it("a schedule's where clause cannot FILTER on it either", async () => {
     const r = await mcp(p.mcpToken, "define_schedule", {
       name: "wo_probe_sweep",
-      recurrence: { every: "1d" },
+      recurrence: { frequency: "daily", at: "03:00" },
       action: {
         type: "mutate",
         collection: "wo_sweepable",
@@ -782,6 +782,7 @@ describe("SEC-1 — define-time refusals", () => {
       },
     });
     assert.equal(r.ok, false);
+    assert.match(r.errorText, /write-only/, "must fail on the FIELD gate, not on some unrelated validation");
   });
 
   it("a checkout priceField cannot be write-only — the checkout route reads it", async () => {
