@@ -189,6 +189,8 @@ export interface DefineCollectionInput {
   hooks?: Collection["hooks"] | null;
   /** Required when redefinition drops or retypes fields (destructive). */
   confirm?: boolean;
+  /** DX-7: validate + return the FULL plan (diff, warnings, notes); apply NOTHING. */
+  dryRun?: boolean;
 }
 
 const READ_RULES = ["public", "authenticated", "owner"] as const;
@@ -1040,7 +1042,19 @@ export interface ConstraintWarning {
 
 export type DefineResult =
   | { applied: true; collection: Collection; diff?: SchemaDiff; constraintWarnings?: ConstraintWarning[]; accessNote?: string }
-  | { applied: false; requiresConfirmation: true; diff: SchemaDiff; hint: string };
+  | { applied: false; requiresConfirmation: true; diff: SchemaDiff; hint: string }
+  /** DX-7: the dry-run plan — everything the real call would report, nothing done. */
+  | {
+      applied: false;
+      dryRun: true;
+      wouldCreate?: boolean;
+      fieldCount?: number;
+      diff?: SchemaDiff;
+      wouldRequireConfirmation?: boolean;
+      constraintWarnings?: ConstraintWarning[];
+      accessNote?: string;
+      hint: string;
+    };
 
 const TIGHTEN_HINT =
   "existing rows keep their values and stay readable; new writes must satisfy the constraint — patch them or leave them";
@@ -1499,6 +1513,27 @@ export async function defineCollection(
     const destructiveDelocalize = toggles.delocalized.some(
       (d) => d.entriesAffected > 0 && (d.variantsLost.length > 0 || d.entriesLosingField > 0),
     );
+    // DX-7: the dry-run exit for an EXISTING collection — after every validation
+    // and the complete diff, before the first write (index sync is the earliest
+    // side effect below). Runs the tightening scan too (read-only counts), so
+    // the dry plan carries everything the real apply would report, including
+    // whether that apply would demand confirm.
+    if (input.dryRun) {
+      const wouldRequireConfirmation = dangerousKeys.length > 0 || destructiveDelocalize || workflowRemoved;
+      const dryWarnings = await scanConstraintTightening(tdb, current.id, current.fields, fields, renames);
+      const accessNote = buildAccessNotes(input, fields);
+      return {
+        applied: false,
+        dryRun: true,
+        diff,
+        ...(wouldRequireConfirmation ? { wouldRequireConfirmation: true } : {}),
+        ...(dryWarnings.length > 0 ? { constraintWarnings: dryWarnings } : {}),
+        ...(accessNote ? { accessNote } : {}),
+        hint: wouldRequireConfirmation
+          ? "dry run — nothing applied. This change is DESTRUCTIVE: the real call will require confirm: true (the diff above is exactly what it will show)."
+          : "dry run — nothing applied. Re-send without dryRun to apply this plan.",
+      };
+    }
     if ((dangerousKeys.length > 0 || destructiveDelocalize || workflowRemoved) && !input.confirm) {
       return {
         applied: false,
@@ -1511,6 +1546,20 @@ export async function defineCollection(
             : "destructive change — re-run with confirm: true to apply",
       };
     }
+  }
+
+  // DX-7: the dry-run exit for a NEW collection — every validator above has
+  // passed, nothing exists to diff, nothing is written.
+  if (input.dryRun) {
+    const accessNote = buildAccessNotes(input, fields);
+    return {
+      applied: false,
+      dryRun: true,
+      wouldCreate: true,
+      fieldCount: fields.length,
+      ...(accessNote ? { accessNote } : {}),
+      hint: `dry run — nothing created. "${name}" does not exist; the real call would create it with ${fields.length} field(s).`,
+    };
   }
 
   // Sync indexes BEFORE persisting the definition: if enabling unique fails on
@@ -1666,6 +1715,21 @@ export async function defineCollection(
   // A5: publicWrite + a write rule is no longer a conflict to warn about — the
   // two COMPOSE. It is still worth saying out loud, because which half governs
   // which verb is the thing authors get wrong.
+  const accessNote = buildAccessNotes(input, fields);
+  return {
+    applied: true,
+    collection: row,
+    diff,
+    ...(constraintWarnings.length > 0 ? { constraintWarnings } : {}),
+    ...(accessNote ? { accessNote } : {}),
+  };
+}
+
+/** The define-response coaching notes (composed-write + WP-9 publicRead), shared
+ *  by the real apply and the DX-7 dry run so both tell the same story. */
+function buildAccessNotes(input: DefineCollectionInput, fields: FieldDef[]): string | undefined {
+  const writeRules0 = input.access?.write;
+  const writeList = writeRules0 === undefined ? ["none"] : Array.isArray(writeRules0) ? writeRules0 : [writeRules0];
   const composedWrite = (input.publicWrite ?? false) && !(writeList.length === 1 && writeList[0] === "none");
   const accessNotes: string[] = [];
   if (composedWrite) {
@@ -1703,13 +1767,7 @@ export async function defineCollection(
         `.`,
     );
   }
-  return {
-    applied: true,
-    collection: row,
-    diff,
-    ...(constraintWarnings.length > 0 ? { constraintWarnings } : {}),
-    ...(accessNotes.length > 0 ? { accessNote: accessNotes.join("\n\n") } : {}),
-  };
+  return accessNotes.length > 0 ? accessNotes.join("\n\n") : undefined;
 }
 
 export interface DeletePlan {

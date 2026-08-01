@@ -289,7 +289,9 @@ export async function importProject(
       confirm,
     });
     if (result.applied) applied.push(col.name);
-    else pendingPlans.push({ collection: col.name, plan: result.diff });
+    // Imports never pass dryRun, so a non-applied result here is always the
+    // confirm-gate variant — the narrowing exists for the type union's sake.
+    else if ("requiresConfirmation" in result) pendingPlans.push({ collection: col.name, plan: result.diff });
   }
 
   return {

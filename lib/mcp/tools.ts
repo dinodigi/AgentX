@@ -490,7 +490,9 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "define_collection",
     description:
-      "Create or update a collection (a data model). `fields` is an array of field " +
+      "Create or update a collection (a data model). PLAN FIRST when unsure: dryRun:true returns " +
+      "the full diff plan (and whether the real call would need confirm) and applies NOTHING. " +
+      "`fields` is an array of field " +
       "defs, each: {name, label, type, required?, publicRead?} plus constraints " +
       "(unique? on text/number/date — DB-enforced, dates stored normalized to UTC ISO; " +
       "min/max? = value bounds on number, LENGTH bounds on text/richtext, ISO-string instant " +
@@ -779,6 +781,11 @@ export const TOOL_DEFS: ToolDef[] = [
           },
         },
         confirm: { type: "boolean", description: "required to apply destructive schema changes" },
+        dryRun: {
+          type: "boolean",
+          description:
+            "DX-7: validate + return the FULL plan and apply NOTHING — the complete diff (added/removed/retyped, renames, locale toggles), constraint-tightening warnings, access notes, and whether the real call would require confirm. Works for new collections too (reports wouldCreate). The plan-mode preview: propose, review the diff, then re-send without dryRun.",
+        },
       },
       required: ["name"],
       additionalProperties: false,
@@ -1746,6 +1753,7 @@ const defineArgs = z.object({
       deleted: z.array(eventActionSchema).optional(),
     })
     .optional(),
+  dryRun: z.boolean().optional(),
   renames: z.array(z.object({ from: z.string(), to: z.string(), field: z.string().optional() })).optional(),
   workflow: z
     .object({
@@ -2497,6 +2505,7 @@ export async function callTool(
             hooks: a.hooks as never,
             renames: a.renames,
             confirm: a.confirm,
+            dryRun: a.dryRun,
             ...(expectUpdatedAt ? { expectUpdatedAt } : {}),
           });
 
@@ -2550,6 +2559,13 @@ export async function callTool(
           result = await runDefine(fields!);
         }
 
+        if (!result.applied && "dryRun" in result && result.dryRun) {
+          // DX-7: the dry plan is the whole payload — applied stays false and
+          // there is deliberately no E_CONFIRM_REQUIRED code (nothing is being
+          // asked of the caller; this is the answer they requested).
+          const { applied, dryRun, ...plan } = result;
+          return ok({ applied, dryRun, ...plan });
+        }
         if (!result.applied) {
           return ok({
             requiresConfirmation: true,
