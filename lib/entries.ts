@@ -12,6 +12,7 @@ import {
   type Collection,
   type Entry,
   type ProjectLocales,
+  type TransitionSetSpec,
 } from "@/db/schema";
 import { getLocales, hasLocalizedFields, localizeView } from "./locales";
 import {
@@ -39,7 +40,7 @@ import { emitEntryEvent, runEventAction, type EntryEvent } from "./events";
 import { callWriteHook, pooled, type HookEnvelope } from "./hooks";
 import { evaluateComputed, recomputeOnUpdate, hasRecomputable } from "./computed";
 import { stampIdentity, stampedIdentityFields } from "./access-rules";
-import { applyWorkflowOnCreate, checkTransition, matchTransition } from "./workflow";
+import { applyWorkflowOnCreate, checkTransition, matchTransition, materializeTransitionSet } from "./workflow";
 import { recordChange, recordChanges, type ChangeInput } from "./changes";
 import type { WorkflowActor } from "@/db/schema";
 import { recordAudit } from "./audit";
@@ -555,6 +556,15 @@ async function updateEntryCore(
       if (branch?.when?.length) {
         guards.push(...buildWhere(collection.fields, branch.when));
         preconditionWhen = branch.when;
+      }
+      // WF-1: the matched branch's stamps ride the SAME update as the move.
+      // Merged into the caller's patch object IN PLACE and deliberately AFTER
+      // the caller's keys, so (a) every downstream Object.keys(patch) —
+      // changedFields for the feed, version, audit — sees the stamped fields,
+      // and (b) the machine's record of the move beats a client's claim about
+      // it. Values were validated at define time; nothing here re-validates.
+      if (branch?.set) {
+        Object.assign(patch, materializeTransitionSet(branch.set));
       }
       transition = { field: wf.field, from, to: check.to };
     }
@@ -1150,6 +1160,11 @@ async function updateEntryIfCore(
   const wf = collection.workflow;
   const wfField = wf && wf.field in patch ? wf.field : null;
   let wfTo: string | null = null;
+  // WF-1: per-branch {condition, stamps} pairs. The CAS path cannot know which
+  // branch wins before the statement runs, so stamps are applied by a SQL CASE
+  // over the SAME per-branch conditions the WHERE uses — the branch that admits
+  // the row is the branch whose stamps it gets, atomically.
+  let casBranches: { cond: SQL; froms: string[]; set?: Record<string, TransitionSetSpec> }[] = [];
   if (wf && wfField) {
     const actorType = workflowActor(opts.actor ?? UNKNOWN_ACTOR);
     if (!actorType) {
@@ -1161,7 +1176,7 @@ async function updateEntryIfCore(
     // together. Flattening the froms and ANDing every `when` would enforce a
     // rule the author never wrote — two transitions reaching the same state can
     // carry different preconditions.
-    const branchSql = check.branches
+    casBranches = check.branches
       .filter((b) => b.froms.length > 0)
       .map((b) => {
         const inFrom = sql`(${entries.data}->>${wf.field}) = ANY(${sql`ARRAY[${sql.join(
@@ -1169,9 +1184,11 @@ async function updateEntryIfCore(
           sql`, `,
         )}]::text[]`})`;
         const when = b.when?.length ? buildWhere(collection.fields, b.when) : [];
-        return when.length ? sql`(${and(inFrom, ...when)})` : sql`(${inFrom})`;
+        return { cond: when.length ? sql`(${and(inFrom, ...when)!})` : sql`(${inFrom})`, froms: b.froms, set: b.set };
       });
-    if (branchSql.length) conditions.push(sql`(${sql.join(branchSql, sql` OR `)})`);
+    if (casBranches.length) {
+      conditions.push(sql`(${sql.join(casBranches.map((b) => b.cond), sql` OR `)})`);
+    }
   }
 
   // null = explicit unset, mirroring update_entry: subtract unset keys, then
@@ -1188,6 +1205,26 @@ async function updateEntryIfCore(
   }
   if (Object.keys(casSets).length > 0) {
     dataExpr = sql`${dataExpr} || ${JSON.stringify(casSets)}::jsonb`;
+  }
+  // WF-1: stamp AFTER the caller's patch merges (stamps win on key collision),
+  // BEFORE any increment wraps the expression. Branch conditions evaluate over
+  // the row's PRE-update data — same reads as the WHERE — so the row that a
+  // branch admitted is the row that branch stamps. Unset stamps (null) become
+  // per-branch key subtraction.
+  const stampedBranches = casBranches.filter((b) => b.set && Object.keys(b.set).length > 0);
+  if (stampedBranches.length > 0) {
+    const whens: SQL[] = stampedBranches.map((b) => {
+      const stamps = materializeTransitionSet(b.set!);
+      let branchExpr = dataExpr;
+      const unsetKeys = Object.entries(stamps).filter(([, v]) => v === null).map(([k]) => k);
+      const setVals = Object.fromEntries(Object.entries(stamps).filter(([, v]) => v !== null));
+      for (const k of unsetKeys) branchExpr = sql`(${branchExpr} - ${k}::text)`;
+      if (Object.keys(setVals).length > 0) {
+        branchExpr = sql`(${branchExpr} || ${JSON.stringify(setVals)}::jsonb)`;
+      }
+      return sql`WHEN ${b.cond} THEN ${branchExpr}`;
+    });
+    dataExpr = sql`CASE ${sql.join(whens, sql` `)} ELSE ${dataExpr} END`;
   }
 
   if (opts.increment && incField && incField.type === "number") {
@@ -1272,7 +1309,20 @@ async function updateEntryIfCore(
     ok: true,
     entry: row,
     emit: { event: "updated", entry: { id: row.id, data: row.data }, previous, transition },
-    changedFields: [...Object.keys(patch), ...(opts.increment ? [opts.increment.field] : [])],
+    changedFields: [
+      ...new Set([
+        ...Object.keys(patch),
+        ...(opts.increment ? [opts.increment.field] : []),
+        // WF-1: the winner's stamps. `previous` is the exact pre-image on the
+        // workflow path (self-join), so previous[wf.field] names the branch
+        // that actually fired — the same recovery fireTransition relies on.
+        ...(wfField && previous
+          ? Object.keys(
+              casBranches.find((b) => b.froms.includes(String(previous![wfField])))?.set ?? {},
+            )
+          : []),
+      ]),
+    ],
   };
 }
 
@@ -1816,6 +1866,9 @@ export async function transact(
             auditPlan.push({ collection: p.collection, id: p.id, action: "create", changedFields: p.changedFields });
           } else if (p.kind === "update") {
             const { emit } = await updateEntryCore(tx, p.collection, p.id, p.clean!, workflowActor(actor));
+            // WF-1: a matched transition stamps fields into p.clean IN PLACE —
+            // recompute changedFields post-core so the feed/audit see them.
+            p.changedFields = Object.keys(p.clean!);
             emitPlan.push({ collection: p.collection, emit });
             changePlan.push({ projectId, collection: p.collection, kind: "updated", entryId: p.id, data: emit.entry.data ?? {}, prevData: emit.previous, changedFields: p.changedFields });
             auditPlan.push({ collection: p.collection, id: p.id, action: "update", changedFields: p.changedFields });

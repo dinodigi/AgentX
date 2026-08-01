@@ -619,7 +619,13 @@ export const TOOL_DEFS: ToolDef[] = [
           description:
             "declarative state machine over ONE enum field: {field, initial, transitions:[{from: " +
             "state|state[], to: state, actors?: (mcp|admin|delivery)[], when?: [where clause], " +
-            "actions?: [event action]}]}. `when` gates a transition on the ROW's data rather than " +
+            'set?: {field: "now"|{value}|null}, ' +
+            "actions?: [event action]}]}. `set` STAMPS fields atomically with the move (WF-1) — " +
+            '{"resolved_at":"now"} on a →resolved transition records transition time without a second ' +
+            "write; stamps apply on both the plain and the CAS path, per branch, override the caller's " +
+            "same-key patch value, and are define-time validated (\"now\" = date fields; {value} = " +
+            "checked literal; null = unset, refused on required/computed/write-only/workflow fields). " +
+            "`when` gates a transition on the ROW's data rather than " +
             "on who is asking — the way to express \"may not go live without a creative\" without " +
             "making that field required (which would block saving a draft). " +
             "initial is enforced on EVERY create path (including bulk_create_entries and " +
@@ -664,6 +670,19 @@ export const TOOL_DEFS: ToolDef[] = [
                     items: WHERE_ITEM_JSON,
                     description:
                       "PRECONDITION on the row for THIS transition — same clause vocabulary as query where. Gate on the DATA, not just the actor: [{field:\"creative\",op:\"exists\",value:true}] on draft->live means a campaign cannot go live without one, WITHOUT making creative a required field (which would block saving a draft). Checked atomically in the same statement as the state guard, so a concurrent write cannot slip a move past it; a refusal names the unmet requirement.",
+                  },
+                  set: {
+                    type: "object",
+                    description:
+                      'WF-1: fields stamped IN THE SAME UPDATE as the move — {"resolved_at":"now"} on a ' +
+                      '→resolved transition records transition time (not sweep time, not a second write ' +
+                      'someone must remember). Closed vocabulary per field: "now" (date fields only) | ' +
+                      "{value: <literal, validated at define time>} | null (unset; refused on required " +
+                      "fields). Applies on update_entry AND update_entry_if (and scheduled mutate " +
+                      "transitions, which ride the CAS path) — per branch, so two transitions into the " +
+                      "same state stamp independently. A stamp OVERRIDES the same key in the caller's " +
+                      "patch. Cannot touch the workflow field, computed, or write-only fields.",
+                    additionalProperties: true,
                   },
                   actions: { type: "array", items: { type: "object" } },
                 },
@@ -1743,6 +1762,17 @@ const defineArgs = z.object({
             // precondition at all. A gate that vanishes quietly is worse than
             // one that was never offered.
             when: z.array(whereItemSchema).optional(),
+            // WF-1: like `when` (see above), an unlisted key would be SILENTLY
+            // STRIPPED by this parser — the stamp would vanish, not fail.
+            set: z
+              .record(
+                z.union([
+                  z.literal("now"),
+                  z.object({ value: z.union([z.string(), z.number(), z.boolean()]) }).strict(),
+                  z.null(),
+                ]),
+              )
+              .optional(),
             actions: z.array(eventActionSchema).optional(),
           }),
         )

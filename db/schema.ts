@@ -74,12 +74,24 @@ export type EventAction =
  */
 export type WorkflowActor = "mcp" | "operator" | "client" | "admin" | "delivery";
 
+/** WF-1: one field stamp applied atomically WITH a transition. Closed vocabulary
+ *  like schedule-mutate `set`: "now" (date fields), a validated literal, or null
+ *  (unset). No copyFrom — a transition stamp is a record of the move itself. */
+export type TransitionSetSpec = "now" | { value: string | number | boolean } | null;
+
 /** One edge of a state machine: from → to, actor-gated, firing optional actions. */
 export interface WorkflowTransition {
   from: string | string[];
   to: string;
   /** Defaults to ["mcp","admin"] — delivery must be listed explicitly. */
   actors?: WorkflowActor[];
+  /**
+   * WF-1 — fields stamped IN THE SAME UPDATE as the state move (both the plain
+   * and the CAS path), so `resolved_at` records transition time, not sweep
+   * time. Validated at define; a stamp overrides the same key in a caller's
+   * patch (the machine's record of the move beats a client's claim about it).
+   */
+  set?: Record<string, TransitionSetSpec>;
   /**
    * D2 — a PRECONDITION on the row, checked at the moment of the move.
    *
