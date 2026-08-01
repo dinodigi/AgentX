@@ -27,6 +27,15 @@ const CODE_BY_STATUS: Record<number, ErrorCode> = {
   403: "E_SCOPE",
   404: "E_NOT_FOUND",
   409: "E_CONFLICT",
+  // CONTRACT-1: 413 was ABSENT here, so an oversized body fell through to the
+  // "E_INTERNAL" default below — a code the registry documents as "unexpected
+  // server error — not agent-repairable; retry or report". A 413 is the most
+  // repairable error on the surface (send less), and that advice would make a
+  // client retry the same oversized payload forever. It is a validation failure
+  // whose message states the exact fix, which is E_VALIDATION's definition.
+  // No new code invented: ERROR_CODES is append-only, and every client
+  // generated before today already branches on E_VALIDATION.
+  413: "E_VALIDATION",
   422: "E_VALIDATION",
   429: "E_RATE_LIMITED",
   500: "E_INTERNAL",

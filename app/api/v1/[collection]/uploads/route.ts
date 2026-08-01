@@ -52,7 +52,13 @@ export async function POST(
   // multipart boundary/header overhead; the byte-exact cap still applies below.
   const declaredLen = Number(req.headers.get("content-length") ?? "");
   if (Number.isFinite(declaredLen) && declaredLen > MAX_UPLOAD_BYTES + 64 * 1024) {
-    return deliveryError(413, "upload too large");
+    return deliveryError(
+      413,
+      `upload too large — the cap is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB per file ` +
+        `(this request declared ${Math.round(declaredLen / 1024 / 1024)} MB). Resize or ` +
+        `compress before uploading; for images, upload a web-sized original and use ` +
+        `GET /v1/assets/{id}/image?w= for variants.`,
+    );
   }
 
   let form: FormData;

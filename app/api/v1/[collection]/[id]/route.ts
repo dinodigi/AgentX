@@ -17,7 +17,7 @@ import { matchesClauses } from "@/lib/query";
 import { gateRead, gateMutate, stampedIdentityFields, checkFieldWrites, fieldWriteError } from "@/lib/access-rules";
 import { getLocales, hasLocalizedFields, localizeView } from "@/lib/locales";
 import { rateLimit } from "@/lib/ratelimit";
-import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
+import { readBounded, MAX_DELIVERY_BODY_BYTES, BODY_TOO_LARGE } from "@/lib/http";
 import { CORS_HEADERS, preflight } from "@/lib/cors";
 import { corsJson, deliveryError, cachedJson, readOnlyRefusal } from "@/lib/delivery-http";
 
@@ -170,7 +170,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (limited) return limited;
 
   const raw = await readBounded(req, MAX_DELIVERY_BODY_BYTES);
-  if (raw === null) return err(413, "request body too large");
+  if (raw === null) return err(413, BODY_TOO_LARGE);
   let body: unknown;
   try {
     body = JSON.parse(raw);

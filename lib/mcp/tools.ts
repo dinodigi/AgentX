@@ -2030,7 +2030,12 @@ export async function callTool(
       case "configure_inbound": {
         const a = rawArgs as { collection?: string; fieldMap?: Record<string, string> };
         if (typeof a?.collection !== "string" || typeof a?.fieldMap !== "object" || a.fieldMap === null) {
-          return err("collection and fieldMap are required", "E_VALIDATION");
+          return err(
+            "collection and fieldMap are required — fieldMap maps inbound keys to your fields, " +
+              "e.g. {from:'email', subject:'subject', text:'message'} (keys from: from|to|subject|text|html); " +
+              "list_collections shows the target collections",
+            "E_VALIDATION",
+          );
         }
         const r = await configureInbound(projectId, { collection: a.collection, fieldMap: a.fieldMap });
         return ok({
@@ -2050,7 +2055,8 @@ export async function callTool(
         return ok(await listBlocks(projectId));
       case "delete_block": {
         const a = rawArgs as { name?: string };
-        if (typeof a?.name !== "string") return err("name is required", "E_VALIDATION");
+        if (typeof a?.name !== "string")
+          return err("name is required — list_blocks shows the library's block names", "E_VALIDATION");
         const r = await deleteBlock(projectId, a.name);
         return r.deleted
           ? ok(r)
@@ -2139,14 +2145,19 @@ export async function callTool(
       case "define_plugin": {
         const a = rawArgs as { definition?: unknown };
         if (!a?.definition || typeof a.definition !== "object") {
-          return err("definition (the full PluginDef object) is required", "E_VALIDATION");
+          return err(
+            "definition (the full PluginDef object) is required — get_plugin on any catalog plugin " +
+              "returns a worked example of the shape",
+            "E_VALIDATION",
+          );
         }
         const def = await upsertPluginDef(a.definition, projectId); // ALWAYS project-scoped via MCP
         return ok({ defined: def.id, version: def.version, scope: "this project only" });
       }
       case "delete_plugin": {
         const a = rawArgs as { id?: string };
-        if (typeof a?.id !== "string") return err("id is required", "E_VALIDATION");
+        if (typeof a?.id !== "string")
+          return err("id is required — list_plugins shows every plugin id available here", "E_VALIDATION");
         const deleted = await deletePluginDef(a.id, projectId);
         return deleted
           ? ok({ deleted: a.id })
@@ -2200,7 +2211,8 @@ export async function callTool(
 
       case "enable_plugin": {
         const a = rawArgs as { id?: string; swap?: boolean };
-        if (typeof a?.id !== "string") return err("id is required", "E_VALIDATION");
+        if (typeof a?.id !== "string")
+          return err("id is required — list_plugins shows every plugin id available here", "E_VALIDATION");
         // Composition core (Track A): one active provider per capability,
         // requires auto-resolution, explicit swaps. Grandfathered projects
         // (pre-existing overlaps) are untouched — enforcement lives here only.
@@ -2258,7 +2270,13 @@ export async function callTool(
           );
         }
         const a = rawArgs as { url?: string };
-        if (typeof a?.url !== "string" || a.url.length === 0) return err("url is required", "E_VALIDATION");
+        if (typeof a?.url !== "string" || a.url.length === 0) {
+          return err(
+            "url is required — pass the ABSOLUTE https URL of a live, publicly reachable page " +
+              "(e.g. https://example.com/pricing); relative paths and private hosts are refused",
+            "E_VALIDATION",
+          );
+        }
         try {
           const head = await fetchPageHead(a.url);
           if (name === "fetch_page") return ok(head);
@@ -3657,7 +3675,7 @@ export async function callTool(
       }
 
       default:
-        return err(`unknown tool "${name}"`, "E_UNKNOWN_TOOL");
+        return err(`unknown tool "${name}" — tools/list shows the full surface`, "E_UNKNOWN_TOOL");
     }
   } catch (e) {
     if (e instanceof z.ZodError) return err(formatZodError(e), "E_VALIDATION", issuesFromZod(e, []));

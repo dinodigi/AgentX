@@ -19,7 +19,7 @@ import {
   ValidationError,
 } from "@/lib/entries";
 import { getLocales, hasLocalizedFields, localizeView } from "@/lib/locales";
-import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
+import { readBounded, MAX_DELIVERY_BODY_BYTES, BODY_TOO_LARGE } from "@/lib/http";
 import type { WhereClause, WhereItem, OrderByClause } from "@/lib/query";
 
 /**
@@ -403,7 +403,7 @@ export async function POST(
   }
 
   const raw = await readBounded(req, MAX_DELIVERY_BODY_BYTES);
-  if (raw === null) return deliveryError(413, "request body too large");
+  if (raw === null) return deliveryError(413, BODY_TOO_LARGE);
   let body: unknown;
   try {
     body = JSON.parse(raw);

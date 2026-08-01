@@ -412,6 +412,129 @@ describe("CONTRACT-1 — the orientation blob answers the questions agents ask",
   });
 });
 
+// 114c — ERROR COPY + CODES. Principle 4 says every refusal names the fix, and
+// the codebase does that well in most places; this makes it universal and fixes
+// the one place where the CODE actively misled.
+describe("CONTRACT-1 — refusals name the fix, and the code says what it means", () => {
+  let p;
+  before(async () => {
+    await ensureServer();
+    p = await createEphemeralProject("contract-errors");
+  });
+  after(() => p.destroy());
+
+  it("BEHAVIORAL PIN: an oversized delivery body is E_VALIDATION (repairable), never E_INTERNAL", async () => {
+    // The defect: 413 was missing from CODE_BY_STATUS, so it fell through to the
+    // E_INTERNAL default — a code the registry defines as "not agent-repairable;
+    // retry or report". A client following that advice retries the same
+    // oversized payload forever. Verified on the wire, not by reading the map.
+    const def = await mcp(p.mcpToken, "define_collection", {
+      name: "oversize",
+      publicWrite: true,
+      fields: [{ name: "body", label: "B", type: "richtext", publicRead: true }],
+    });
+    assert.ok(def.ok, def.errorText);
+    const res = await fetch(`${BASE}/api/v1/oversize`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${p.deliveryToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ body: "x".repeat((1 << 20) + 4096) }),
+    });
+    assert.equal(res.status, 413);
+    const body = await res.json();
+    assert.equal(body.code, "E_VALIDATION", `413 must be repairable, got ${body.code}`);
+    assert.notEqual(body.code, "E_INTERNAL", "the exact regression this pins out");
+    // …and the message names the limit AND a remedy, so repair needs no round trip.
+    assert.match(body.error, /1 MiB|1024 KiB/, "the cap must be named");
+    assert.match(body.error, /bulk_create_entries|Split the payload/, "…and a way forward");
+
+    // Positive control: a body under the cap still succeeds, so the 413 above
+    // came from the size gate and not from something else being broken.
+    const ok = await fetch(`${BASE}/api/v1/oversize`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${p.deliveryToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ body: "y".repeat(32 * 1024) }),
+    });
+    assert.equal(ok.status, 201, `a 32 KiB body must pass (got ${ok.status})`);
+  });
+
+  it("every documented status→code mapping is a REAL registered code", async () => {
+    // Guards the reverse of the bug above: a mapping to a code that isn't in the
+    // registry would produce a code no client could look up.
+    const res = await fetch(`${BASE}/api/mcp`);
+    const { errorCodes } = await res.json();
+    assert.ok(errorCodes?.E_VALIDATION, "GET /api/mcp must still serve the registry");
+    for (const code of ["E_VALIDATION", "E_INTERNAL", "E_RATE_LIMITED", "E_AUTH", "E_NOT_FOUND"]) {
+      assert.ok(code in errorCodes, `${code} must be registered`);
+    }
+  });
+
+  it("thin refusals now name the discovery tool — the fix is in the message, not a round trip", async () => {
+    const cases = [
+      [{ tool: "delete_plugin", args: {} }, /list_plugins/],
+      [{ tool: "enable_plugin", args: {} }, /list_plugins/],
+      [{ tool: "delete_block", args: {} }, /list_blocks/],
+      [{ tool: "define_plugin", args: {} }, /get_plugin/],
+      [{ tool: "configure_inbound", args: { collection: "x" } }, /fieldMap|list_collections/],
+    ];
+    for (const [call, expected] of cases) {
+      const r = await mcp(p.mcpToken, call.tool, call.args);
+      assert.ok(!r.ok, `${call.tool} should refuse an empty call`);
+      assert.match(
+        r.errorText,
+        expected,
+        `${call.tool}'s refusal does not tell the agent where to look: ${r.errorText}`,
+      );
+    }
+  });
+
+  it("an unknown tool names tools/list, matching what the code registry promises", async () => {
+    const r = await mcp(p.mcpToken, "make_me_a_sandwich", {});
+    assert.ok(!r.ok);
+    assert.match(r.errorText, /E_UNKNOWN_TOOL/);
+    // ERROR_CODES documents "tools/list shows the full surface" — the MESSAGE
+    // said only `unknown tool "x"`, so the advice lived somewhere the reader of
+    // the error wasn't.
+    assert.match(r.errorText, /tools\/list/, `the refusal must carry its own fix: ${r.errorText}`);
+  });
+
+  it("the contract is SELF-CONTAINED on error codes — /api/contract carries the registry", async () => {
+    const md = await (await fetch(`${BASE}/api/contract`)).text();
+    assert.match(md, /## Error codes/, "the contract must document its own error vocabulary");
+    assert.match(md, /append-only/, "the stability guarantee clients depend on");
+    const json = await (await fetch(`${BASE}/api/contract?format=json`)).json();
+    assert.ok(json.errorCodes, "?format=json must carry the registry too");
+    // SELF-CHECK: the rendered table and the served registry agree, and both
+    // agree with the source of truth. One renderer, no second copy.
+    const live = (await (await fetch(`${BASE}/api/mcp`)).json()).errorCodes;
+    assert.deepEqual(
+      Object.keys(json.errorCodes).sort(),
+      Object.keys(live).sort(),
+      "/api/contract and GET /api/mcp must serve the same code registry",
+    );
+    for (const code of Object.keys(live)) {
+      assert.ok(md.includes(`\`${code}\``), `${code} is registered but missing from the contract table`);
+    }
+  });
+
+  it("BEHAVIORAL PIN: a capacity breach really reports constraint `unique` with `limit` — as documented", async () => {
+    // The errorFormat blob now tells agents to read `limit` to tell at-most-N
+    // from exactly-one, because the constraint vocabulary is append-only and
+    // capacity reuses `unique`. That is a claim about the wire.
+    const def = await mcp(p.mcpToken, "define_collection", {
+      name: "capped_two",
+      fields: [{ name: "slot", label: "S", type: "text", capacity: 1 }],
+    });
+    assert.ok(def.ok, def.errorText);
+    await mcp(p.mcpToken, "create_entry", { collection: "capped_two", data: { slot: "x" } });
+    const second = await mcp(p.mcpToken, "create_entry", { collection: "capped_two", data: { slot: "x" } });
+    assert.ok(!second.ok);
+    const issues = JSON.parse(/issues: (\[.*\])/s.exec(second.errorText)?.[1] ?? "[]");
+    assert.ok(issues.length > 0, `expected a machine-readable issues block: ${second.errorText}`);
+    assert.equal(issues[0].constraint, "unique", "documented: capacity reports as unique");
+    assert.equal(issues[0].limit, 1, "…carrying limit, which is what distinguishes the two");
+  });
+});
+
 /** Poll until cond() or ~10s — event delivery is async (retry cycle + backoff). */
 async function waitFor(cond, ms = 10_000) {
   const until = Date.now() + ms;

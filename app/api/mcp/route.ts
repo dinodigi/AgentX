@@ -204,6 +204,9 @@ export async function GET(req: NextRequest) {
     errorFormat:
       "tool errors: line 1 is `Error [CODE]: message`; validation-shaped failures append " +
       "`issues: [{field, constraint, limit?, allowed?, pattern?, hint}]` — parse it to repair inputs " +
-      "field by field (constraint kinds: type|required|required_if|min|max|pattern|enum|unique|unknown_field|ref_missing)",
+      "field by field (constraint kinds: type|required|required_if|min|max|pattern|enum|unique|unknown_field|ref_missing). " +
+      "A `capacity` breach reports as constraint `unique` carrying `limit: N` — the vocabulary is " +
+      "append-only, so read `limit` to tell at-most-N from exactly-one. The full code registry is " +
+      "also in the contract at /api/contract.",
   });
 }

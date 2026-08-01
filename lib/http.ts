@@ -10,6 +10,23 @@ import type { NextRequest } from "next/server";
 export const MAX_DELIVERY_BODY_BYTES = 1 << 20; // 1 MiB
 
 /**
+ * The 413 message, shared by every delivery route that reads a bounded body.
+ *
+ * CONTRACT-1, principle 4: a refusal names the fix. "request body too large"
+ * named neither the limit nor the remedy, so repairing it meant a round trip
+ * through the contract — and it arrived carrying E_INTERNAL ("not
+ * agent-repairable"), which pointed the reader away from repair entirely.
+ * Derived from the constant, so the published number cannot drift from the
+ * enforced one.
+ */
+export const BODY_TOO_LARGE =
+  `request body too large — delivery JSON bodies are capped at ` +
+  `${MAX_DELIVERY_BODY_BYTES / 1024} KiB (1 MiB). Split the payload across ` +
+  `calls, or do the batch server-side over MCP (bulk_create_entries up to ` +
+  `500/call, transact up to 25 ops). File uploads are a separate path with a ` +
+  `10 MB cap: POST /v1/{collection}/uploads.`;
+
+/**
  * The MCP surface is authenticated (operator token) and legitimately larger —
  * bulk create takes up to 100 entries, transact up to 25 ops, and `upload_asset`
  * carries the file inline as base64 (a 10 MiB asset ≈ 13.3 MiB of JSON). The cap

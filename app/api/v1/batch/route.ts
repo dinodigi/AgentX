@@ -3,7 +3,7 @@ import { bearerFrom, resolveDeliveryToken } from "@/lib/tokens";
 import { rateLimit } from "@/lib/ratelimit";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError } from "@/lib/delivery-http";
-import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
+import { readBounded, MAX_DELIVERY_BODY_BYTES, BODY_TOO_LARGE } from "@/lib/http";
 import { GET as listGET } from "../[collection]/route";
 
 /**
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
   }
 
   const raw = await readBounded(req, MAX_DELIVERY_BODY_BYTES);
-  if (raw === null) return deliveryError(413, "request body too large");
+  if (raw === null) return deliveryError(413, BODY_TOO_LARGE);
   let body: { queries?: unknown };
   try {
     body = JSON.parse(raw);

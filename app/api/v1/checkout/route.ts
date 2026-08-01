@@ -11,7 +11,7 @@ import { createEntry, publicFields } from "@/lib/entries";
 import { matchesClauses } from "@/lib/query";
 import type { WhereItem } from "@/lib/query";
 import { rateLimit } from "@/lib/ratelimit";
-import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
+import { readBounded, MAX_DELIVERY_BODY_BYTES, BODY_TOO_LARGE } from "@/lib/http";
 import { corsJson, deliveryError, readOnlyRefusal } from "@/lib/delivery-http";
 import { preflight } from "@/lib/cors";
 
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
   }
 
   const raw = await readBounded(req, MAX_DELIVERY_BODY_BYTES);
-  if (raw === null) return deliveryError(413, "request body too large");
+  if (raw === null) return deliveryError(413, BODY_TOO_LARGE);
   let body: z.infer<typeof bodySchema>;
   try {
     body = bodySchema.parse(JSON.parse(raw));
