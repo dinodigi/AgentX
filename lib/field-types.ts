@@ -1,7 +1,12 @@
 /**
- * The 8 field primitives. An AI composes schemas from these — never invents types.
+ * The 10 field primitives. An AI composes schemas from these — never invents types.
  * This file is the single source of truth for what a field can be; validation,
  * the MCP tool surface, and the admin UI all derive from it.
+ *
+ * CONTRACT-1: the count is stated in `list_field_types`' description too, and a
+ * contract test asserts the two agree with FIELD_TYPES.length — this comment
+ * said "8" for the whole life of group/array, which is how a shipped primitive
+ * stays invisible to the audience that only reads the contract.
  */
 
 export const FIELD_TYPES = [
@@ -351,6 +356,14 @@ export const COMMON_FIELD_CONFIG = [
     "DATE fields are supported — index published_at for content ordering, starts_at/ends_at for " +
     "scheduling windows; existing values are canonicalized to UTC when the index is added. " +
     "Invalid on richtext (use searchable) and group/array (nested content isn't queryable).",
+  "capacity?: number — AT MOST N rows may share each value of this field (text/number/enum/" +
+    "relation/date/boolean). THE BOOKING PRIMITIVE: capacity:10 on a `slot` relation is " +
+    '"10 seats per slot" — the N+1th write is refused with E_VALIDATION naming the full key ' +
+    "and the remedy. Enforced by a database trigger holding a per-key lock, so it is safe " +
+    "under concurrency; a count-then-insert in your own code is NOT (two callers both count 9 " +
+    "and both insert). `unique` is capacity 1 — the two conflict, pick one. Cancellations free " +
+    "a seat automatically because the count is of live rows (a trashed row no longer holds one). " +
+    "Not valid on richtext/asset/group/array, nor with writeOnly.",
   'writableBy?: "none" | {claim, equals} — delivery-only write gate (admin/MCP unaffected). ' +
     "Use writableBy:'none' to lock an admin-only field on a publicWrite collection. " +
     "Fields referenced by the collection's publicFilter are auto-locked against anonymous writes.",

@@ -211,8 +211,12 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "list_field_types",
     description:
-      "List the 8 field primitives you may compose collections from (text, richtext, " +
-      "number, boolean, date, enum, asset, relation) and each one's config. You must " +
+      "List the 10 field primitives you may compose collections from — 8 scalars (text, " +
+      "richtext, number, boolean, date, enum, asset, relation) plus 2 CONTAINERS: `group` " +
+      "(a nested set of sub-fields, e.g. an seo group) and `array` (a repeater — uniform " +
+      "`item`, or typed `blocks` for page bodies of differing sections). Returns each type's " +
+      "config plus `commonConfig`, the knobs available on EVERY field (required, publicRead, " +
+      "indexed, capacity, writableBy, writeOnly, computed, localized, requiredIf). You must " +
       `only use these types. ${BOUNDARIES}`,
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
@@ -497,6 +501,8 @@ export const TOOL_DEFS: ToolDef[] = [
       "`fields` is an array of field " +
       "defs, each: {name, label, type, required?, publicRead?} plus constraints " +
       "(unique? on text/number/date — DB-enforced, dates stored normalized to UTC ISO; " +
+      "capacity?: N = AT MOST N rows may share each value, the booking/seat constraint, " +
+      "DB-trigger-enforced so it is race-free where a count-then-insert is not; " +
       "min/max? = value bounds on number, LENGTH bounds on text/richtext, ISO-string instant " +
       "bounds on date; integer? on number; pattern? = JS-regex source on text, requires max <= 10000, " +
       "patternHint? = the failure message; requiredIf?: {field, equals} against a sibling enum) and " +
@@ -1126,8 +1132,11 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "query_entries",
     description:
       "List entries in a collection (relations resolved to {id,label}). Supports limit/offset " +
-      "(default 100, max 500), where filters [{field, op: eq|ne|contains|gt|lt|in|exists, value}] and orderBy " +
-      "{field, dir: asc|desc}. ne = SET-and-different (an unset field never matches); exists takes " +
+      "(default 100, max 500), where filters [{field, op: eq|ne|neOrUnset|contains|gt|lt|in|has|" +
+      "exists, value}] and orderBy " +
+      "{field, dir: asc|desc}. ne = SET-and-different (an unset field never matches), so an " +
+      "EXCLUSION filter almost always wants neOrUnset (\"different OR not set\") instead; " +
+      "has = membership in an array-of-scalars field. exists takes " +
       "true|false (presence) — 'published OR unset' = {anyOf:[{field:'published',op:'eq',value:true}," +
       "{field:'published',op:'exists',value:false}]}. Ops are type-checked: contains=text/richtext, gt/lt=number/date," +
       "in=text/enum/relation with value: string[]. Where items AND together; an item may be an OR " +
@@ -1245,7 +1254,8 @@ export const TOOL_DEFS: ToolDef[] = [
       "({field:'created_at',bucket:'month'} — the by-month report), or an ARRAY of up to two for a " +
       "cross-tab like source x stage; each group then carries `keys` (per dimension) alongside " +
       "`key` (the first). (relation groups include the " +
-      "target's label). Same where vocabulary as query_entries (eq/ne/contains/gt/lt/in/exists + anyOf). " +
+      "target's label). Same where vocabulary as query_entries " +
+      "(eq/ne/neOrUnset/contains/gt/lt/in/has/exists + anyOf). " +
       "Groups are capped at 500, largest first, with truncatedGroups: true when cut. " +
       "Example: revenue by trip = {aggregates:[{fn:'sum',field:'price'}], groupBy:'trip'}.",
     inputSchema: {
