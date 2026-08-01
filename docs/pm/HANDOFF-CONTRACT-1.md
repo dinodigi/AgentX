@@ -2,6 +2,16 @@
 
 > **Durable**, written 2026-07-30 at the end of the XVibe-intake session.
 > Paste the prompt at the bottom into a fresh session.
+>
+> **✅ EXECUTED 2026-07-31.** CONTRACT-1 shipped in five checkpoints
+> (`86294e0` `6ba1c83` `eb98eea` `ddd650b` + doc sync); DX-1 closed with it
+> (search shipped, idempotency answered — it inherits WP-1's trigger); WP-6's
+> doc half done, code half still open. Receipts in
+> [../BACKLOG.md](../BACKLOG.md); summary in [STATUS.md](STATUS.md).
+> **Every one of the eight traps below fired again** — in particular #1
+> (negative controls caught two vacuous tests of my own) and #2 (a claim about
+> trashed rows freeing capacity was written before it was verified, then
+> checked and pinned). Kept as a record of the method, not as live work.
 
 ## Why this is a fresh-session task
 

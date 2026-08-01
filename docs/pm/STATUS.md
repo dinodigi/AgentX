@@ -1,10 +1,42 @@
 # Status — where things stand
 
-> **Updated 2026-07-30 (post-freeze intake).** One page. If you read nothing else, read this.
+> **Updated 2026-07-31 (CONTRACT-1 shipped).** One page. If you read nothing else, read this.
 > Completion list: **[QUEUE.md](QUEUE.md)** · full inventory + receipt ledger:
 > **[BOARD.md](BOARD.md)** · protocol: **[BURNDOWN.md](BURNDOWN.md)**
 
 ## Right now
+
+**CONTRACT-1 is SHIPPED** (2026-07-31, five checkpoints: `86294e0` `6ba1c83`
+`eb98eea` `ddd650b` + doc sync) — the flagship agent-facing language pass, with
+DX-1 folded in and WP-6's doc half done. All 61 tool descriptions were diffed
+against live behavior. The headline finds were not typos: `list_field_types`
+advertised 8 primitives while returning 10, so `group`/`array` had been
+invisible to the contract's own audience since DM-1; `capacity` — the booking
+primitive — appeared in the payload only inside another field's incompatibility
+list; `compute.writeBack` promised delivery-side idempotency that does not
+exist, contradicting `briefing.notSupported` in the same response; and a
+delivery 413 shipped carrying `E_INTERNAL`, a code documented as "not
+agent-repairable", for the most repairable failure on the surface.
+
+The structural half is `get_project_info.answers`: a routing table from the
+questions integrators actually ask to the key that answers each. That shape was
+chosen because the dogfood upload failure was never "undocumented" — the
+endpoint existed and the agent shipped credentials to a browser anyway. More
+prose would not have helped; routing does.
+
+**What keeps it from drifting back**: suite 114 (27 tests) plus suite 11, in the
+108/110 pattern. Where possible the assertions are DERIVED rather than typed —
+the primitive count is compared against what the tool returns, the operator
+lists against `WHERE_OPS`, `describe_collection`'s prose against the keys it
+really returns, every `answers` pointer against the payload — so an 11th
+primitive, a 10th operator or a renamed key fails the build until the words
+follow. Every fix was negative-controlled by breaking it and watching its own
+test fail; two of those controls found holes in the tests themselves.
+
+Next work, unchanged in priority: **QRY-4** (entry-level import — gates the
+operator's dev/prod split), **ENV-1** (staging), **WP-6's code half** (now with
+its regression test already written), **CONN-2** (SMS, trigger fired).
+
 
 **The burn-down finished at 32/32, and the XVibe intake sprint is COMPLETE** —
 all five scheduled items from the first field batch shipped same-day with

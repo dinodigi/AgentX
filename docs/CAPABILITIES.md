@@ -1,6 +1,6 @@
 # Pluggie (AgentX) — System Capabilities
 
-> **Living — last synced 2026-07-30.** What the platform can do **today**,
+> **Living — last synced 2026-07-31.** What the platform can do **today**,
 > grouped by surface. Sync this doc whenever a batch changes the tool surface
 > or platform behavior (see CLAUDE.md ship ritual). For what's next, see
 > [BACKLOG.md](BACKLOG.md) and [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md);
@@ -30,8 +30,13 @@ page linked in the site footer).
 - **Constraints**: `required`, `unique` (partial-index backed), `min`/`max`,
   `integer`, `pattern` + `patternHint` (define-time safe-regex check),
   `requiredIf`, explicit unset via `null` (symmetric on create + update),
-  `indexed` (expression index for hot filters; cleanly rejected on
-  date/richtext/group/array), `searchable` (FTS surface).
+  `capacity: N` (AT MOST N rows may share a value — the booking/seat
+  constraint, enforced by a DB trigger under a per-key lock, so it is race-free
+  where a count-then-insert is not; `unique` is capacity 1 and the two
+  conflict), `indexed` (expression index for hot filters; **date fields ARE
+  supported** since DM-4 — the index is built on the canonical UTC-ISO text,
+  which sorts chronologically; rejected only on richtext/group/array),
+  `searchable` (FTS surface).
 - **Computed fields** (closed vocabulary): `slugify | template | now | uuid` —
   client values rejected, stamped server-side, recompute rules define-time
   checked (template composes into unique keys, e.g. no-double-book slots).
@@ -96,7 +101,7 @@ page linked in the site footer).
 | Reads | `query_entries`, `get_entry`, `count_entries`, `aggregate_entries`, `search_entries` |
 | Safety net | `list_trash`, `restore_entry`, `purge_entry`, `empty_trash`, `list_entry_versions`, `restore_entry_version` |
 | Assets | `upload_asset`, `list_assets`, `delete_asset` |
-| Portability | `export_entries` (keyset cursor), `export_project`, `import_project` |
+| Portability | `export_entries` (keyset cursor, complete export), `export_project`, `import_project` (**schema only** — branding/locales/blocks/collection defs, no entries; entry-level import with id remapping is QRY-4) |
 | Automation | `list_jobs`, `cancel_job`, `define_schedule`, `list_schedules`, `delete_schedule` |
 | Inbound email | `configure_inbound`, `disable_inbound` |
 | Plugins | `list_plugins`, `enable_plugin`, `disable_plugin`, `get_plugin`, `define_plugin`, `delete_plugin` |
@@ -105,7 +110,9 @@ page linked in the site footer).
 | Compute | `test_hook` |
 | Platform | `send_feedback` (always available — agent-reported platform limitations land on the operator's console wall) |
 
-- **Query power**: filters incl. `ne`/`exists`, one-level `anyOf` OR groups,
+- **Query power**: filters `eq`/`ne`/`neOrUnset`/`contains`/`gt`/`lt`/`in`/`has`/`exists`
+  (`neOrUnset` is the exclusion filter that keeps never-set rows; `has` is
+  array-of-scalars membership), one-level `anyOf` OR groups,
   sorting, keyset cursor paging, `select`, depth-1 `expand`, dotted related-field
   filters (parameterized EXISTS), `includeReverse`, aggregation
   (`count/sum/avg/min/max`, `groupBy` enum/relation with label resolution),
@@ -113,7 +120,11 @@ page linked in the site footer).
 - **Atomicity**: `update_entry_if` = CAS + increment in one statement;
   `transact([ops])` = interactive multi-op transaction with cross-op `$ref`s,
   `dryRun`, idempotency receipts.
-- **Idempotency keys** on writes; replays return original ids.
+- **Idempotency keys** on MCP writes (`create_entry`, `transact`); replays
+  return original ids. **MCP-only** — the delivery API has no `Idempotency-Key`
+  and no `If-Match` (WP-1/WP-2), so write paths that must not double-apply go
+  server-side. Registered in `briefing.notSupported` and stated in
+  `compute.writeBack`.
 - **Read→write symmetry**: reads resolve asset/relation values to
   `{id, url|label, …}` objects — writes accept those objects back (coerced to
   the id), so loading an entry and saving it unchanged always round-trips.
@@ -127,6 +138,41 @@ page linked in the site footer).
   `allowExplicitWorkflowState: true` — historical records import at their real
   workflow states (any declared enum option); use is stamped into the audit
   actor. MCP-only; delivery and transact stay strict.
+
+### The agent-facing contract (CONTRACT-1)
+
+For this audience the tool descriptions and `get_project_info` **are** the
+product — an agent plans against them and believes them over the code — so the
+words are treated as a shipped surface with tests, not as documentation.
+
+- **`get_project_info.answers`** — a routing table from the questions
+  integrators actually ask (upload from a browser · which token where ·
+  paginate/search · handle a 429 · 401 vs 403 vs 404 · why an MCP write is
+  missing from delivery · verify a webhook signature · custom validation ·
+  realtime · sell something · call it from a serverless function · what is not
+  supported) to the exact key in the same response that answers each. Pointers,
+  never prose: a second copy of an answer is how a contract drifts.
+- **`briefing.notSupported`** — the machine-readable boundary registry, with
+  `status` + what to do instead, self-checked against BACKLOG.md.
+- **`compute.webhookSigning`** — how to verify an inbound webhook
+  (`x-agentx-signature: t=…,v1=HMAC_SHA256(secret, "t.rawBody")`, raw bytes,
+  timing-safe, ~300s replay window), and the honest warning that a project with
+  no signing secret is sent UNSIGNED.
+- **`deliveryApi.convergence`** — MCP writes reach delivery in ~15s AND are
+  subject to publicRead/publicFilter/access, so a row can be readable over MCP
+  and permanently absent from delivery. Both halves, at orientation.
+- **`deliveryApi.limits`** — the real rate/size budgets (QRY-3), pinned to the
+  wire by test.
+- **Error codes** are served in the contract itself (`/api/contract`, and
+  `?format=json`), rendered from `ERROR_CODES`. Every refusal names its own
+  fix; a 413 is `E_VALIDATION` (repairable) and states the cap.
+- **Anti-regression**: suites 108/109/110/**114** read the live contract the
+  way an agent does and assert the corrected words, with behavioral pins on the
+  wire wherever a claim is about behavior. Several assertions are *derived* —
+  the primitive count is compared against what `list_field_types` returns, the
+  op lists against `WHERE_OPS`, `describe_collection`'s prose against the keys
+  it really returns, every `answers` pointer against the payload — so a new
+  primitive, operator, key or tool fails the build until the words follow.
 
 ## 3. Delivery API (`/api/v1`, token-scoped, edge-cached)
 

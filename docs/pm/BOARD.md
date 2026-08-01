@@ -90,7 +90,7 @@ _Wall totals: done=76 · planned=2 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_2 open (0 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-01 02:27Z_
+_2 open (0 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-01 04:15Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
@@ -101,20 +101,19 @@ _2 open (0 new, 2 planned) · 0 theme(s) reported more than once · snapshot 202
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_13 scheduled (6 high) · 23 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_11 scheduled (5 high) · 23 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
 **Scheduled = decided, not started.** A sprint is a commitment; this is a list. High priority:
 
 | | ID | item |
 |---|---|---|
-| 📥 | **CONTRACT-1** | Full pass over agent-facing language — every tool description, `get_project_info`, `list |
 | 📥 | **ENV-1** | Staging environment — an online copy of the platform to debug against (operator, 2026-07 |
 | 📥 | **MT-2** | Org-scope the admin view — an invited client-role member sees every org's rows in the ad |
 | 📥 | **OPS-2** | Breaking-change comms. *(Re-scoped in CP10: the AGENT half shipped in the friction sprin |
 | 📥 | **QRY-4** | Entry-level import + project environments (`import_project` is schema-only). H: named bl |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 7 scheduled at M/L, and 23 ⏳/⚑ rows that reopen on their named condition._
+_…plus 6 scheduled at M/L, and 23 ⏳/⚑ rows that reopen on their named condition._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)

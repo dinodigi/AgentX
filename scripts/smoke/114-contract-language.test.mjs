@@ -199,6 +199,82 @@ describe("CONTRACT-1 — field + query vocabulary matches the wire", () => {
     assert.match(desc, /never reach a browser|must never reach a browser/, "…and why not this tool");
   });
 
+  it("describe_collection's description covers everything it RETURNS", async () => {
+    // It said "field definitions and flags" while returning publicFilter,
+    // access, events, workflow, checkout and hooks. That undersell matters
+    // because define_collection with `fields` is DECLARATIVE — an agent that
+    // does not know describe_collection surfaces the workflow will re-send a
+    // definition without it and silently drop the state machine.
+    const p2 = await createEphemeralProject("describe-desc");
+    try {
+      const def = await mcp(p2.mcpToken, "define_collection", {
+        name: "tickets",
+        publicWrite: true,
+        fields: [
+          { name: "state", label: "S", type: "enum", options: ["open", "closed"] },
+          { name: "title", label: "T", type: "text", required: true, publicRead: true },
+        ],
+        workflow: { field: "state", initial: "open", transitions: [{ from: "open", to: "closed" }] },
+      });
+      assert.ok(def.ok, def.errorText);
+      const d = await mcp(p2.mcpToken, "describe_collection", { name: "tickets" });
+      assert.ok(d.ok, d.errorText);
+      const desc = tools.get("describe_collection").description;
+      // Every top-level key it really returns must be named in the words.
+      for (const key of Object.keys(d.value)) {
+        if (["name", "displayName", "writeOnlyFields"].includes(key)) continue;
+        assert.ok(
+          desc.includes(key),
+          `describe_collection returns "${key}" but its description never mentions it`,
+        );
+      }
+      // The declarative-drop warning is the reason this matters at all.
+      assert.match(desc, /DROPPED/);
+      assert.ok(d.value.workflow, "fixture sanity: the workflow really is returned");
+    } finally {
+      await p2.destroy();
+    }
+  });
+
+  it("BOUNDARY-HONEST: import_project says it carries NO entries, and really doesn't", async () => {
+    const src = await createEphemeralProject("manifest-src");
+    const dst = await createEphemeralProject("manifest-dst");
+    try {
+      const def = await mcp(src.mcpToken, "define_collection", {
+        name: "notes",
+        fields: [{ name: "body", label: "B", type: "text", required: true, publicRead: true }],
+      });
+      assert.ok(def.ok, def.errorText);
+      const c = await mcp(src.mcpToken, "create_entry", { collection: "notes", data: { body: "content" } });
+      assert.ok(c.ok, c.errorText);
+
+      const desc = tools.get("import_project").description;
+      assert.match(desc, /SCHEMA ONLY/, "the boundary must be stated where an agent plans a migration");
+      assert.match(desc, /NO ENTRIES/);
+      assert.match(desc, /export_entries/, "…and the interim path is named");
+      assert.match(desc, /QRY-4/, "…and it cites the row, matching the notSupported registry");
+
+      // BEHAVIORAL PIN: round-trip the manifest and prove the target has the
+      // collection and ZERO rows. If import ever gains content this fails,
+      // which is correct — the words would need to change with it.
+      const ex = await mcp(src.mcpToken, "export_project", {});
+      assert.ok(ex.ok, ex.errorText);
+      const im = await mcp(dst.mcpToken, "import_project", { manifest: ex.value });
+      assert.ok(im.ok, im.errorText);
+      const cols = await mcp(dst.mcpToken, "list_collections", {});
+      assert.ok(
+        cols.value.some((x) => x.name === "notes"),
+        "the SHAPE must arrive — positive control, so the empty count below means something",
+      );
+      const n = await mcp(dst.mcpToken, "count_entries", { collection: "notes" });
+      assert.ok(n.ok, n.errorText);
+      assert.equal(n.value.count ?? n.value, 0, "import_project must not carry entries");
+    } finally {
+      await src.destroy();
+      await dst.destroy();
+    }
+  });
+
   it("SELF-CHECK: FIELD_TYPES in the source and the served payload agree", () => {
     // Cheap guard against the reverse drift — a primitive added to the type
     // union but never given a spec would serve a payload missing a key.

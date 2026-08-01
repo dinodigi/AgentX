@@ -816,8 +816,14 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "describe_collection",
     description:
-      "Return one collection's full field definitions and flags. Constraints " +
-      "(min/max/pattern/enum/integer/unique) are enforced on WRITE only — rows that " +
+      "Return one collection's COMPLETE definition — not just fields. This is the " +
+      "introspection call: fields (with every constraint), publicWrite, webhookUrl, " +
+      "publicFilter (row visibility on delivery), access (identity rules + ownerField/org), " +
+      "events (webhook/email actions), workflow (the state machine, if any), checkout, and " +
+      "hooks. Read it before editing a collection you did not just define — define_collection " +
+      "with `fields` is declarative, so anything you omit is DROPPED, and the workflow/access/" +
+      "events config is exactly what a blind re-send silently discards. Constraints " +
+      "(min/max/pattern/enum/integer/unique/capacity) are enforced on WRITE only — rows that " +
       "predate a tightened constraint keep their stored values. " +
       "A field marked writeOnly:true IS listed here — its existence and shape are " +
       "public, only its VALUES are not; reads simply omit the key.",
@@ -1410,8 +1416,15 @@ export const TOOL_DEFS: ToolDef[] = [
   {
     name: "import_project",
     description:
-      "Apply a manifest (from export_project) to THIS project. Idempotent — unchanged " +
-      "collections are no-ops. Destructive schema changes return plans and need confirm:true.",
+      "Apply a manifest (from export_project) to THIS project: branding, locales, the block " +
+      "library and collection DEFINITIONS. Idempotent — unchanged " +
+      "collections are no-ops. Destructive schema changes return plans and need confirm:true. " +
+      "SCHEMA ONLY — it imports NO ENTRIES. A manifest carries no content (export_project says " +
+      "so on the way out), so this replicates a project's SHAPE, not its data: after importing, " +
+      "the collections exist and are empty. To move content, read it with export_entries and " +
+      "write it with bulk_create_entries — and note that relation/asset values are raw ids from " +
+      "the source project, so they must be remapped as you go. Entry-level import with automatic " +
+      "id remapping is scheduled, not built (briefing.notSupported, QRY-4).",
     inputSchema: {
       type: "object",
       properties: {
