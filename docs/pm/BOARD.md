@@ -86,14 +86,15 @@ _40 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=76 · planned=2 · reviewed=2_
+_Wall totals: done=76 · new=1 · planned=2 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_2 open (0 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-01 04:15Z_
+_3 open (1 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-04 04:30Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
+| ⬜ | 08-04 | xvibe | friction | define_collection field config for enum options and computed date fields isn't discover… |
 | 🗓️ | 07-31 | xvibe | idea | Project branches backed by Neon branching: branch a project (schema + data), work again… |
 | 🗓️ | 08-01 | xvibe | limitation | User asked for SMS appointment reminders; SMS sending is not available (event actions a… |
 <!-- END:WALL -->
@@ -101,19 +102,21 @@ _2 open (0 new, 2 planned) · 0 theme(s) reported more than once · snapshot 202
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_11 scheduled (5 high) · 23 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_15 scheduled (7 high) · 23 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
 **Scheduled = decided, not started.** A sprint is a commitment; this is a list. High priority:
 
 | | ID | item |
 |---|---|---|
+| 📥 | **CONTRACT-2** | `define_collection` must carry the field-config vocabulary, not defer it to `list_field_ |
 | 📥 | **ENV-1** | Staging environment — an online copy of the platform to debug against (operator, 2026-07 |
 | 📥 | **MT-2** | Org-scope the admin view — an invited client-role member sees every org's rows in the ad |
+| 📥 | **MT-7** | Surface the Clerk claim requirement at DEFINE time, not at 403 time. A `{claim,equals}`  |
 | 📥 | **OPS-2** | Breaking-change comms. *(Re-scoped in CP10: the AGENT half shipped in the friction sprin |
 | 📥 | **QRY-4** | Entry-level import + project environments (`import_project` is schema-only). H: named bl |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 6 scheduled at M/L, and 23 ⏳/⚑ rows that reopen on their named condition._
+_…plus 8 scheduled at M/L, and 23 ⏳/⚑ rows that reopen on their named condition._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)
