@@ -519,6 +519,17 @@ export const TOOL_DEFS: ToolDef[] = [
       "array:{blocks:[{name,label,fields},...]} = TYPED BLOCKS for page bodies of DIFFERENT " +
       "sections (hero/features/cta…): each element stores its block name as `_type` " +
       '(e.g. {"_type":"hero","heading":"…"}); see list_field_types). ' +
+      "EVERY field also accepts these COMMON knobs — listed here because they are the ones agents " +
+      "reach for and a deferred list is a list that does not get read: publicRead (serve this field on " +
+      "the delivery API — see get_project_info), indexed (DB index so filter/sort stays fast; date " +
+      "fields ARE supported), capacity:N (at most N rows may share a value — the booking/seat " +
+      "constraint, DB-trigger-enforced, so it is race-free where a count-then-insert is not), " +
+      "writableBy ('none' | {claim,equals} — delivery-only write lock), writeOnly (TEXT only — written, " +
+      "never returned by ANY read; the credential primitive), and computed:{fn} for a server-derived " +
+      "value the client may never supply: {fn:'slugify',from:'<text field>'} | " +
+      "{fn:'template',template:'{{a}}-{{b}}'} | {fn:'now',on?:'create'|'always'} (DATE fields — this is " +
+      "how you stamp created_at/updated_at) | {fn:'uuid'}. list_field_types returns the full rule for " +
+      "each. " +
       "Instantly manageable in the admin; no per-project UI code. Public fields are served " +
       "by the delivery API (see get_project_info). Set publicWrite:true + webhookUrl for a form. " +
       "Redefining an existing collection with dropped/retyped fields returns a diff plan " +
@@ -934,7 +945,14 @@ export const TOOL_DEFS: ToolDef[] = [
       "and two callers can both seed and silently lose one count. " +
       "Does NOT run before-write hooks OR recompute computed fields — its value is a single atomic " +
       "statement with no pre-read, which a synchronous external consult (or a source-diff) would defeat. " +
-      "Localized fields are rejected here (no in-statement variant merge) — use update_entry.",
+      "Localized fields are rejected here (no in-statement variant merge) — use update_entry. " +
+      "WHICH RACE-FREE MODEL: this CAS counter is right when the limit lives ON A ROW as remaining " +
+      "stock (\"seats_remaining\" on a class) and you want the number readable. A `capacity: N` field " +
+      "(see define_collection / list_field_types) is right when the limit is \"at most N rows may share " +
+      "this key\" (N bookings per class) — it needs no counter, so there is no second source of truth " +
+      "to keep in sync, and a cancellation frees a seat with no code because the constraint counts LIVE " +
+      "rows. Both are enforced by the database. Reach for capacity first for bookings/seats/slots; " +
+      "reach for this when the remaining count is itself content.",
     inputSchema: {
       type: "object",
       properties: {

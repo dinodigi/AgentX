@@ -604,6 +604,11 @@ export interface SchemaDiff {
   affectedEntries: number;
   /** #11: a redefine that omits `workflow` removes the live state machine. */
   workflowRemoved?: boolean;
+  /** MT-4: a redefine that omits `access` removes the identity rules — the same
+   * silent-drop shape as workflowRemoved, one subsystem over. Joins the confirm
+   * gate, because the failure is INVISIBLE: reads/writes keep succeeding, they
+   * just stop being gated, and nothing in the response would have said so. */
+  accessRemoved?: { read: boolean; write: boolean; org: boolean };
   /** J8: localizing a populated field — non-destructive wrap under the default
    * locale, applied immediately (rename-backfill precedent). */
   localized?: { field: string; entriesToWrap: number }[];
@@ -1498,6 +1503,25 @@ export async function defineCollection(
     // workflow would destroy it. Treat removal as destructive: gate on confirm,
     // exactly like a dropped field, so it can never happen by accident.
     const workflowRemoved = Boolean(current.workflow) && !input.workflow;
+    // MT-4: the same trap one subsystem over. A redefine is FULL-REPLACE, so an
+    // additive change that forgets to resend `access` silently un-gates the
+    // collection — and unlike a dropped field, nothing breaks: every read and
+    // write keeps working, it just stops checking who is asking. The workflow
+    // gate above (#11, 6256c51) is the precedent; this is the identical shape,
+    // and the reason it is worth a gate rather than a warning is that the
+    // failure is unobservable from the response.
+    const prevAccess = current.access as
+      | { read?: unknown; write?: unknown; org?: unknown }
+      | null
+      | undefined;
+    const accessRemoved =
+      prevAccess && !input.access
+        ? {
+            read: prevAccess.read !== undefined,
+            write: prevAccess.write !== undefined,
+            org: prevAccess.org !== undefined,
+          }
+        : null;
     // J8: localized-flag toggles — wrap counts ride the diff for visibility;
     // a delocalize (variants dropped) joins the confirm gate like a removal.
     const toggles = await planLocalizedToggles(tdb, current, fields, renames, projectLocales?.default ?? null);
@@ -1507,6 +1531,7 @@ export async function defineCollection(
       ...structural,
       affectedEntries,
       ...(workflowRemoved ? { workflowRemoved: true } : {}),
+      ...(accessRemoved ? { accessRemoved } : {}),
       ...(toggles.localized.length > 0 ? { localized: toggles.localized } : {}),
       ...(toggles.delocalized.length > 0 ? { delocalized: toggles.delocalized } : {}),
     };
@@ -1519,7 +1544,8 @@ export async function defineCollection(
     // the dry plan carries everything the real apply would report, including
     // whether that apply would demand confirm.
     if (input.dryRun) {
-      const wouldRequireConfirmation = dangerousKeys.length > 0 || destructiveDelocalize || workflowRemoved;
+      const wouldRequireConfirmation =
+        dangerousKeys.length > 0 || destructiveDelocalize || workflowRemoved || Boolean(accessRemoved);
       const dryWarnings = await scanConstraintTightening(tdb, current.id, current.fields, fields, renames);
       const accessNote = buildAccessNotes(input, fields);
       return {
@@ -1534,13 +1560,21 @@ export async function defineCollection(
           : "dry run — nothing applied. Re-send without dryRun to apply this plan.",
       };
     }
-    if ((dangerousKeys.length > 0 || destructiveDelocalize || workflowRemoved) && !input.confirm) {
+    if (
+      (dangerousKeys.length > 0 || destructiveDelocalize || workflowRemoved || accessRemoved) &&
+      !input.confirm
+    ) {
+      const dropped = accessRemoved
+        ? (["read", "write", "org"] as const).filter((k) => accessRemoved[k]).join(", ")
+        : "";
       return {
         applied: false,
         requiresConfirmation: true,
         diff,
         hint: workflowRemoved
           ? "destructive change — this REMOVES the workflow state machine (status transitions stop being enforced). Re-send the `workflow` to keep it, or re-run with confirm: true to remove it."
+          : accessRemoved
+            ? `destructive change — this REMOVES the collection's identity rules (access.${dropped}). Reads/writes would keep succeeding but STOP being gated, so nothing would look broken. A redefine is full-replace: re-send \`access\` to keep the rules, or re-run with confirm: true to un-gate the collection deliberately.`
           : destructiveDelocalize
             ? "destructive change — delocalizing drops every non-default variant (entries without a default variant lose the field); re-run with confirm: true to apply"
             : "destructive change — re-run with confirm: true to apply",
@@ -1765,6 +1799,41 @@ function buildAccessNotes(input: DefineCollectionInput, fields: FieldDef[]): str
           ? `. With ZERO delivery-visible fields this collection is NOT on the delivery API at all (404, identity-independent) — readable over MCP only`
           : "") +
         `.`,
+    );
+  }
+  // MT-7: a claim rule reads a CUSTOM CLAIM off the end user's JWT — which
+  // exists only if the tenant added it in THEIR Clerk instance. Nothing said so
+  // at define time: the contract mentioned only "requires the project's Clerk
+  // connector", which is about CONNECTING the connector, a different thing. And
+  // the gate is fail-closed, so the collection appears to work — as "nobody can
+  // read this" — until someone tests it days later, at which point the fix is a
+  // dashboard action no agent can perform. The runtime refusals name the fix
+  // well (claimDenied/orgDenied in lib/access-rules.ts); this moves the same
+  // information to the moment the rule is DECLARED, so it becomes one clear ask
+  // bundled with everything else the agent is already reporting.
+  const claimNames = new Set<string>();
+  for (const r of [...readList, ...writeList]) {
+    if (r && typeof r === "object" && "claim" in r && typeof (r as { claim?: unknown }).claim === "string") {
+      claimNames.add((r as { claim: string }).claim);
+    }
+  }
+  const orgClaim = input.access?.org?.claim;
+  if (orgClaim) claimNames.add(orgClaim);
+  if (claimNames.size > 0) {
+    const list = [...claimNames].sort();
+    const tmpl = list.map((c) => `"${c}": "{{user.public_metadata.${c}}}"`).join(", ");
+    accessNotes.push(
+      "IDENTITY SETUP REQUIRED, and it is not in this platform. " +
+        `${list.length === 1 ? "This rule reads" : "These rules read"} the custom claim ` +
+        `${list.map((c) => `"${c}"`).join(", ")} off the END USER's JWT, which your Clerk instance issues ` +
+        "only if you add it: Clerk dashboard -> Sessions -> Customize session token -> " +
+        `{${tmpl}} (point the source at wherever you store it), then Save. ` +
+        "A claim must resolve to a FLAT STRING — a nested or object claim never matches, because the " +
+        "match is fail-closed. UNTIL THAT IS DONE THIS COLLECTION LOOKS FINE AND SERVES NOBODY: define " +
+        "succeeds, and delivery answers 403 for every signed-in user. Verify with a real end-user token " +
+        "before building against it" +
+        (orgClaim ? "; org scoping additionally needs the user to have an active organization" : "") +
+        ".",
     );
   }
   return accessNotes.length > 0 ? accessNotes.join("\n\n") : undefined;

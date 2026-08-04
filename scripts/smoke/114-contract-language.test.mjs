@@ -620,3 +620,203 @@ async function waitFor(cond, ms = 10_000) {
   }
   throw new Error("timed out waiting for the webhook delivery");
 }
+
+// 114d — CP2 of the Identity & Isolation sprint. Three items: one new gate and
+// two pieces of copy that were true but unreachable.
+//   MT-7  the Clerk claim requirement, moved from 403-time to define-time.
+//   MT-4  dropping an `access` block joins the confirm gate (workflow precedent).
+//   CONTRACT-2  the field-config vocabulary lives in the tool that needs it.
+//
+// The CONTRACT-2 test is DERIVED, which is the whole point: it reads
+// COMMON_FIELD_CONFIG out of the source and demands define_collection name every
+// knob. A behaviour-vs-description diff could never have caught that defect —
+// nothing define_collection said was false, the essentials just lived in another
+// tool — so the guard against it has to be structural.
+describe("CONTRACT-1 CP2 — the schema contract tells the truth up front", () => {
+  let p;
+  let tools;
+
+  before(async () => {
+    await ensureServer();
+    p = await createEphemeralProject("sprint-cp2");
+    const res = await fetch(`${BASE}/api/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${p.mcpToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    tools = new Map((await res.json()).result.tools.map((t) => [t.name, t]));
+  });
+  after(() => p.destroy());
+
+  it("CONTRACT-2 DERIVED: every knob in COMMON_FIELD_CONFIG is named by define_collection", () => {
+    // Parse the knob names from the source of truth, then require the tool an
+    // agent actually calls to mention each. Add an 11th knob and this fails
+    // until both surfaces carry it.
+    const src = readFileSync("lib/field-types.ts", "utf8");
+    const block = /export const COMMON_FIELD_CONFIG = \[([\s\S]*?)\n\];/.exec(src);
+    assert.ok(block, "could not read COMMON_FIELD_CONFIG");
+    const knobs = [...block[1].matchAll(/^\s*["'`](\w+)\?:/gm)].map((m) => m[1]);
+    assert.ok(knobs.length >= 6, `expected the common knobs, parsed: ${knobs.join(", ")}`);
+    const desc = tools.get("define_collection").description;
+    for (const k of knobs) {
+      assert.ok(
+        desc.includes(k),
+        `COMMON_FIELD_CONFIG documents "${k}" but define_collection never names it — the exact seam two ` +
+          `field reports walked into (capacity in the HAV1 run, computed dates on the wall)`,
+      );
+    }
+  });
+
+  it("CONTRACT-2: the computed vocabulary is present, not merely excluded", () => {
+    // Before this, `computed` appeared in define_collection exactly once — inside
+    // "not for unique/searchable/computed/..." — so an agent learned it was a
+    // thing it could not localize, and nothing else.
+    const desc = tools.get("define_collection").description;
+    for (const fn of ["slugify", "template", "uuid"]) {
+      assert.ok(desc.includes(fn), `computed fn "${fn}" is unreachable from define_collection`);
+    }
+    assert.match(desc, /fn:'now'/, "the reported case: stamping a date server-side");
+  });
+
+  it("CONTRACT-2: update_entry_if points at capacity as the other race-free model", () => {
+    const desc = tools.get("update_entry_if").description;
+    assert.match(desc, /capacity/, "the HAV1 agent chose this tool and never learned capacity existed");
+    assert.match(desc, /counts LIVE/, "…and why capacity survives a cancellation without code");
+  });
+
+  it("MT-7 BEHAVIORAL: a claim rule's define response names the claim AND the Clerk setup", async () => {
+    const r = await mcp(p.mcpToken, "define_collection", {
+      name: "invoices",
+      fields: [{ name: "amount", label: "A", type: "number", publicRead: true }],
+      access: { read: { claim: "role", equals: "finance" } },
+    });
+    assert.ok(r.ok, r.errorText);
+    const note = r.value.accessNote ?? "";
+    assert.match(note, /IDENTITY SETUP REQUIRED/);
+    assert.match(note, /"role"/, "the claim is NAMED — the fix should be one glance");
+    assert.match(note, /Customize session token/, "the dashboard path, because that is where the fix lives");
+    assert.match(note, /FLAT STRING/, "the nested-claim trap");
+    // The load-bearing sentence: fail-closed means it LOOKS fine.
+    assert.match(note, /SERVES NOBODY/);
+  });
+
+  it("MT-7 BEHAVIORAL: an org rule names the org claim and the active-organization requirement", async () => {
+    const r = await mcp(p.mcpToken, "define_collection", {
+      name: "org_docs",
+      fields: [
+        { name: "title", label: "T", type: "text", required: true, publicRead: true },
+        { name: "org_id", label: "O", type: "text" },
+      ],
+      access: { read: "authenticated", ownerField: "org_id", org: { claim: "org_slug", field: "org_id" } },
+    });
+    assert.ok(r.ok, r.errorText);
+    assert.match(r.value.accessNote, /"org_slug"/);
+    assert.match(r.value.accessNote, /active organization/);
+  });
+
+  it("MT-7 CONTROL: a collection with NO claim rule gets no identity-setup note", async () => {
+    // Without this the note could be unconditional noise and every assertion
+    // above would still pass.
+    const r = await mcp(p.mcpToken, "define_collection", {
+      name: "public_posts",
+      fields: [{ name: "title", label: "T", type: "text", publicRead: true }],
+      access: { read: "public" },
+    });
+    assert.ok(r.ok, r.errorText);
+    assert.ok(
+      !(r.value.accessNote ?? "").includes("IDENTITY SETUP REQUIRED"),
+      "the note must fire only for claim/org rules — otherwise it is noise agents learn to skip",
+    );
+  });
+
+  it("MT-4: dropping an access block is REFUSED without confirm, and the refusal says why it is invisible", async () => {
+    const create = await mcp(p.mcpToken, "define_collection", {
+      name: "gated_notes",
+      fields: [
+        { name: "body", label: "B", type: "text", required: true, publicRead: true },
+        { name: "owner_sub", label: "O", type: "text" },
+      ],
+      access: { read: "owner", write: "owner", ownerField: "owner_sub" },
+    });
+    assert.ok(create.ok, create.errorText);
+
+    // A redefine that forgets `access` — the full-replace trap.
+    const drop = await mcp(p.mcpToken, "define_collection", {
+      name: "gated_notes",
+      fields: [
+        { name: "body", label: "B", type: "text", required: true, publicRead: true },
+        { name: "owner_sub", label: "O", type: "text" },
+        { name: "pinned", label: "P", type: "boolean" },
+      ],
+    });
+    assert.ok(drop.ok, drop.errorText);
+    assert.equal(drop.value.requiresConfirmation, true, "an un-gating redefine must not apply silently");
+    assert.equal(drop.value.code, "E_CONFIRM_REQUIRED");
+    assert.match(drop.value.hint, /identity rules/);
+    assert.match(drop.value.hint, /STOP being gated/, "the reason it needs a gate: nothing would look broken");
+    assert.match(drop.value.hint, /re-send/, "…and the non-destructive way out");
+    // NOTE the key: the confirm path returns the diff as `plan`, while the dryRun
+    // path returns it as `diff`. Pre-existing asymmetry in the handler, asserted
+    // here rather than smoothed over, so a future tidy-up has to notice this test.
+    assert.deepEqual(drop.value.plan.accessRemoved, { read: true, write: true, org: false });
+
+    // A refused plan applied nothing.
+    const still = await mcp(p.mcpToken, "describe_collection", { name: "gated_notes" });
+    assert.ok(still.value.access, "the refusal must not have partially applied");
+    assert.equal(still.value.access.read, "owner");
+
+    // confirm:true really un-gates it — the gate is a speed bump, not a wall.
+    const forced = await mcp(p.mcpToken, "define_collection", {
+      name: "gated_notes",
+      fields: [
+        { name: "body", label: "B", type: "text", required: true, publicRead: true },
+        { name: "owner_sub", label: "O", type: "text" },
+        { name: "pinned", label: "P", type: "boolean" },
+      ],
+      confirm: true,
+    });
+    assert.ok(forced.ok, forced.errorText);
+    const after = await mcp(p.mcpToken, "describe_collection", { name: "gated_notes" });
+    assert.ok(!after.value.access, "confirm:true must actually remove the block");
+  });
+
+  it("MT-4 CONTROL: RE-SENDING the same access block is not destructive", async () => {
+    // The negative control. If the gate fired on any redefine of a collection
+    // that HAS access, the test above would pass while the feature was useless.
+    const r = await mcp(p.mcpToken, "define_collection", {
+      name: "kept_notes",
+      fields: [
+        { name: "body", label: "B", type: "text", required: true, publicRead: true },
+        { name: "owner_sub", label: "O", type: "text" },
+      ],
+      access: { read: "owner", write: "owner", ownerField: "owner_sub" },
+    });
+    assert.ok(r.ok, r.errorText);
+    const again = await mcp(p.mcpToken, "define_collection", {
+      name: "kept_notes",
+      fields: [
+        { name: "body", label: "B", type: "text", required: true, publicRead: true },
+        { name: "owner_sub", label: "O", type: "text" },
+        { name: "extra", label: "E", type: "text" },
+      ],
+      access: { read: "owner", write: "owner", ownerField: "owner_sub" },
+    });
+    assert.ok(again.ok, again.errorText);
+    assert.notEqual(again.value.requiresConfirmation, true, "an additive change that KEEPS access must just apply");
+  });
+
+  it("MT-4: dryRun predicts the un-gating as would-require-confirm", async () => {
+    const r = await mcp(p.mcpToken, "define_collection", {
+      name: "kept_notes",
+      fields: [
+        { name: "body", label: "B", type: "text", required: true, publicRead: true },
+        { name: "owner_sub", label: "O", type: "text" },
+      ],
+      dryRun: true,
+    });
+    assert.ok(r.ok, r.errorText);
+    assert.equal(r.value.dryRun, true);
+    assert.equal(r.value.wouldRequireConfirmation, true, "the dry plan must predict the confirm gate");
+    assert.ok(r.value.diff.accessRemoved, "…and show WHAT makes it destructive");
+  });
+});
