@@ -26,11 +26,44 @@ export interface Viewer {
   isPlatformOperator: boolean;
 }
 
-export async function getViewer(): Promise<Viewer | null> {
-  const user = await currentUser();
-  if (!user) return null;
+/**
+ * DX-8 — why the viewer could not be resolved, not merely that they could not.
+ *
+ * `currentUser()` is a call to Clerk's BACKEND API on every admin page load, and
+ * a null from it was indistinguishable from "not signed in". So a transient Clerk
+ * failure 404'd the entire admin and presented as a PERMISSIONS problem. That
+ * ambiguity is not theoretical: a field agent read it as "Clerk is blocking
+ * backend access" and prescribed adding a `primaryEmail` session claim — which
+ * nothing in this repo reads (we take the email off the User object here, never
+ * off session claims), so it would have been a no-op plus a phantom dependency to
+ * re-apply on the production Clerk instance.
+ *
+ * An outage must read as an outage.
+ */
+export type ViewerResolution =
+  | { ok: true; viewer: Viewer }
+  | { ok: false; reason: "anonymous" }
+  | { ok: false; reason: "provider_unavailable"; detail: string };
+
+export async function resolveViewer(): Promise<ViewerResolution> {
+  let user: Awaited<ReturnType<typeof currentUser>>;
+  try {
+    user = await currentUser();
+  } catch (e) {
+    // Clerk threw: unreachable, timing out, or misconfigured keys. NOT "signed
+    // out" — the caller must be able to tell those apart.
+    return { ok: false, reason: "provider_unavailable", detail: e instanceof Error ? e.message : String(e) };
+  }
+  if (!user) return { ok: false, reason: "anonymous" };
   const email = user.primaryEmailAddress?.emailAddress?.toLowerCase() ?? "";
-  return { userId: user.id, email, isPlatformOperator: isPlatformOperator(email) };
+  return { ok: true, viewer: { userId: user.id, email, isPlatformOperator: isPlatformOperator(email) } };
+}
+
+/** The viewer, or null. Unchanged for every existing caller; `resolveViewer`
+ *  is the one to use when the DIFFERENCE between null cases matters. */
+export async function getViewer(): Promise<Viewer | null> {
+  const r = await resolveViewer();
+  return r.ok ? r.viewer : null;
 }
 
 function isPlatformOperator(email: string): boolean {
@@ -41,10 +74,44 @@ function isPlatformOperator(email: string): boolean {
   return list.includes(email);
 }
 
+/**
+ * DX-8 — the same ladder, but the failure carries WHICH question failed.
+ *
+ * Four distinct causes used to collapse into one bare `notFound()`: wrong Clerk
+ * instance, a Clerk API blip, ADMIN_EMAILS missing the address on that
+ * deployment, and the address not being the Clerk user's PRIMARY email (we read
+ * `primaryEmailAddress` only). A 404 with no signal is what sent a debugging
+ * session into the Clerk dashboard instead of the env.
+ *
+ * DELIBERATELY NOT distinguished for the caller: "no rung on this project" vs
+ * "no such project". Both stay one indistinguishable outcome, because splitting
+ * them would confirm a project's existence to any authenticated stranger holding
+ * its uuid — the same reason a delivery 404 never leaks collection names. What
+ * the viewer gets told is their OWN state ("signed in as X"), which is enough to
+ * separate an identity problem from a rung problem without widening the leak.
+ */
+export type ProjectAccess =
+  | { ok: true; role: Role; viewer: Viewer }
+  | { ok: false; reason: "anonymous" }
+  | { ok: false; reason: "provider_unavailable"; detail: string }
+  | { ok: false; reason: "no_rung"; viewer: Viewer };
+
+export async function getProjectAccess(projectId: string): Promise<ProjectAccess> {
+  const r = await resolveViewer();
+  if (!r.ok) return r;
+  const role = await roleForViewer(projectId, r.viewer);
+  return role ? { ok: true, role, viewer: r.viewer } : { ok: false, reason: "no_rung", viewer: r.viewer };
+}
+
 /** The viewer's effective role on a project, or null if no access. */
 export async function getProjectRole(projectId: string): Promise<Role | null> {
   const viewer = await getViewer();
   if (!viewer) return null;
+  return roleForViewer(projectId, viewer);
+}
+
+/** The three-rung ladder itself, for a viewer already resolved. */
+async function roleForViewer(projectId: string, viewer: Viewer): Promise<Role | null> {
   if (viewer.isPlatformOperator) return "operator";
 
   // Rung 2: a member of the project's owning workspace operates the project.

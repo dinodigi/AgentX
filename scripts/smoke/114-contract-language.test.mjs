@@ -820,3 +820,76 @@ describe("CONTRACT-1 CP2 — the schema contract tells the truth up front", () =
     assert.ok(r.value.diff.accessRemoved, "…and show WHAT makes it destructive");
   });
 });
+
+// 114e — DX-8. The admin gate now names which question failed.
+//
+// HONEST LIMIT, stated because it changes what these tests are worth: /admin is
+// Clerk-gated, so the smoke suite cannot sign in and RENDER these branches. The
+// same gap keeps the write-only admin form unverified (it is on the operator's
+// ⚑ list). So this is a STRUCTURAL guard — it pins the shape that made the field
+// misdiagnosis possible out of existence, and cannot prove the copy reads well.
+// The provider_unavailable branch specifically needs one human glance, or a
+// Clerk outage to happen politely.
+describe("DX-8 — an access refusal that says which question failed", () => {
+  const layout = readFileSync("app/admin/[projectId]/layout.tsx", "utf8");
+  const access = readFileSync("lib/access.ts", "utf8");
+
+  it("the collapsed gate is GONE — four failures no longer share one bare 404", () => {
+    // This exact line is what let a field agent conclude "Clerk is blocking
+    // backend access, add a primaryEmail session claim".
+    assert.ok(
+      !/if \(!project \|\| !role\) notFound\(\);/.test(layout),
+      "the single collapsed gate is back: an identity outage, a missing rung and a wrong project id " +
+        "are indistinguishable again",
+    );
+  });
+
+  it("a provider outage is NOT answered with notFound", () => {
+    const branch = /provider_unavailable[\s\S]{0,700}?\n  }/.exec(layout);
+    assert.ok(branch, "no provider_unavailable branch in the layout");
+    // Strip line comments first: the branch's own comment says "Never
+    // notFound()", and matching the WORD instead of the CALL made this assertion
+    // fail on correct code the first time it ran.
+    const code = branch[0].replace(/\/\/.*$/gm, "");
+    assert.ok(
+      !/notFound\(\)/.test(code),
+      "an unreachable identity provider must not present as a missing page — that is the whole defect",
+    );
+    assert.match(branch[0], /outage, not a permissions problem/, "and it must say so in words");
+  });
+
+  it("resolveViewer separates an outage from being signed out", () => {
+    assert.match(access, /reason: "provider_unavailable"/);
+    assert.match(access, /reason: "anonymous"/);
+    // The try/catch is the mechanism: currentUser() THROWS on an API failure and
+    // returns null when there is no session. Without the catch both are null.
+    assert.match(access, /try \{\s*\n\s*user = await currentUser\(\);/);
+  });
+
+  it("BOUNDARY: 'no rung' and 'no such project' stay ONE outcome", () => {
+    // Splitting them would confirm a project's existence to any authenticated
+    // stranger holding its uuid — the same reason a delivery 404 never leaks
+    // collection names. Asserted so a later "helpful" split has to argue with a
+    // test rather than slip in.
+    assert.match(access, /no_rung/);
+    assert.ok(
+      !/reason: "no_project"/.test(access),
+      "no_project must not become a distinct caller-visible reason — it leaks existence",
+    );
+    assert.match(
+      layout,
+      /or the project does not exist/,
+      "the copy must keep the two possibilities fused, so the message is true either way",
+    );
+  });
+
+  it("the failure page performs NO data reads", () => {
+    // A failure page that queries can fail again — and the most likely reason we
+    // are on it is that something upstream is already unavailable.
+    const panel = /function AccessProblem\([\s\S]*?\n}/.exec(layout);
+    assert.ok(panel, "AccessProblem not found");
+    for (const bad of ["await", "db.", "tenantDb", "listCollections"]) {
+      assert.ok(!panel[0].includes(bad), `the failure page must not do work (found "${bad}")`);
+    }
+  });
+});
