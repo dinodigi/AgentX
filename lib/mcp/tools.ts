@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Collection } from "@/db/schema";
 import { accessSchema } from "@/lib/access-rules";
 import { FIELD_TYPE_SPECS, COMMON_FIELD_CONFIG } from "@/lib/field-types";
 import {
@@ -2660,19 +2661,40 @@ export async function callTool(
         }
         const fields = a.fields;
 
-        const runDefine = (f: unknown[], expectUpdatedAt?: Date) =>
+        /**
+         * Wall bug (2026-08-04): `addFields` silently dropped `access`, `workflow`,
+         * `events`, `checkout`, `hooks`, `publicWrite`, `publicFilter` and
+         * `webhookUrl`.
+         *
+         * Root cause: defineCollection is FULL-REPLACE, and this forwarded the
+         * CALLER's blocks — which on a pure addFields call are all `undefined`,
+         * i.e. "remove them". So the one input documented as "leaving the rest
+         * untouched" was the only one that wiped everything but the fields.
+         *
+         * `carry` supplies the CURRENT stored config for any block the caller
+         * omitted. `pick` is deliberately `!== undefined` rather than `??`,
+         * because `workflow`/`checkout`/`hooks` accept an explicit `null` meaning
+         * "remove this" — `??` would treat that null as absent and resurrect the
+         * block, turning one silent-drop bug into a silent-keep bug.
+         *
+         * Found because MT-4's confirm gate (this same checkpoint) turned the
+         * silent drop into a REFUSAL, which is how it became visible at all.
+         */
+        const pick = <T,>(caller: T | undefined, carried: T | undefined): T | undefined =>
+          caller !== undefined ? caller : carried;
+        const runDefine = (f: unknown[], expectUpdatedAt?: Date, carry?: Collection | null) =>
           defineCollection(projectId, {
             name: a.name,
-            displayName: a.displayName,
+            displayName: pick(a.displayName, carry?.displayName ?? undefined),
             fields: f as never,
-            publicWrite: a.publicWrite,
-            webhookUrl: a.webhookUrl,
-            publicFilter: a.publicFilter,
-            access: a.access,
-            events: a.events,
-            workflow: a.workflow as never,
-            checkout: a.checkout as never,
-            hooks: a.hooks as never,
+            publicWrite: pick(a.publicWrite, carry?.publicWrite ?? undefined),
+            webhookUrl: pick(a.webhookUrl, carry?.webhookUrl ?? undefined),
+            publicFilter: pick(a.publicFilter, (carry?.publicFilter as typeof a.publicFilter) ?? undefined),
+            access: pick(a.access, (carry?.access as typeof a.access) ?? undefined),
+            events: pick(a.events, (carry?.events as typeof a.events) ?? undefined),
+            workflow: pick(a.workflow, carry?.workflow ?? undefined) as never,
+            checkout: pick(a.checkout, carry?.checkout ?? undefined) as never,
+            hooks: pick(a.hooks, carry?.hooks ?? undefined) as never,
             renames: a.renames,
             confirm: a.confirm,
             dryRun: a.dryRun,
@@ -2711,7 +2733,8 @@ export async function callTool(
               );
             }
             try {
-              result = await runDefine([...current.fields, ...a.addFields], current.updatedAt ?? undefined);
+              // Carry the CURRENT config forward — addFields appends, it does not redefine.
+              result = await runDefine([...current.fields, ...a.addFields], current.updatedAt ?? undefined, current);
               break;
             } catch (e) {
               if (!(e instanceof SchemaConflictError)) throw e;

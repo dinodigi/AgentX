@@ -160,22 +160,23 @@ Clerk instance.
 Tests: three cases stay distinguishable, and the anonymous case still leaks
 nothing. Negative-control the leak assertion.
 
-### CP4 — SEC-4: encrypt `writeOnly` values at rest
+### CP4 — SEC-4: encrypt `writeOnly` values at rest — ⏳ DEFERRED, not done
 
-SEC-1 is redaction plus storage minimisation, **not** encryption: the value lands
-in `entries.data` as plaintext JSONB and is simply never returned
-(`grep -rn "encrypt" lib/entries.ts` = 0). It holds against every API surface and
-the admin UI; it does **not** hold against anyone with the connection string.
+**Re-sequenced 2026-08-04 after tracing the write path, and the reason is
+sequencing rather than difficulty.** Encrypting makes tenant CONTENT depend on
+`CONNECTOR_MASTER_KEY`, and local dev currently shares that key with production
+(ENV-1, verified 07-22). Making stored credentials depend on a key that is
+presently mishandled is worse than leaving them plaintext behind an API that
+already refuses to return them. So SEC-4 now carries the trigger **"ENV-1 has
+shipped with its own master key"**.
 
-The mechanism already exists — `lib/crypto.ts`, AES-256-GCM with a keyring and
-versioned blobs, used today for connector `secretsEnc`. Reuse
-`encryptSecret`/`decryptSecret` at the write boundary and the before-write-hook
-envelope (a hook legitimately receives the value it is asked to validate).
-
-Constraints to keep: the field stays unfilterable, unsortable and unselectable
-regardless — a ciphertext comparison is not a value comparison. And state
-honestly that a field flipped to `writeOnly` after the fact leaves plaintext in
-history which read-redaction covers but this does not retroactively encrypt.
+Two things found while tracing, recorded on the BACKLOG row so the work is not
+redone: nothing ever DECRYPTS a writeOnly value today (reads redact, and the
+before-write-hook envelope receives it redacted), so encryption makes it
+permanently unreadable by everyone including us — ideal for an unverifiable
+password hash, but it turns "recoverable from a DB dump" into "lost forever if
+the key is lost", which is an operator decision. And there are five write sites,
+one of which merges JSONB in raw SQL on the CAS path.
 
 ### CP5 — close out
 

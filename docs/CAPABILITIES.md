@@ -1,6 +1,6 @@
 # Pluggie (AgentX) — System Capabilities
 
-> **Living — last synced 2026-07-31.** What the platform can do **today**,
+> **Living — last synced 2026-08-04.** What the platform can do **today**,
 > grouped by surface. Sync this doc whenever a batch changes the tool surface
 > or platform behavior (see CLAUDE.md ship ritual). For what's next, see
 > [BACKLOG.md](BACKLOG.md) and [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md);
@@ -166,6 +166,19 @@ words are treated as a shipped surface with tests, not as documentation.
 - **Error codes** are served in the contract itself (`/api/contract`, and
   `?format=json`), rendered from `ERROR_CODES`. Every refusal names its own
   fix; a 413 is `E_VALIDATION` (repairable) and states the cap.
+- **Identity setup is surfaced at DEFINE time** (MT-7): a `{claim,equals}` or
+  `access.org` rule returns an `accessNote` naming the required claim, the Clerk
+  dashboard path, a literal session-token template and the flat-string rule —
+  because the gate is fail-closed, so without it the collection looks fine and
+  serves nobody until someone hits a 403 days later.
+- **Un-gating is confirm-gated** (MT-4): dropping an `access` block on a redefine
+  returns `E_CONFIRM_REQUIRED` with `plan.accessRemoved`. The failure it prevents
+  is invisible — reads and writes keep succeeding, they just stop being checked.
+  `addFields` now carries every non-field config block forward, so appending a
+  field cannot silently un-gate a collection (wall bug, 2026-08-04).
+- **An access refusal names which question failed** (DX-8): a Clerk outage reads
+  as an outage rather than a 404. "No rung" and "no such project" stay one
+  outcome deliberately, so a uuid holder learns nothing about existence.
 - **Anti-regression**: suites 108/109/110/**114** read the live contract the
   way an agent does and assert the corrected words, with behavioral pins on the
   wire wherever a claim is about behavior. Several assertions are *derived* —

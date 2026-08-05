@@ -893,3 +893,103 @@ describe("DX-8 — an access refusal that says which question failed", () => {
     }
   });
 });
+
+// 114f — wall bug (2026-08-04, category `bug`, tool define_collection):
+// "addFields silently dropped the collection's access and workflow config
+// instead of leaving them untouched."
+//
+// REPRODUCED before fixing, per CLAUDE.md. Root cause: defineCollection is
+// FULL-REPLACE and the addFields path forwarded the CALLER's config blocks, which
+// on a pure addFields call are all `undefined` — i.e. "remove them". So the one
+// input whose entire promise is "leaving the rest untouched" was the only one
+// that wiped everything but the fields.
+//
+// Found because MT-4's confirm gate (same checkpoint) turned the silent drop into
+// a REFUSAL. Worth recording: the gate was aimed at accidental un-gating via
+// `fields`, and it caught a live bug on a different path.
+describe("wall bug — addFields appends without redefining", () => {
+  let p;
+  before(async () => {
+    await ensureServer();
+    p = await createEphemeralProject("addfields-carry");
+  });
+  after(() => p.destroy());
+
+  it("carries access, events, publicFilter and workflow forward, and really appends", async () => {
+    const def = await mcp(p.mcpToken, "define_collection", {
+      name: "tickets",
+      fields: [
+        { name: "subject", label: "S", type: "text", required: true, publicRead: true },
+        { name: "state", label: "St", type: "enum", options: ["open", "closed"] },
+        { name: "owner_sub", label: "O", type: "text" },
+      ],
+      access: { read: "owner", write: "owner", ownerField: "owner_sub" },
+      events: { created: [{ type: "webhook", url: "https://relay.example.com/created" }] },
+      publicFilter: [{ field: "state", op: "eq", value: "open" }],
+      workflow: { field: "state", initial: "open", transitions: [{ from: "open", to: "closed" }] },
+    });
+    assert.ok(def.ok, def.errorText);
+
+    const add = await mcp(p.mcpToken, "define_collection", {
+      name: "tickets",
+      addFields: [{ name: "priority", label: "P", type: "number" }],
+    });
+    assert.ok(add.ok, add.errorText);
+    // It must APPLY, not return a confirm plan. Before the fix this came back as
+    // requiresConfirmation (post-MT-4) or silently un-gated the collection (pre).
+    assert.notEqual(
+      add.value.requiresConfirmation,
+      true,
+      "addFields must not demand confirm — it removes nothing, so there is nothing to confirm",
+    );
+
+    const after = await mcp(p.mcpToken, "describe_collection", { name: "tickets" });
+    assert.ok(after.ok, after.errorText);
+    // The field really landed…
+    assert.ok(
+      after.value.fields.some((f) => f.name === "priority"),
+      "the appended field must exist — otherwise this test passes on a no-op",
+    );
+    // …and NOTHING else moved. Each of these was a separate casualty of the bug.
+    assert.deepEqual(after.value.access, { read: "owner", write: "owner", ownerField: "owner_sub" });
+    assert.ok(after.value.events?.created?.length === 1, "events survived");
+    assert.ok(Array.isArray(after.value.publicFilter) && after.value.publicFilter.length === 1, "publicFilter survived");
+    assert.ok(after.value.workflow, "the workflow state machine survived");
+    assert.equal(after.value.workflow.initial, "open");
+  });
+
+  it("an EXPLICIT null still removes — carry-forward must not resurrect a deliberate removal", async () => {
+    // The subtle half. workflow/checkout/hooks accept `null` meaning "remove",
+    // so the carry-forward uses `!== undefined` rather than `??`. With `??` the
+    // explicit null would read as absent and the block would come back — turning
+    // one silent-drop bug into a silent-KEEP bug, which is harder to notice.
+    const r = await mcp(p.mcpToken, "define_collection", {
+      name: "tickets",
+      addFields: [{ name: "note", label: "N", type: "text" }],
+      workflow: null,
+      confirm: true, // removing a workflow is destructive, and stays gated
+    });
+    assert.ok(r.ok, r.errorText);
+    const after = await mcp(p.mcpToken, "describe_collection", { name: "tickets" });
+    assert.ok(!after.value.workflow, "an explicit null must still remove the workflow");
+    // …while the blocks NOT mentioned are still carried.
+    assert.ok(after.value.access, "access was not mentioned, so it must survive");
+    assert.ok(
+      after.value.fields.some((f) => f.name === "note"),
+      "and the append still happened",
+    );
+  });
+
+  it("a CALLER-SUPPLIED block still overrides the stored one", async () => {
+    // Carry-forward must not become carry-always: an addFields call that DOES
+    // pass a block should apply it.
+    const r = await mcp(p.mcpToken, "define_collection", {
+      name: "tickets",
+      addFields: [{ name: "tag", label: "T", type: "text" }],
+      access: { read: "authenticated", write: "owner", ownerField: "owner_sub" },
+    });
+    assert.ok(r.ok, r.errorText);
+    const after = await mcp(p.mcpToken, "describe_collection", { name: "tickets" });
+    assert.equal(after.value.access.read, "authenticated", "an explicitly passed block must win");
+  });
+});

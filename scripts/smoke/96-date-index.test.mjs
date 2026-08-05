@@ -71,6 +71,17 @@ describe("A3 — indexed date fields", () => {
     // index USABLE for the predicate the query layer emits? (SET LOCAL inside a
     // transaction — neon's HTTP driver gives each query its own session, so a
     // bare SET would silently apply to nothing.)
+    //
+    // BITMAPSCAN is disabled for the same reason, added 2026-08-04 after this
+    // test failed a full verify on a CORRECT platform and then passed standalone
+    // on identical code — the definition of a flake. With only seqscan off the
+    // planner still had TWO index choices and picked `Bitmap Index Scan` + a
+    // separate `Sort`: the index was used perfectly well (range as Index Cond),
+    // but the ordered-scan assertions below failed. Plan SHAPE is cost-based, so
+    // at fixture scale bitmap+sort legitimately wins while at 100k rows the
+    // ordered scan does. Turning both off asks what this test MEANS to ask — can
+    // the index serve the range AND the ordering — rather than which plan the
+    // planner prefers on 133 rows, which is not a claim the platform makes.
     // Scope to THIS run's collection. Earlier runs leave their own partial
     // indexes behind, so an unordered LIMIT 1 over pg_indexes picks an
     // arbitrary one — possibly for a dropped collection — and the assertion
@@ -87,12 +98,19 @@ describe("A3 — indexed date fields", () => {
     const explain =
       `EXPLAIN SELECT id FROM entries WHERE collection_id='${scoped}' ` +
       `AND (data->>'published_at') > '2026-02-01T00:00:00.000Z' ORDER BY (data->>'published_at')`;
-    const res = await sql.transaction([sql("SET LOCAL enable_seqscan = off"), sql(explain)]);
+    const res = await sql.transaction([
+      sql("SET LOCAL enable_seqscan = off"),
+      sql("SET LOCAL enable_bitmapscan = off"),
+      sql(explain),
+    ]);
     const plan = (res[res.length - 1] ?? []).map((r) => r["QUERY PLAN"]).join("\n");
 
     assert.match(plan, /Index Scan using entries_fx_/, `expected an index scan, got:\n${plan}`);
     assert.match(plan, /Index Cond:.*published_at/, "the range predicate must be an INDEX COND, not a filter");
     assert.doesNotMatch(plan, /^\s*Sort\b/m, "the index must satisfy ORDER BY too — no separate sort step");
+    // The regression this feature actually guards against, asserted directly
+    // rather than left to be inferred from the plan shape.
+    assert.doesNotMatch(plan, /Seq Scan on entries/, "a sequential scan means the index is unusable, which is the bug");
   });
 
   it("THE POINT: ordering by an indexed date is chronological, not lexical-by-accident", async () => {

@@ -631,6 +631,46 @@ const RESOLUTIONS = {
       "resync. The wipe itself lands on the operator's platform trail with the counts. " +
       "schema.manage scope required, which is the scope your eval harness token should hold anyway.",
   },
+
+  // --- CONTRACT-2 + the addFields carry-forward bug (sprint CP2, 2339e32) ----
+  "89053b98": {
+    disposition: "SHIPPED",
+    ref: "2339e32",
+    date: "2026-08-04",
+    note:
+      "Correct, and you found a real structural defect rather than a missing sentence. The field-config " +
+      "vocabulary lived in list_field_types while define_collection — the tool you actually call to define " +
+      "a field — only gestured at it. Verified before fixing: `computed` appeared in define_collection " +
+      "exactly ONCE and only as an exclusion (\"not for unique/searchable/computed\"), so its vocabulary " +
+      "was absent entirely; `enum:options[]` was a bare token with no shape; indexed/writableBy/writeOnly " +
+      "got zero mentions. define_collection now carries the common knobs inline INCLUDING the full " +
+      "computed vocabulary, with {fn:'now'} on a date field called out — your exact case. " +
+      "The guard is derived rather than hand-written: a test parses COMMON_FIELD_CONFIG out of the source " +
+      "and fails until define_collection names every knob in it, so an 11th knob breaks the build until " +
+      "both surfaces carry it. Worth saying plainly: a language audit shipped days before your report and " +
+      "missed this, because that audit diffed each description against BEHAVIOUR — and nothing " +
+      "define_collection said was false. The defect was structural, which a behaviour diff cannot see. " +
+      "Your report is what added the structural check.",
+  },
+  "c91e2872": {
+    disposition: "SHIPPED",
+    ref: "2339e32",
+    date: "2026-08-04",
+    note:
+      "Reproduced, and worse than reported: addFields dropped `access`, `workflow`, `events`, `checkout`, " +
+      "`hooks`, `publicWrite`, `publicFilter` AND `webhookUrl` — every non-field config block. Root cause: " +
+      "define_collection is FULL-REPLACE, and the addFields path forwarded the CALLER's blocks, which on a " +
+      "pure addFields call are all undefined — i.e. \"remove them\". So the one input whose entire promise " +
+      "is 'leaving the rest untouched' was the only one that wiped everything but the fields. " +
+      "addFields now carries the CURRENT stored config forward for any block you omit, while a block you " +
+      "DO pass still wins, and an explicit null still removes (that distinction is guarded by its own " +
+      "test — using ?? instead of an undefined check would have turned this silent-drop bug into a " +
+      "silent-keep bug, which is harder to notice). " +
+      "How it surfaced is worth knowing: a confirm gate shipped the same day for a different reason — " +
+      "refusing a redefine that drops an `access` block via `fields` — and it converted your silent " +
+      "corruption into a loud refusal. Your report and that gate arrived within hours of each other and " +
+      "confirmed the same root cause from two directions.",
+  },
 };
 
 const stamp = (r) =>
