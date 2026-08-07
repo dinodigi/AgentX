@@ -130,6 +130,38 @@ Leave the experiment out of UptimeRobot. Three keyword monitors currently watch
 production; a fourth on a service you are deliberately breaking is alert fatigue
 by design.
 
+## Prove it, do not trust it
+
+```bash
+node scripts/verify-isolation.mjs --experiment .env.experiment
+```
+
+Keep a local `.env.experiment` holding exactly what you put into Render, and run
+that before the first real use. It is READ-ONLY — it only ever SELECTs — and it
+asserts every invariant on this page: the database differs from production, the
+master key differs, `APP_URL` is not production's, the four dangerous vars are
+absent, the R2 bucket differs, and the experiment database is empty (production
+holds 81 projects; a fresh experiment holds 0, which is the least ambiguous
+evidence available).
+
+Once the service is deployed, add the live probe:
+
+```bash
+node scripts/verify-isolation.mjs --experiment .env.experiment --url https://<experiment>.onrender.com --token agx_...
+```
+
+That asks the running service what URLs it reports, so a wrong `APP_URL` is
+caught by the service itself rather than by inspection.
+
+**Two things the script cannot check, and you must verify by eye:**
+
+1. **A drain cron wired `fromService: agentx`** would run PRODUCTION's queued
+   jobs on the experiment's schedule — real emails and webhooks to real
+   customers. This is the worst available outcome. Do not add a cron yet.
+2. **Clerk dashboard settings are SHARED** if you share the instance. Changing
+   the session-token template (tempting, since MT-7 is about exactly that) would
+   affect production too.
+
 ## Sequence
 
 **Operator (you), ~30–45 minutes:**
