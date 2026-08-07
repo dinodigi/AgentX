@@ -88,14 +88,19 @@ _42 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=78 · planned=2 · reviewed=2_
+_Wall totals: done=78 · new=5 · planned=2 · reviewed=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_2 open (0 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-04 23:24Z_
+_7 open (5 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-07 01:48Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
+| ⬜ | 08-05 | xvibe | limitation | No server-side auto-increment/sequence field type, so a publicWrite "join queue and get… |
+| ⬜ | 08-05 | xvibe | limitation | No tool can exercise an authenticated PATCH (write) with a real Clerk JWT — probe_app o… |
+| ⬜ | 08-05 | xvibe | bug | Delivery API GET with sort+limit combined together silently drops one row from the result |
+| ⬜ | 08-05 | xvibe | limitation | probe_app only issues GET requests (schema: {paths, userToken}), so it cannot verify au… |
+| ⬜ | 08-07 | EasyFilm | limitation | Text inside an array-of-group field is unsearchable — no index, no full-text, and `sear… |
 | 🗓️ | 07-31 | xvibe | idea | Project branches backed by Neon branching: branch a project (schema + data), work again… |
 | 🗓️ | 08-01 | xvibe | limitation | User asked for SMS appointment reminders; SMS sending is not available (event actions a… |
 <!-- END:WALL -->
@@ -103,19 +108,22 @@ _2 open (0 new, 2 planned) · 0 theme(s) reported more than once · snapshot 202
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_10 scheduled (5 high) · 24 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_14 scheduled (8 high) · 23 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
 **Scheduled = decided, not started.** A sprint is a commitment; this is a list. High priority:
 
 | | ID | item |
 |---|---|---|
+| 📥 | **CONTRACT-3** | An integrator cannot discover TIER STRUCTURE from the agent surface, and has no channel  |
+| 📥 | **DM-5** | Text inside an array/group is unsearchable — the flagship use case for the container shi |
 | 📥 | **ENV-1** | Staging environment — an online copy of the platform to debug against (operator, 2026-07 |
 | 📥 | **MT-2** | Org-scope the admin view — an invited client-role member sees every org's rows in the ad |
+| 📥 | **MT-6** | A way to test isolation from the build loop (mint/supply an end-user JWT, or an isolatio |
 | 📥 | **OPS-2** | Breaking-change comms. *(Re-scoped in CP10: the AGENT half shipped in the friction sprin |
 | 📥 | **QRY-4** | Entry-level import + project environments (`import_project` is schema-only). H: named bl |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 5 scheduled at M/L, and 24 ⏳/⚑ rows that reopen on their named condition._
+_…plus 6 scheduled at M/L, and 23 ⏳/⚑ rows that reopen on their named condition._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)
