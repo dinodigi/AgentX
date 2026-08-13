@@ -671,6 +671,67 @@ const RESOLUTIONS = {
       "corruption into a loud refusal. Your report and that gate arrived within hours of each other and " +
       "confirmed the same root cause from two directions.",
   },
+
+  // --- 2026-08-07: the sort+limit non-repro + two receipts that went stale ----
+  a8c6bcbe: {
+    disposition: "ANSWERED",
+    ref: "cache semantics published",
+    date: "2026-08-07",
+    note:
+      "Thank you for the receipts — they are what made this diagnosable, and the answer is not the one " +
+      "either of us expected. I could NOT reproduce it as a query bug. Eleven parameter combinations on a " +
+      "six-row fixture built to break a sort (one row with the sort field UNSET, one empty string, mixed " +
+      "case): sort+limit returned all six every time, and limit still truncated correctly at limit=3. " +
+      "That is now a permanent test, so if it is ever real it fails on our side rather than on yours. " +
+      "WHAT FITS ALL THREE OF YOUR OBSERVATIONS: cacheable GETs are edge-cached PER URL at s-maxage=60 " +
+      "with stale-while-revalidate up to 300s more. Your three calls were three DIFFERENT URLs, so three " +
+      "independent cache entries. If ?sort=name:asc&limit=200 was cached while the collection held five " +
+      "rows, and the sixth arrived after, then ?limit=200 and ?sort=name:asc — URLs nothing had cached — " +
+      "came from origin with six, while re-running the first kept serving the cached five for up to six " +
+      "minutes. That matches your ~1 minute span and your three re-runs exactly. You explicitly ruled out " +
+      "a convergence artifact, and I think you ruled it out correctly for the ~15s staleness window you " +
+      "had been told about, and wrongly for the per-URL cache entry you had NOT been told about. That is " +
+      "our documentation defect, not your mistake. " +
+      "FIXED IN THE CONTRACT: get_project_info deliveryApi.convergence now names per-URL edge caching as " +
+      "a distinct third cause, with the TTL and the stale-while-revalidate window. " +
+      "TO SETTLE IT ON YOUR SIDE IN ONE CALL: re-run the failing query with limit raised by one " +
+      "(limit=201 instead of 200). Nothing has cached that URL, so it must come from origin — if it " +
+      "returns six, it was the cache. Do NOT use a throwaway key like &_cb=1: any unrecognised query " +
+      "param is read as a FIELD FILTER and answers 422. We know because we published that advice first " +
+      "and our own test caught it. A shared cache also stamps an Age header, so Age > 0 is a cached copy. " +
+      "If the limit-bumped call STILL disagrees, that is a real bug — please re-file with both URLs and " +
+      "we will take it apart properly.",
+  },
+  bf16000e: {
+    disposition: "SHIPPED",
+    ref: "698c8d6",
+    date: "2026-08-07",
+    note:
+      "You were right, this was a genuine hole, and it has been closed for a while — the receipt is late, " +
+      "not the fix. TOK-1 shipped mint_delivery_token, list_delivery_tokens and revoke_delivery_token, so " +
+      "the whole loop you described now completes inside one MCP session: author the schema, call " +
+      "get_client_code, mint the delivery-scoped token it needs, and verify the browser integration " +
+      "without leaving the connection. Scope is hard-fixed to delivery — this path can never mint an " +
+      "mcp-scoped token — mints are audit-logged and parented to the calling token, so revoking that " +
+      "token cascades to everything it minted, and there is a 25-per-project cap whose refusal names the " +
+      "remedy. The success criterion we held ourselves to was exactly your scenario: empty project to " +
+      "working delivery calls without leaving MCP.",
+  },
+  "55ee75d0": {
+    disposition: "SHIPPED",
+    ref: "371fe29",
+    date: "2026-08-07",
+    note:
+      "Fixed, and your framing shaped the fix. You said it plainly — not a correctness bug, but the " +
+      "enabled state implied structure that was not there. list_plugins now carries `applied` on every " +
+      "enabled plugin with a structure: {status: none|unclear|full, matched, of, unmatched, nextAction}. " +
+      "It is deliberately EVIDENCE rather than a verdict, from matching baseline collection names, " +
+      "because a baseline is adapted rather than stamped — so an unmatched name usually means it was " +
+      "reconciled into an existing collection, and `unclear` means CHECK with " +
+      "list_collections/describe_collection rather than re-apply. The read is fresh, never cached. " +
+      "ENABLED IS NOT APPLIED is now stated in the tool description itself, so the next agent learns it " +
+      "before it hits the confusion rather than after.",
+  },
 };
 
 const stamp = (r) =>
@@ -679,7 +740,11 @@ const stamp = (r) =>
 const rows = await sql`
   SELECT f.id, f.summary, f.detail, f.status, p.name AS proj
   FROM platform_feedback f JOIN projects p ON p.id = f.project_id
-  WHERE f.status IN ('new','planned')`;
+  -- 'reviewed' included 2026-08-07: it is NOT a terminal state (pm counts only
+  -- new+planned as open), yet nothing could close it, so a triaged item could sit
+  -- forever without the reporter ever getting a receipt. Two Codex-test items from
+  -- 2026-07-21 had been FIXED for weeks in exactly that limbo.
+  WHERE f.status IN ('new','planned','reviewed')`;
 
 let n = 0;
 for (const [prefix, r] of Object.entries(RESOLUTIONS)) {

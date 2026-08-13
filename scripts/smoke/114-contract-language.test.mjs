@@ -993,3 +993,174 @@ describe("wall bug — addFields appends without redefining", () => {
     assert.equal(after.value.access.read, "authenticated", "an explicitly passed block must win");
   });
 });
+
+// 114g — CONTRACT-3 part 1. Two facts that were TRUE but unpublished, and each
+// one cost a real integrator real time:
+//
+//   · The rate budgets were published (QRY-3) without their SCOPE, so a builder
+//     agent could not tell whether its write budget grows with users or is a
+//     fixed ceiling — and escalated to a human email, because send_feedback
+//     explicitly refuses questions.
+//   · Cacheable GETs are edge-cached PER URL, which makes two query strings
+//     disagree after a write and reads exactly like a query bug. A reporter
+//     filed it as one (3x reproduced) and explicitly ruled out convergence,
+//     reasoning about the ~15s window rather than the per-URL cache entry.
+describe("CONTRACT-3 — the budgets publish their model, not just their numbers", () => {
+  let p;
+  let info;
+
+  before(async () => {
+    await ensureServer();
+    p = await createEphemeralProject("contract3");
+    const r = await mcp(p.mcpToken, "get_project_info", {});
+    assert.ok(r.ok, r.errorText);
+    info = r.value;
+  });
+  after(() => p.destroy());
+
+  it("limits states the SCOPE of each budget, not just the number", () => {
+    const l = info.deliveryApi.limits;
+    assert.match(l, /per \(PROJECT, CLIENT IP\)/, "the delivery budget's scope decides where writes originate");
+    assert.match(l, /IP-INDEPENDENT/, "the MCP budget's scope — a second host buys no headroom");
+    assert.match(l, /NEITHER is per-customer/, "the question the builder agent actually asked");
+    assert.match(l, /5 independent budgets/, "…answered concretely rather than abstractly");
+  });
+
+  it("limits says RATE does not vary by plan, while caps do", () => {
+    // Verified in code before publishing: MAX_PER_WINDOW = 20, MCP hard-coded
+    // max: 300, and no call site derives max from project.plan.
+    const l = info.deliveryApi.limits;
+    assert.match(l, /do NOT\s+"?\s*\+?\s*"?currently vary by plan|do NOT currently vary by plan/);
+    assert.match(l, /STORAGE\/COUNT caps DO/, "the asymmetry is the useful part");
+  });
+
+  it("BEHAVIORAL PIN: rate really is NOT plan-aware — the published claim, checked in the source", () => {
+    // A published claim about tiering must be pinned to the mechanism, or a later
+    // plan-aware change would silently make the contract false.
+    const src = readFileSync("lib/ratelimit.ts", "utf8");
+    assert.match(src, /const MAX_PER_WINDOW = 20;/, "the default budget");
+    assert.ok(
+      !/\bplan\b/.test(src),
+      "lib/ratelimit.ts now references a plan — the contract says rate does not vary by tier, so either " +
+        "the limiter became plan-aware (update deliveryApi.limits) or something else crept in",
+    );
+  });
+
+  it("convergence names the PER-URL edge cache as a third cause", () => {
+    const c = info.deliveryApi.convergence;
+    assert.match(c, /PER URL/, "the fact that makes two query strings disagree");
+    assert.match(c, /s-maxage 60s/, "the TTL");
+    assert.match(c, /stale-while-revalidate/, "…and the window that extends it to minutes");
+    // The diagnostic must be one that WORKS. The first version of this told
+    // integrators to add &_cb=<random>; unrecognised params are read as field
+    // filters and answer 422, so the advice was unusable. Verified before
+    // re-publishing: limit=201 returns 200, _cb=0.1 returns 422.
+    assert.match(c, /raise limit by one/, "the cache-buster must use an ALLOWLISTED param");
+    assert.ok(!/&_cb=<random>/.test(c), "the broken cache-buster advice must not come back");
+    assert.match(c, /422/, "…and it must say WHY an arbitrary key does not work");
+  });
+
+  it("BEHAVIORAL PIN: the published cache-buster works and the rejected one 422s", async () => {
+    const def = await mcp(p.mcpToken, "define_collection", {
+      name: "cb_rows",
+      fields: [{ name: "name", label: "N", type: "text", publicRead: true }],
+    });
+    assert.ok(def.ok, def.errorText);
+    for (const n of ["Ana", "Bob"]) {
+      await mcp(p.mcpToken, "create_entry", { collection: "cb_rows", data: { name: n } });
+    }
+    const call = async (qs) => {
+      const res = await fetch(`${BASE}/api/v1/cb_rows${qs}`, {
+        headers: { authorization: `Bearer ${p.deliveryToken}` },
+      });
+      return { status: res.status, body: await res.json().catch(() => ({})) };
+    };
+    // What the note now recommends.
+    const bumped = await call("?sort=name:asc&limit=201");
+    assert.equal(bumped.status, 200, "bumping limit must be a valid request — it is the published advice");
+    assert.equal(bumped.body.data.length, 2, "…and must return the same rows");
+    // What the note now warns against, with the reason it gives.
+    const arbitrary = await call("?sort=name:asc&limit=200&_cb=0.123");
+    assert.equal(arbitrary.status, 422, "an arbitrary key is a FIELD FILTER, not an ignored param");
+    assert.match(arbitrary.body.error, /unknown or non-public filter field/);
+  });
+
+  it("BEHAVIORAL PIN: distinct query strings really are independently cacheable", async () => {
+    // The claim is that ?sort=x&limit=n and ?limit=n are two cache entries. What
+    // the platform controls is the header that makes that true, so assert THAT:
+    // a shareable response carries s-maxage + stale-while-revalidate, and it does
+    // so per URL. (No CDN in front of a test server, so the caching itself is not
+    // observable here — the header is the platform's half of the contract.)
+    const def = await mcp(p.mcpToken, "define_collection", {
+      name: "cached_rows",
+      fields: [{ name: "name", label: "N", type: "text", publicRead: true }],
+    });
+    assert.ok(def.ok, def.errorText);
+    await mcp(p.mcpToken, "create_entry", { collection: "cached_rows", data: { name: "Ana" } });
+
+    const seen = [];
+    for (const qs of ["?sort=name:asc&limit=200", "?limit=200", "?sort=name:asc"]) {
+      const res = await fetch(`${BASE}/api/v1/cached_rows${qs}`, {
+        headers: { authorization: `Bearer ${p.deliveryToken}` },
+      });
+      assert.equal(res.status, 200, qs);
+      const cc = res.headers.get("cache-control") ?? "";
+      assert.match(cc, /s-maxage=\d+/, `${qs} must be shareable for the published claim to hold`);
+      assert.match(cc, /stale-while-revalidate=\d+/, `${qs} carries the window the note warns about`);
+      seen.push(cc);
+    }
+    // All three are cacheable on their own terms — which is precisely why they can
+    // disagree, and why the note has to exist.
+    assert.equal(seen.length, 3);
+  });
+
+  it("NON-REPRO PIN: sort+limit does NOT drop a row — the reported bug, pinned as fixed-or-never-real", async () => {
+    // Wall report: "?sort=name:asc&limit=200 returns 5 where either param alone
+    // returns 6", 3x reproduced against 0bd3150. Could not reproduce across 11
+    // combinations. This locks the behaviour so that IF it is ever real, it fails
+    // here rather than on a reporter's project. The fixture deliberately includes
+    // the shapes most likely to interact with a sort: an unset sort field, an
+    // empty string, and mixed case.
+    const def = await mcp(p.mcpToken, "define_collection", {
+      name: "staff_rows",
+      fields: [
+        { name: "name", label: "N", type: "text", publicRead: true },
+        { name: "role", label: "R", type: "text", publicRead: true },
+      ],
+    });
+    assert.ok(def.ok, def.errorText);
+    for (const data of [
+      { name: "Ana", role: "coach" },
+      { name: "bob", role: "coach" },
+      { name: "Cara", role: "desk" },
+      { name: "", role: "desk" },
+      { role: "desk" }, // name UNSET — the top suspect for a sort dropping a row
+      { name: "Zed", role: "coach" },
+    ]) {
+      const c = await mcp(p.mcpToken, "create_entry", { collection: "staff_rows", data });
+      assert.ok(c.ok, `${JSON.stringify(data)}: ${c.errorText}`);
+    }
+
+    const count = async (qs) => {
+      // NO cache-buster here, deliberately: there is no CDN in front of a test
+      // server, so nothing caches these responses and there is nothing to bust.
+      // (The first version appended &_cb=<random> — the same broken advice this
+      // checkpoint corrected in the contract — and 422d every call.)
+      const res = await fetch(`${BASE}/api/v1/staff_rows${qs}`, {
+        headers: { authorization: `Bearer ${p.deliveryToken}` },
+      });
+      assert.equal(res.status, 200, qs);
+      return ((await res.json()).data ?? []).length;
+    };
+
+    const both = await count("?sort=name:asc&limit=200");
+    const limitOnly = await count("?limit=200");
+    const sortOnly = await count("?sort=name:asc");
+    assert.equal(limitOnly, 6, "fixture sanity: six rows exist");
+    assert.equal(sortOnly, 6, "sort alone must not drop a row");
+    assert.equal(both, 6, "sort+limit TOGETHER must not drop a row — the reported bug");
+    // And a real limit still truncates, so the assertions above are not passing
+    // because limit is being ignored.
+    assert.equal(await count("?sort=name:asc&limit=3"), 3, "limit must still apply — positive control");
+  });
+});

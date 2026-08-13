@@ -2536,7 +2536,27 @@ export async function callTool(
               "cache; wait and re-read) and VISIBILITY (delivery enforces publicRead/publicFilter/access " +
               "while MCP reads do not, so a row can be PERMANENTLY absent from delivery while reading " +
               "perfectly here). Before hunting a bug: confirm the fields are publicRead and the row " +
-              "matches publicFilter — describe_collection shows both.",
+              "matches publicFilter — describe_collection shows both. " +
+              // Diagnosed 2026-08-07 from wall bug c1c4… (xvibe): "GET ?sort=name:asc&limit=200
+              // returns 5 rows while either param alone returns 6", reproduced 3x by the
+              // reporter, who explicitly ruled out a convergence artifact. They ruled it out
+              // reasoning about the ~15s window above — but the mechanism is the EDGE cache,
+              // which is keyed per URL, so two query strings are two independent entries and
+              // can disagree for far longer. Could not reproduce as a query bug across 11
+              // param combinations. This paragraph is the fact that makes it diagnosable.
+              "THIRD CAUSE, and the one that looks most like a bug: cacheable GETs are edge-cached " +
+              "PER URL (s-maxage 60s, plus stale-while-revalidate up to 300s more). Every distinct " +
+              "query string is its OWN cache entry, so ?sort=x&limit=200 and ?limit=200 are two " +
+              "different entries that can disagree for minutes after a write — which reads exactly " +
+              "like \"this one parameter combination drops a row\". It is staleness, not a query " +
+              "fault. TO TELL THEM APART in one call, force a cache miss by varying an ALLOWLISTED " +
+              "param — raise limit by one (limit=201 instead of 200) — because a URL nothing has " +
+              "cached must come from origin. Do NOT try a throwaway key like &_cb=1: any unrecognised " +
+              "query param is read as a FIELD FILTER and answers 422 naming the filterable fields, so " +
+              "it cannot serve as a cache-buster. A shared cache also stamps an Age response header, " +
+              "so Age > 0 means you are reading a cached copy. If the miss agrees with your other " +
+              "query, it was the cache; if it still disagrees, that is a real bug worth reporting with " +
+              "both URLs.",
             // QRY-3: the budgets, published. Every number here is read from (or
             // asserted against) the constant that enforces it — an unpublished
             // limit is a wall clients discover by hitting it, and a published
@@ -2552,7 +2572,21 @@ export async function callTool(
               "10 MB per file. THIS MCP surface: 300 tool calls/min per project (429 with the same " +
               "structure), 16 MiB bodies (sized so a max base64 upload_asset still fits). For bigger " +
               "delivery-side batches than the budget allows, do the work server-side over MCP " +
-              "(bulk_create_entries up to 500/call, transact up to 25 ops).",
+              "(bulk_create_entries up to 500/call, transact up to 25 ops). " +
+              // CONTRACT-3: the numbers were published (QRY-3) but never the MODEL, and a
+              // builder agent escalated to its operator over exactly this — "are these
+              // per-project or per-customer, and do paid tiers scale them?" A number
+              // without a scope cannot be designed against: whether your write budget
+              // grows with users or is a fixed ceiling decides where writes originate.
+              "SCOPE — this is what decides your architecture, so read it before pacing: the delivery " +
+              "budget is per (PROJECT, CLIENT IP), so end-user writes from browsers each get their own " +
+              "20/min and scale with your users, while writes funnelled through ONE server share a " +
+              "single 20/min for that project — prefer browser-direct writes with a readOnly token for " +
+              "reads. The MCP budget is per PROJECT and IP-INDEPENDENT, so a server-side integration is " +
+              "capped at 300/min however many hosts it runs on. NEITHER is per-customer/workspace: a " +
+              "customer with 5 projects has 5 independent budgets. AND NOTE: these RATE limits do NOT " +
+              "currently vary by plan — they are the same on every tier, while STORAGE/COUNT caps DO " +
+              "vary (see the project's Usage panel). Design for the fixed rate, not for a tier upgrade.",
             tokenScopes:
               "TWO token scopes, do not mix them: an MCP-scoped token authors the backend at " +
               "{mcpEndpoint} (define_collection, entries, config — this connection); a DELIVERY-scoped " +

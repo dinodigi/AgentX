@@ -17,7 +17,7 @@
 Protocol: **[BURNDOWN.md](BURNDOWN.md)** · dispositioned queue: **[QUEUE.md](QUEUE.md)**
 
 <!-- BEGIN:LEDGER -->
-_42 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
+_45 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
 
 | | id | project | item | receipt |
 |---|---|---|---|---|
@@ -35,6 +35,8 @@ _42 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 | ✅ | `0a5ce08c` | Fatsoz | `indexed` is rejected on date fields, so the most natural sort/filter dimension for events and submissions (a  | `2dfa814` |
 | ✅ | `95b660d1` | Fatsoz | The stateless MCP-over-HTTP transport is excellent for server-side use — worth documenting it as a supported p | `66ad28e` |
 | ✅ | `4fae3449` | Hatchly | query_entries rejects `id` in where clauses ("unknown field id"), so fetching one entry by id needs a separate | `0dbf3ff` |
+| ✅ | `55ee75d0` | Codex-test | Plugins reported as enabled while list_collections returned an empty project | `371fe29` |
+| ✅ | `bf16000e` | Codex-test | No MCP path to provision the delivery-scoped token required by the generated frontend client | `698c8d6` |
 | ✅ | `66d1cbd9` | Codex-test | Add a browser-safe public-read mode for public collections. | `57bbea4` |
 | ✅ | `9c2333cb` | Hatchly | define_collection has no additive field op — adding one field requires re-sending the whole schema, and any om | `f5a99f7` |
 | ✅ | `e9628701` | Hatchly | Two read planes disagree: MCP reads reflect writes immediately, but the delivery API converges ~15s later and  | `66ad28e` |
@@ -63,6 +65,7 @@ _42 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 | 📝 | `30cf6659` | xvibe | Retraction of builder-filed report: probe_app 401-after-mint was an XVibe-side custody bug, not a platform iss | `ack` |
 | ✅ | `89053b98` | xvibe | define_collection field config for enum options and computed date fields isn't discoverable from the define_co | `2339e32` |
 | ✅ | `c91e2872` | xvibe | define_collection's addFields silently dropped the collection's `access` and `workflow` config instead of leav | `2339e32` |
+| 📝 | `a8c6bcbe` | xvibe | Delivery API GET with sort+limit combined together silently drops one row from the result | `cache semantics published` |
 <!-- END:LEDGER -->
 
 ## Carried from earlier sprints
@@ -88,17 +91,16 @@ _42 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=78 · new=5 · planned=2 · reviewed=2_
+_Wall totals: done=81 · new=4 · planned=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_7 open (5 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-07 02:46Z_
+_6 open (4 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-13 04:51Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
 | ⬜ | 08-05 | xvibe | limitation | No server-side auto-increment/sequence field type, so a publicWrite "join queue and get… |
 | ⬜ | 08-05 | xvibe | limitation | No tool can exercise an authenticated PATCH (write) with a real Clerk JWT — probe_app o… |
-| ⬜ | 08-05 | xvibe | bug | Delivery API GET with sort+limit combined together silently drops one row from the result |
 | ⬜ | 08-05 | xvibe | limitation | probe_app only issues GET requests (schema: {paths, userToken}), so it cannot verify au… |
 | ⬜ | 08-07 | EasyFilm | limitation | Text inside an array-of-group field is unsearchable — no index, no full-text, and `sear… |
 | 🗓️ | 07-31 | xvibe | idea | Project branches backed by Neon branching: branch a project (schema + data), work again… |
