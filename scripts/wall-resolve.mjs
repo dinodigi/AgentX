@@ -26,6 +26,33 @@ const apply = process.argv.includes("--apply");
  *   ref:         commit hash, or the trigger condition
  */
 const RESOLUTIONS = {
+  // --- DM-5: nested text is searchable (commit e84655e) ---------------------
+  "450c3e16": {
+    disposition: "SHIPPED",
+    ref: "e84655e",
+    note:
+      "Shipped — you can delete the denormalised `search_text` sibling. " +
+      "`searchable: true` is now valid on a text/richtext SUB-FIELD of a " +
+      "group/array, so mark `text` inside your `paragraphs` item and both " +
+      "`search_entries` and delivery `?q=` match prose inside the repeater. " +
+      "It works the same in a plain group and in typed blocks. A hit is the " +
+      "ENTRY, not the paragraph — the same granularity your workaround already " +
+      "produced, so nothing about your result handling changes. " +
+      "Only the sub-field you name is indexed, which matters for your shape: " +
+      "`type` holds \"dialogue\" on nearly every scene, and indexing the whole " +
+      "array would have made that term match everything. " +
+      "Two notes worth having. Your write-budget argument was the deciding one " +
+      "— the child-collection alternative really does die on 20/min, and you " +
+      "made that case with our own published numbers, which is why this was " +
+      "built rather than answered with a workaround. And on delivery: " +
+      "`publicRead` goes on the CONTAINER; inside a public container a " +
+      "sub-field is public by default and opts out with `publicRead: false`. " +
+      "`?q=` follows that exactly, so it can never match prose the delivery " +
+      "API would not return. " +
+      "Still not supported nested, deliberately: indexed, unique, computed, " +
+      "localized, requiredIf, writeOnly. Each refuses with its own reason.",
+  },
+
   // --- A1: the workflow actor vocabulary split (commit 2798606) -------------
   a61039c4: {
     disposition: "SHIPPED",
