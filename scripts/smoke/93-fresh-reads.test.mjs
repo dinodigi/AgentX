@@ -179,13 +179,21 @@ describe("convergence honesty + stateless transport (A2/A4)", () => {
 
   it("A2: entry writes carry a convergence note naming BOTH timing and visibility", async () => {
     // The gap jabed lost time to: define_collection explained itself, entry
-    // writes said nothing, so a 15s delay read as a bug.
+    // writes said nothing, so the delay read as a bug.
+    //
+    // The figure changed 2026-08-14 and the distinction is the point: a SCHEMA
+    // change is governed by the collection-definition cache (~15s — see the
+    // define_collection assertion above, still correct), while entry CONTENT is
+    // not app-cached at all, so what delays a public read is the edge cache at
+    // ~60s. This assertion used to hard-code 15s for both, which is why a tenant
+    // measured ~43s against our documented figure. The full verify caught the
+    // mismatch the moment the contract was corrected — targeted runs did not.
     const created = await mcp(p.mcpToken, "create_entry", {
       collection: "posts",
       data: { title: "convergence" },
     });
     assert.ok(created.ok, created.errorText);
-    assert.match(created.value.convergence, /15s/, "names the timing gap");
+    assert.match(created.value.convergence, /~60s/, "names the timing gap, at the layer that actually causes it");
     assert.match(created.value.convergence, /publicFilter/, "names the VISIBILITY gap too");
 
     const updated = await mcp(p.mcpToken, "update_entry", {
@@ -193,10 +201,10 @@ describe("convergence honesty + stateless transport (A2/A4)", () => {
       id: created.value.id,
       data: { title: "still converging" },
     });
-    assert.match(updated.value.convergence, /15s/);
+    assert.match(updated.value.convergence, /~60s/);
 
     const deleted = await mcp(p.mcpToken, "delete_entry", { collection: "posts", id: created.value.id });
-    assert.match(deleted.value.convergence, /15s/);
+    assert.match(deleted.value.convergence, /~60s/);
   });
 
   it("A4: get_project_info documents the stateless transport", async () => {
