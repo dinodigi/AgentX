@@ -91,11 +91,11 @@ _45 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=81 · new=4 · planned=2_
+_Wall totals: done=81 · new=8 · planned=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_6 open (4 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-13 04:51Z_
+_10 open (8 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-15 04:16Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
@@ -103,6 +103,10 @@ _6 open (4 new, 2 planned) · 0 theme(s) reported more than once · snapshot 202
 | ⬜ | 08-05 | xvibe | limitation | No tool can exercise an authenticated PATCH (write) with a real Clerk JWT — probe_app o… |
 | ⬜ | 08-05 | xvibe | limitation | probe_app only issues GET requests (schema: {paths, userToken}), so it cannot verify au… |
 | ⬜ | 08-07 | EasyFilm | limitation | Text inside an array-of-group field is unsearchable — no index, no full-text, and `sear… |
+| ⬜ | 08-14 | CSLP | friction | MCP→delivery convergence measured at ~43s on this project, not the documented "~15s" — … |
+| ⬜ | 08-14 | CSLP | idea | Delivery rate limit is consumed by requests that fail validation, so a bot can exhaust … |
+| ⬜ | 08-14 | CSLP | friction | define_collection's description writes group/array config as nested ("group:{fields:[..… |
+| ⬜ | 08-14 | CSLP | limitation | aggregate_entries cannot groupBy a text field, so a plain "count per code" rollup needs… |
 | 🗓️ | 07-31 | xvibe | idea | Project branches backed by Neon branching: branch a project (schema + data), work again… |
 | 🗓️ | 08-01 | xvibe | limitation | User asked for SMS appointment reminders; SMS sending is not available (event actions a… |
 <!-- END:WALL -->
@@ -110,7 +114,7 @@ _6 open (4 new, 2 planned) · 0 theme(s) reported more than once · snapshot 202
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_14 scheduled (8 high) · 23 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_16 scheduled (8 high) · 24 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
 **Scheduled = decided, not started.** A sprint is a commitment; this is a list. High priority:
 
@@ -125,7 +129,7 @@ _14 scheduled (8 high) · 23 closed-with-a-condition (⏳ trigger / ⚑ operator
 | 📥 | **QRY-4** | Entry-level import + project environments (`import_project` is schema-only). H: named bl |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 6 scheduled at M/L, and 23 ⏳/⚑ rows that reopen on their named condition._
+_…plus 8 scheduled at M/L, and 24 ⏳/⚑ rows that reopen on their named condition._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)

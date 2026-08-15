@@ -14,6 +14,7 @@ import { rateLimit } from "@/lib/ratelimit";
 import { readBounded, MAX_DELIVERY_BODY_BYTES, BODY_TOO_LARGE } from "@/lib/http";
 import { corsJson, deliveryError, readOnlyRefusal } from "@/lib/delivery-http";
 import { preflight } from "@/lib/cors";
+import { clientIp } from "@/lib/client-ip";
 
 /**
  * Checkout (K2b) — turn a cart of entry ids + quantities into a Stripe Checkout
@@ -55,7 +56,7 @@ export async function POST(req: NextRequest) {
   if (auth.readOnly) return readOnlyRefusal();
   const projectId = auth.projectId;
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const ip = clientIp(req.headers);
   const rl = await rateLimit(`${projectId}:${ip}`, { projectId });
   if (!rl.allowed) {
     return deliveryError(429, "too many checkout requests — try again shortly", {

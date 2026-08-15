@@ -3,6 +3,7 @@ import { bearerFrom } from "@/lib/tokens";
 import { receiveInbound } from "@/lib/inbound";
 import { rateLimit } from "@/lib/ratelimit";
 import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
+import { clientIp } from "@/lib/client-ip";
 
 /**
  * 2b inbound email sink. A mail provider (Resend/SES/Postmark/Mailgun inbound
@@ -16,7 +17,7 @@ import { readBounded, MAX_DELIVERY_BODY_BYTES } from "@/lib/http";
 export async function POST(req: NextRequest, { params }: { params: Promise<{ projectId: string }> }) {
   const { projectId } = await params;
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const ip = clientIp(req.headers);
   const rl = await rateLimit(`${projectId}:${ip}`, { projectId });
   if (!rl.allowed) {
     return json(429, { error: "too many inbound messages — try again shortly", code: "E_RATE_LIMITED" });

@@ -7,6 +7,7 @@ import { uploadAsset, MAX_UPLOAD_BYTES } from "@/lib/r2";
 import { ValidationError } from "@/lib/validation";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError, readOnlyRefusal } from "@/lib/delivery-http";
+import { clientIp } from "@/lib/client-ip";
 
 /**
  * Public upload intake: POST /v1/{collection}/uploads with multipart/form-data
@@ -38,7 +39,7 @@ export async function POST(
   const gate = await gateCreate(projectId, collection, req.headers.get("x-user-token"));
   if (!gate.ok) return deliveryError(gate.status, gate.error);
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const ip = clientIp(req.headers);
   const limit = await rateLimit(`${projectId}:${ip}`, { projectId });
   if (!limit.allowed) {
     return deliveryError(429, "too many uploads — try again shortly", {

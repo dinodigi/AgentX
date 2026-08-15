@@ -66,16 +66,22 @@ export async function submitSignup(input: {
   const base = selfBase(h);
 
   try {
-    // Forward the visitor's IP chain — without it every signup shares the
-    // server's own rate-limit bucket (C2 made that bucket durable, which
-    // would turn >20 signups/min GLOBALLY into 429s for real visitors).
-    const xff = h.get("x-forwarded-for");
+    // Do NOT forward the visitor's X-Forwarded-For. This was added to give each
+    // signup its own rate-limit bucket, and it reintroduced exactly the hole the
+    // header comment above forbids: the chain is caller-supplied, so echoing it
+    // lets a script rotate spoofed addresses past the delivery limiter. There is
+    // no way for the API to tell this server's echo from an attacker's, so the
+    // only safe answer is not to send one.
+    //
+    // The cost is the one the header comment already accepted: every marketing
+    // signup shares a single bucket, which over-limits rather than under-limits.
+    // A real per-visitor cap needs a trustworthy address, which only the edge
+    // can supply — see lib/client-ip.ts.
     const res = await fetch(`${base}/api/v1/signups`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
-        ...(xff ? { "x-forwarded-for": xff } : {}),
       },
       body: JSON.stringify({ email, product: input.product, ...(about ? { about } : {}) }),
       cache: "no-store",

@@ -8,6 +8,7 @@ import { storageFor } from "@/lib/r2";
 import { CORS_HEADERS, preflight } from "@/lib/cors";
 import { deliveryError } from "@/lib/delivery-http";
 import { ValidationError } from "@/lib/entries";
+import { clientIp } from "@/lib/client-ip";
 
 /**
  * On-demand image transform (J1) — PUBLIC (no auth header; URLs are directly
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     throw e;
   }
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const ip = clientIp(req.headers);
   // Derivatives live in (and redirect to) the OWNING project's storage plane
   // (A4) — the asset row carries the projectId either way it was found.
   const storage = await storageFor(asset.projectId);

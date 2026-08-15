@@ -514,11 +514,14 @@ export const TOOL_DEFS: ToolDef[] = [
       "min/max? = value bounds on number, LENGTH bounds on text/richtext, ISO-string instant " +
       "bounds on date; integer? on number; pattern? = JS-regex source on text, requires max <= 10000, " +
       "patternHint? = the failure message; requiredIf?: {field, equals} against a sibling enum) and " +
-      "type-specific config (enum:options[], relation:{targetCollection,labelField}, " +
-      "group:{fields:[...]} = a nested set of sub-fields, array:{item, maxItems?} = a repeater of " +
-      "scalars OR groups — use array-of-group for repeatable SAME-shape sections, or " +
-      "array:{blocks:[{name,label,fields},...]} = TYPED BLOCKS for page bodies of DIFFERENT " +
-      "sections (hero/features/cta…): each element stores its block name as `_type` " +
+      "type-specific config, all of it FLAT ON THE FIELD — there is no nested `group:{}` or " +
+      "`array:{}` wrapper, and passing one is rejected: " +
+      "{type:'enum', options:[...]} · {type:'relation', targetCollection, labelField} · " +
+      "{type:'group', fields:[...]} = a nested set of sub-fields · " +
+      "{type:'array', item:{...}, maxItems?} = a repeater of scalars OR groups — use " +
+      "item:{type:'group',fields:[...]} for repeatable SAME-shape sections — or " +
+      "{type:'array', blocks:[{name,label,fields},...]} = TYPED BLOCKS for page bodies of " +
+      "DIFFERENT sections (hero/features/cta…): each element stores its block name as `_type` " +
       '(e.g. {"_type":"hero","heading":"…"}); see list_field_types). ' +
       "EVERY field also accepts these COMMON knobs — listed here because they are the ones agents " +
       "reach for and a deferred list is a list that does not get read: publicRead (serve this field on " +
@@ -2009,8 +2012,9 @@ export interface ToolContext {
  * token cost for an agent doing bulk work.
  */
 const ENTRY_CONVERGENCE =
-  "visible to MCP reads immediately; the delivery API converges within ~15s AND applies " +
-  "publicFilter/access rules, so a row can be readable here yet absent there";
+  "visible to MCP reads immediately; a cacheable delivery GET can lag by up to ~60s (edge " +
+  "cache, per URL) AND applies publicFilter/access rules, so a row can be readable here yet " +
+  "absent there";
 
 export async function callTool(
   projectId: string,
@@ -2532,11 +2536,19 @@ export async function callTool(
             // misconfiguration that did not exist. Orientation is where a
             // surprise like this belongs, so it can be designed around.
             convergence: `MCP WRITES DO NOT APPEAR ON DELIVERY INSTANTLY: ${ENTRY_CONVERGENCE}. Two ` +
-              "distinct causes, and the second is the one nobody expects — TIMING (a ~15s cross-instance " +
-              "cache; wait and re-read) and VISIBILITY (delivery enforces publicRead/publicFilter/access " +
-              "while MCP reads do not, so a row can be PERMANENTLY absent from delivery while reading " +
-              "perfectly here). Before hunting a bug: confirm the fields are publicRead and the row " +
-              "matches publicFilter — describe_collection shows both. " +
+              "distinct causes, and the second is the one nobody expects — TIMING and VISIBILITY. " +
+              "VISIBILITY is permanent: delivery enforces publicRead/publicFilter/access while MCP " +
+              "reads do not, so a row can be PERMANENTLY absent from delivery while reading perfectly " +
+              "here — waiting will never fix it. Before hunting a bug, confirm the fields are " +
+              "publicRead and the row matches publicFilter; describe_collection shows both. " +
+              "TIMING, with the REAL numbers (a tenant measured ~43s against a figure we used to give " +
+              "as ~15s, and rebuilt their editor around the gap): entry CONTENT is not cached in the " +
+              "app at all — a delivery read hits the database at origin — so the delay you actually " +
+              "meet is the EDGE CACHE below, up to ~60s and as much as ~5 min more while a stale copy " +
+              "is revalidated. The ~15s figure is the COLLECTION DEFINITION cache: it governs when a " +
+              "newly added field or a changed publicRead flag takes effect, NOT when your content " +
+              "appears. If you are building an editor with a live preview, do not poll the delivery " +
+              "API for your own write — read it back over MCP, which is immediate. " +
               // Diagnosed 2026-08-07 from wall bug c1c4… (xvibe): "GET ?sort=name:asc&limit=200
               // returns 5 rows while either param alone returns 6", reproduced 3x by the
               // reporter, who explicitly ruled out a convergence artifact. They ruled it out

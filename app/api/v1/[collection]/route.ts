@@ -21,6 +21,7 @@ import {
 import { getLocales, hasLocalizedFields, localizeView } from "@/lib/locales";
 import { readBounded, MAX_DELIVERY_BODY_BYTES, BODY_TOO_LARGE } from "@/lib/http";
 import type { WhereClause, WhereItem, OrderByClause } from "@/lib/query";
+import { clientIp } from "@/lib/client-ip";
 
 /**
  * Delivery API — what the live site consumes. Scoped per-project by the same
@@ -290,7 +291,7 @@ export async function GET(
     }
     if (sort) return deliveryError(422, "search results are rank-ordered — drop ?sort");
     // Keyword search is CPU-bound SQL on an unauthenticated GET — rate-limit it.
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+    const ip = clientIp(req.headers);
     const rl = await rateLimit(`${projectId}:${ip}`, { projectId });
     if (!rl.allowed) {
       return deliveryError(429, "too many searches — try again shortly", {
@@ -394,7 +395,7 @@ export async function POST(
     }
   }
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "local";
+  const ip = clientIp(req.headers);
   const limit = await rateLimit(`${projectId}:${ip}`, { projectId });
   if (!limit.allowed) {
     return deliveryError(429, "too many submissions — try again shortly", {

@@ -1164,3 +1164,151 @@ describe("CONTRACT-3 — the budgets publish their model, not just their numbers
     assert.equal(await count("?sort=name:asc&limit=3"), 3, "limit must still apply — positive control");
   });
 });
+
+// 114h — three field-reported corrections, two of them regressions we shipped.
+//
+//   · The limiter keyed its budget on a caller-supplied header (not reported —
+//     found while checking a report whose own conclusion was wrong).
+//   · The container config shape was documented as nested and is flat.
+//   · The convergence figure named the wrong cache layer and was ~4x optimistic.
+describe("CP6 — corrections from the field", () => {
+  let p;
+  let tools;
+  let info;
+
+  before(async () => {
+    await ensureServer();
+    p = await createEphemeralProject("cp6");
+    const res = await fetch(`${BASE}/api/mcp`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${p.mcpToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    tools = new Map((await res.json()).result.tools.map((t) => [t.name, t]));
+    const r = await mcp(p.mcpToken, "get_project_info", {});
+    assert.ok(r.ok, r.errorText);
+    info = r.value;
+  });
+  after(() => p.destroy());
+
+  it("SECURITY: no route keys its rate limit on the caller-supplied leftmost XFF entry", () => {
+    // The exact expression that shipped in eight routes. Rotating that header
+    // minted unlimited buckets; setting it to someone else's value burned theirs.
+    // Asserted across the source because it is a property of every route, not of
+    // any single one — and because a ninth route added later must not reintroduce it.
+    const routes = [
+      "app/api/inbound/[projectId]/route.ts",
+      "app/api/v1/assets/[id]/image/route.ts",
+      "app/api/v1/batch/route.ts",
+      "app/api/v1/checkout/route.ts",
+      "app/api/v1/[collection]/route.ts",
+      "app/api/v1/[collection]/uploads/route.ts",
+      "app/api/v1/[collection]/[id]/route.ts",
+    ];
+    for (const f of routes) {
+      const src = readFileSync(f, "utf8");
+      assert.ok(
+        !/x-forwarded-for"\)\?\.split\(","\)\[0\]/.test(src),
+        `${f} reads the LEFTMOST x-forwarded-for entry again — that value is supplied by the caller`,
+      );
+      if (/rateLimit\(/.test(src)) {
+        assert.match(src, /clientIp\(req\.headers\)/, `${f} rate-limits but does not use the shared clientIp()`);
+      }
+    }
+  });
+
+  it("SECURITY: clientIp prefers the edge header and falls back to the LAST forwarded entry", () => {
+    const src = readFileSync("lib/client-ip.ts", "utf8");
+    assert.match(src, /cf-connecting-ip/, "Cloudflare overwrites this, so it cannot be forged through the edge");
+    assert.match(src, /parts\[parts\.length - 1\]/, "the fallback must be the LAST entry, never the first");
+    assert.match(src, /"local"/, "no proxy headers must collapse to one shared bucket, which fails safe");
+    // The residual is real and must stay written down rather than implied fixed.
+    assert.match(src, /RESIDUAL RISK/, "the direct-to-origin gap is a deployment concern and must stay stated");
+  });
+
+  it("SECURITY: the marketing action no longer echoes the visitor's XFF", () => {
+    // Its own file header forbids this; a later fix for a shared-bucket problem
+    // reverted the decision. The two must not contradict each other again.
+    const src = readFileSync("app/(marketing)/actions.ts", "utf8");
+    // Fragments only — the sentence wraps across lines with a leading " * " in
+    // the source, so matching the whole phrase never succeeds.
+    assert.match(src, /do NOT echo/, "the documented decision must stay in the file");
+    assert.match(src, /leftmost entry is client-controlled/, "…including the REASON, which is the load-bearing half");
+    assert.ok(
+      !/"x-forwarded-for": xff/.test(src),
+      "the marketing action forwards the caller's XFF again — the exact revert this test exists for",
+    );
+  });
+
+  it("CONTAINER SHAPE: define_collection documents the FLAT shape, and the nested form is gone", () => {
+    // Wall b29738a3: the reporter followed the description literally and got
+    // "Unrecognized key(s) in object: 'group'". The old derived test asserted
+    // each knob was NAMED, not that its SHAPE was right, so it passed while the
+    // shape was wrong. This is the assertion that was missing.
+    const desc = tools.get("define_collection").description;
+    assert.ok(
+      !/group:\{fields:/.test(desc),
+      "the nested `group:{fields:...}` form is back — it is rejected by the schema",
+    );
+    assert.ok(
+      !/array:\{item|array:\{blocks/.test(desc),
+      "the nested `array:{...}` form is back — it is rejected by the schema",
+    );
+    assert.match(desc, /FLAT ON THE FIELD/, "the flatness must be stated, not just demonstrated");
+    assert.match(desc, /\{type:'group', fields:\[/, "the real shape, spelled out");
+    assert.match(desc, /\{type:'array', blocks:\[/, "…and for typed blocks");
+  });
+
+  it("CONTAINER SHAPE BEHAVIORAL: the documented shape is accepted and the old one is refused", async () => {
+    // The pin that makes the words checkable: what the description now shows must
+    // actually define, and what it warns against must actually fail.
+    const good = await mcp(p.mcpToken, "define_collection", {
+      name: "pages_flat",
+      dryRun: true,
+      fields: [
+        { name: "title", label: "T", type: "text", required: true },
+        { name: "theme", label: "Th", type: "group", fields: [{ name: "ink", label: "I", type: "text" }] },
+        {
+          name: "sections",
+          label: "S",
+          type: "array",
+          blocks: [{ name: "hero", label: "Hero", fields: [{ name: "heading", label: "H", type: "text" }] }],
+        },
+      ],
+    });
+    assert.ok(good.ok, `the documented FLAT shape must be accepted: ${good.errorText}`);
+
+    const bad = await mcp(p.mcpToken, "define_collection", {
+      name: "pages_nested",
+      dryRun: true,
+      fields: [
+        { name: "title", label: "T", type: "text", required: true },
+        { name: "theme", label: "Th", type: "group", group: { fields: [{ name: "ink", label: "I", type: "text" }] } },
+      ],
+    });
+    assert.ok(!bad.ok, "the nested shape must still be refused — otherwise the warning is pointless");
+    assert.match(bad.errorText, /Unrecognized key|group/, `expected the reporter's error: ${bad.errorText}`);
+  });
+
+  it("CONVERGENCE: the figure names the right cache layer and is no longer optimistic", () => {
+    const c = info.deliveryApi.convergence;
+    // The old text said "~15s cross-instance cache" as THE timing answer. That is
+    // the collection-definition cache; content is not app-cached at all.
+    assert.ok(
+      !/~15s cross-instance/.test(c),
+      "the ~15s figure is back as the headline timing answer — it is the wrong layer",
+    );
+    assert.match(c, /~60s/, "the real delay for a cacheable GET is the edge cache");
+    assert.match(c, /COLLECTION DEFINITION cache/, "…and ~15s must be labelled as what it actually governs");
+    assert.match(c, /~43s/, "the measured contradiction is cited, so the number cannot drift back quietly");
+    assert.match(c, /read it back over MCP/, "the actionable answer for anyone building a live preview");
+  });
+
+  it("CONVERGENCE: the one-line note on entry writes agrees with the orientation blob", () => {
+    // Two places state this. They disagreed after CP5 — one said ~15s while the
+    // other said 60s + stale-while-revalidate, in the same payload.
+    const c = info.deliveryApi.convergence;
+    assert.match(c, /up to ~60s/, "the short note rides on every entry write and must carry the same number");
+    assert.ok(!/within ~15s/.test(c), "the short note still promises ~15s — the two halves disagree again");
+  });
+});
