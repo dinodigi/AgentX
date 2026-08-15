@@ -17,7 +17,7 @@
 Protocol: **[BURNDOWN.md](BURNDOWN.md)** · dispositioned queue: **[QUEUE.md](QUEUE.md)**
 
 <!-- BEGIN:LEDGER -->
-_45 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
+_46 closed with a receipt the reporter can read. ✅ shipped · 📝 answered · ⏳ deferred with a trigger · 🚫 declined._
 
 | | id | project | item | receipt |
 |---|---|---|---|---|
@@ -66,6 +66,7 @@ _45 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 | ✅ | `89053b98` | xvibe | define_collection field config for enum options and computed date fields isn't discoverable from the define_co | `2339e32` |
 | ✅ | `c91e2872` | xvibe | define_collection's addFields silently dropped the collection's `access` and `workflow` config instead of leav | `2339e32` |
 | 📝 | `a8c6bcbe` | xvibe | Delivery API GET with sort+limit combined together silently drops one row from the result | `cache semantics published` |
+| ✅ | `450c3e16` | EasyFilm | Text inside an array-of-group field is unsearchable — no index, no full-text, and `searchable` is rejected on  | `e84655e` |
 <!-- END:LEDGER -->
 
 ## Carried from earlier sprints
@@ -91,22 +92,22 @@ _45 closed with a receipt the reporter can read. ✅ shipped · 📝 answered ·
 ## Feedback wall — live snapshot
 
 <!-- BEGIN:WALLHEALTH -->
-_Wall totals: done=81 · new=8 · planned=2_
+_Wall totals: done=82 · new=8 · planned=2_
 <!-- END:WALLHEALTH -->
 
 <!-- BEGIN:WALL -->
-_10 open (8 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-15 04:18Z_
+_10 open (8 new, 2 planned) · 0 theme(s) reported more than once · snapshot 2026-08-15 14:07Z_
 
 | | date | project | kind | item |
 |---|---|---|---|---|
 | ⬜ | 08-05 | xvibe | limitation | No server-side auto-increment/sequence field type, so a publicWrite "join queue and get… |
 | ⬜ | 08-05 | xvibe | limitation | No tool can exercise an authenticated PATCH (write) with a real Clerk JWT — probe_app o… |
 | ⬜ | 08-05 | xvibe | limitation | probe_app only issues GET requests (schema: {paths, userToken}), so it cannot verify au… |
-| ⬜ | 08-07 | EasyFilm | limitation | Text inside an array-of-group field is unsearchable — no index, no full-text, and `sear… |
 | ⬜ | 08-14 | CSLP | friction | MCP→delivery convergence measured at ~43s on this project, not the documented "~15s" — … |
 | ⬜ | 08-14 | CSLP | idea | Delivery rate limit is consumed by requests that fail validation, so a bot can exhaust … |
 | ⬜ | 08-14 | CSLP | friction | define_collection's description writes group/array config as nested ("group:{fields:[..… |
 | ⬜ | 08-14 | CSLP | limitation | aggregate_entries cannot groupBy a text field, so a plain "count per code" rollup needs… |
+| ⬜ | 08-15 | CSLP | friction | Correction to my earlier convergence report: origin converges immediately — what I meas… |
 | 🗓️ | 07-31 | xvibe | idea | Project branches backed by Neon branching: branch a project (schema + data), work again… |
 | 🗓️ | 08-01 | xvibe | limitation | User asked for SMS appointment reminders; SMS sending is not available (event actions a… |
 <!-- END:WALL -->
@@ -114,14 +115,13 @@ _10 open (8 new, 2 planned) · 0 theme(s) reported more than once · snapshot 20
 ## Backlog — decided-or-parked, NOT started
 
 <!-- BEGIN:BACKLOG -->
-_16 scheduled (8 high) · 24 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
+_16 scheduled (7 high) · 24 closed-with-a-condition (⏳ trigger / ⚑ operator) · full detail in [../BACKLOG.md](../BACKLOG.md)_
 
 **Scheduled = decided, not started.** A sprint is a commitment; this is a list. High priority:
 
 | | ID | item |
 |---|---|---|
 | 📥 | **CONTRACT-3** | An integrator cannot discover TIER STRUCTURE from the agent surface, and has no channel  |
-| 📥 | **DM-5** | Text inside an array/group is unsearchable — the flagship use case for the container shi |
 | 📥 | **ENV-1** | Staging environment — an online copy of the platform to debug against (operator, 2026-07 |
 | 📥 | **MT-2** | Org-scope the admin view — an invited client-role member sees every org's rows in the ad |
 | 📥 | **MT-6** | A way to test isolation from the build loop (mint/supply an end-user JWT, or an isolatio |
@@ -129,7 +129,7 @@ _16 scheduled (8 high) · 24 closed-with-a-condition (⏳ trigger / ⚑ operator
 | 📥 | **QRY-4** | Entry-level import + project environments (`import_project` is schema-only). H: named bl |
 | 📥 | **WP-7** | Bulk write + delete on the delivery API. Bulk ops are MCP-only, so a delivery-side clien |
 
-_…plus 8 scheduled at M/L, and 24 ⏳/⚑ rows that reopen on their named condition._
+_…plus 9 scheduled at M/L, and 24 ⏳/⚑ rows that reopen on their named condition._
 <!-- END:BACKLOG -->
 
 ## Not in any sprint (deliberate)
