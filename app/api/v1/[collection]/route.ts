@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { bearerFrom, resolveDeliveryToken } from "@/lib/tokens";
 import { getCollection, getCollectionFresh, listCollections } from "@/lib/collections";
 import { rateLimit } from "@/lib/ratelimit";
-import { searchEntriesPage, publicSearchableFields } from "@/lib/search";
+import { searchEntriesPage, publicSearchableTargets } from "@/lib/search";
 import { preflight } from "@/lib/cors";
 import { corsJson, deliveryError, cachedJson, readOnlyRefusal } from "@/lib/delivery-http";
 import { gateRead, gateCreate, stampIdentity, checkFieldWrites, fieldWriteError } from "@/lib/access-rules";
@@ -283,10 +283,12 @@ export async function GET(
   // ?q= full-text search over the PUBLIC searchable subset, rank-ordered.
   const q = url.searchParams.get("q");
   if (q !== null) {
-    if (publicSearchableFields(collection.fields).length === 0) {
+    if (publicSearchableTargets(collection.fields).length === 0) {
       return deliveryError(
         422,
-        "search is not enabled for this collection — no public searchable fields; mark a searchable field publicRead via define_collection",
+        "search is not enabled for this collection — no public searchable fields; mark a searchable field publicRead via define_collection. " +
+          "For a searchable sub-field of a group/array, publicRead goes on the CONTAINER: inside a public container a sub-field is public " +
+          "by default and opts out with publicRead:false.",
       );
     }
     if (sort) return deliveryError(422, "search results are rank-ordered — drop ?sort");
@@ -313,7 +315,7 @@ export async function GET(
         ? (
             await searchEntriesPage(collection, {
               q,
-              fields: publicSearchableFields(collection.fields),
+              targets: publicSearchableTargets(collection.fields),
               where: effectiveWhere,
               limit,
               offset,

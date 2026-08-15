@@ -45,7 +45,7 @@ import { listEntryVersions } from "@/lib/versions";
 // whole point of the write-only guarantee: "trusted" does not mean "may read a
 // credential back", it means "may write one".
 import { redact, writeOnlyNames } from "@/lib/write-only";
-import { searchEntriesPage, searchableFields } from "@/lib/search";
+import { searchEntriesPage, searchableTargets } from "@/lib/search";
 import { getProject } from "@/lib/admin";
 import { listAssets, deleteAsset } from "@/lib/r2";
 import { listDeliveries } from "@/lib/webhook";
@@ -534,6 +534,12 @@ export const TOOL_DEFS: ToolDef[] = [
       "{fn:'template',template:'{{a}}-{{b}}'} | {fn:'now',on?:'create'|'always'} (DATE fields — this is " +
       "how you stamp created_at/updated_at) | {fn:'uuid'}. list_field_types returns the full rule for " +
       "each. " +
+      "searchable:true (text/richtext) enables search_entries and delivery ?q=, and it is the ONE " +
+      "knob that also works on a SUB-FIELD of a group/array: mark the text sub-field of a repeater " +
+      "or block searchable and the prose inside it is searchable, with matches returned at ENTRY " +
+      "granularity — you do NOT need a denormalised copy of the body. Only the sub-field you name is " +
+      "indexed, so a sibling like `type` or `pid` never pollutes results. The other knobs still do not " +
+      "recurse: indexed/unique/computed/localized/requiredIf/writeOnly stay top-level only. " +
       "Instantly manageable in the admin; no per-project UI code. Public fields are served " +
       "by the delivery API (see get_project_info). Set publicWrite:true + webhookUrl for a form. " +
       "Redefining an existing collection with dropped/retyped fields returns a diff plan " +
@@ -1249,7 +1255,10 @@ export const TOOL_DEFS: ToolDef[] = [
     name: "search_entries",
     description:
       "Keyword full-text search over every field marked searchable:true (INCLUDING non-public " +
-      "ones — MCP is trusted). websearch syntax (quoted phrases, OR, -exclude). Results are " +
+      "ones — MCP is trusted), AND over any text/richtext SUB-FIELD of a group/array marked " +
+      "searchable:true — so a page body or a repeater of paragraphs is searchable without " +
+      "denormalising it. A hit is the ENTRY, not the element: results identify the row that " +
+      "contains the match. websearch syntax (quoted phrases, OR, -exclude). Results are " +
       "rank-ordered (best first); offset paging only. Optional where filters (same shape as " +
       "query_entries) narrow the set. Not semantic/vector search. Errors if the collection has " +
       "no searchable fields.",
@@ -2485,7 +2494,11 @@ export async function callTool(
               "?include=child.relField embeds a public child collection's rows that point back " +
               "(both the child and its back-reference field must be public). " +
               "?q=terms full-text search over public searchable fields, rank-ordered (websearch " +
-              "syntax), rate-limited. " +
+              "syntax), rate-limited. Reaches text/richtext SUB-FIELDS of a group/array marked " +
+              "searchable, so a page body is searchable; a hit returns the ENTRY, not the element. " +
+              "For a sub-field, publicRead goes on the CONTAINER (inside it, sub-fields are public " +
+              "by default and opt out with publicRead:false) — so search never matches prose the " +
+              "delivery API would not return. " +
               "Localized fields serve the DEFAULT locale as a flat string; ?locale=xx switches " +
               "(per-variant fallback to default; unknown locale 422s listing supported). " +
               "Same params on GET {deliveryBase}/{collection}/{id}.",
@@ -3167,7 +3180,7 @@ export async function callTool(
         if (a.select) validateSelect(c.fields, a.select);
         const page = await searchEntriesPage(c, {
           q: a.q,
-          fields: searchableFields(c.fields),
+          targets: searchableTargets(c.fields),
           where: a.where,
           limit: a.limit,
           offset: a.offset,

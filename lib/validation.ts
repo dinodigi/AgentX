@@ -579,11 +579,21 @@ function assertNestedAllowed(f: NestedNode, ctx: z.RefinementCtx, path: string):
   // at a collection (the "repeating cards → related collection" pattern the
   // one-level rule prescribes). The rest stay banned: their machinery
   // (indexes, variant maps, cross-field rules) doesn't recurse.
+  // DM-5: `searchable` is no longer banned nested — the search expression
+  // extracts a named sub-field with jsonb_path_query_array, which is
+  // GIN-indexable, so the machinery DOES recurse for this one knob. It stays
+  // restricted to the same two types it allows at top level; anything else
+  // would have no text to index and the silent no-op is worse than a refusal.
+  if (f.searchable !== undefined && f.type !== "text" && f.type !== "richtext") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `${path}: searchable is only valid on a text/richtext sub-field — "${path}" is ${f.type}`,
+    });
+  }
   const banned: [string, unknown][] = [
     ["computed", f.computed],
     ["localized", f.localized],
     ["unique", f.unique],
-    ["searchable", f.searchable],
     ["requiredIf", f.requiredIf],
     // SEC-1: nested is a HARD no, not a "yet". The delivery projection cascade
     // inside a container is public-by-DEFAULT (opt out with publicRead:false),

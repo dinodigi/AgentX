@@ -272,7 +272,11 @@ export const FIELD_TYPE_SPECS: Record<
       "min/max?: number (LENGTH bounds)",
       "pattern?: string (JS RegExp source the value must match; requires max <= 10000)",
       "patternHint?: string (returned verbatim on pattern failure — write it as a fix hint)",
-      "searchable?: boolean (include in full-text search)",
+      "searchable?: boolean (include in full-text search) — VALID ON A SUB-FIELD TOO: mark the " +
+        "text sub-field of a group/array searchable and search_entries / delivery ?q= match " +
+        "prose inside the container. Matches are at ENTRY granularity (the row, not the " +
+        "element). Only the sub-field you name is indexed, so a sibling like `type` or `pid` " +
+        "never pollutes results.",
       "writeOnly?: boolean — THE CREDENTIAL PRIMITIVE (SEC-1). Written, never read " +
         "back: the key is absent from query_entries/get_entry/search_entries, export " +
         "(both json rows and the csv COLUMN), list_entry_versions, the changes feed, " +
@@ -289,7 +293,11 @@ export const FIELD_TYPE_SPECS: Record<
   },
   richtext: {
     summary: "Formatted long-form body content (stored as HTML/markdown).",
-    config: ["min/max?: number (LENGTH bounds)", "searchable?: boolean (tags stripped for search)"],
+    config: [
+      "min/max?: number (LENGTH bounds)",
+      "searchable?: boolean (tags stripped for search) — valid on a richtext sub-field of a " +
+        "group/array too; tags are stripped there identically",
+    ],
   },
   number: {
     summary: "Numeric value (int or float).",
@@ -318,7 +326,9 @@ export const FIELD_TYPE_SPECS: Record<
     config: [
       "fields: FieldDef[] (required — the nested sub-fields, each with its own name/label/publicRead)",
       "sub-fields MAY be relation (point a group/block at another collection — delivery resolves " +
-        "it to {id,label}); they can't be computed/localized/unique/searchable/requiredIf yet",
+        "it to {id,label}), and a text/richtext sub-field MAY be searchable:true (full-text " +
+        "over nested prose; entry-granular). They can't be computed/localized/unique/" +
+        "requiredIf/indexed yet",
     ],
   },
   array: {

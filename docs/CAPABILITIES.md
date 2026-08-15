@@ -1,6 +1,6 @@
 # Pluggie (AgentX) — System Capabilities
 
-> **Living — last synced 2026-08-04.** What the platform can do **today**,
+> **Living — last synced 2026-08-15.** What the platform can do **today**,
 > grouped by surface. Sync this doc whenever a batch changes the tool surface
 > or platform behavior (see CLAUDE.md ship ritual). For what's next, see
 > [BACKLOG.md](BACKLOG.md) and [plans/POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md);
@@ -36,7 +36,8 @@ page linked in the site footer).
   conflict), `indexed` (expression index for hot filters; **date fields ARE
   supported** since DM-4 — the index is built on the canonical UTC-ISO text,
   which sorts chronologically; rejected only on richtext/group/array),
-  `searchable` (FTS surface).
+  `searchable` (FTS surface — **valid on a text/richtext SUB-FIELD of a
+  group/array** since DM-5, at every container shape; see Query & search).
 - **Computed fields** (closed vocabulary): `slugify | template | now | uuid` —
   client values rejected, stamped server-side, recompute rules define-time
   checked (template composes into unique keys, e.g. no-double-book slots).
@@ -116,7 +117,16 @@ page linked in the site footer).
   sorting, keyset cursor paging, `select`, depth-1 `expand`, dotted related-field
   filters (parameterized EXISTS), `includeReverse`, aggregation
   (`count/sum/avg/min/max`, `groupBy` enum/relation with label resolution),
-  full-text `search_entries` over `searchable` fields.
+  full-text `search_entries` over `searchable` fields — **including text/richtext
+  SUB-FIELDS of a group/array** (DM-5): mark the prose leaf of a repeater or a
+  typed block `searchable:true` and both `search_entries` and delivery `?q=`
+  match inside it, so a page body needs no denormalised copy. Only the named
+  leaf is indexed, so a sibling (`type`, `pid`) never pollutes results, and a
+  hit is the **entry**, not the element. Delivery visibility follows the read
+  gate exactly — `publicRead` goes on the CONTAINER, and inside it a sub-field
+  is public by default and opts out with `publicRead:false` — so `?q=` can
+  never match prose the delivery API would not return. The other knobs still
+  do not recurse.
 - **Atomicity**: `update_entry_if` = CAS + increment in one statement;
   `transact([ops])` = interactive multi-op transaction with cross-op `$ref`s,
   `dryRun`, idempotency receipts.

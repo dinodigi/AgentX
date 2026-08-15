@@ -15,7 +15,7 @@ import { validateFieldDefs, collectionNameSchema } from "./validation";
 import { buildWhere, type WhereItem } from "./query";
 import { fieldMin, fieldMax, fieldPattern, fieldInteger, fieldLocalized, fieldWriteOnly, type FieldDef } from "./field-types";
 import { getLocales } from "./locales";
-import { publicSearchableFields, searchVectorText } from "./search";
+import { publicSearchableTargets, searchVectorText } from "./search";
 
 /**
  * Collection metadata changes rarely (only via define_collection or settings),
@@ -767,22 +767,25 @@ async function syncSearchIndex(
   oldFields: FieldDef[],
   newFields: FieldDef[],
 ): Promise<void> {
-  const key = (fs: FieldDef[]) =>
-    publicSearchableFields(fs)
-      .map((f) => `${f.name}:${f.type}`)
-      .sort()
-      .join(",");
-  if (key(oldFields) === key(newFields)) return; // subset unchanged
+  // The key IS the expression. It used to be `name:type` per public searchable
+  // field, which cannot see a nested toggle (DM-5): marking a sub-field
+  // searchable leaves its container's name and type untouched, so the subset
+  // read as unchanged, the index was never rebuilt, and the query would have
+  // used an expression the index no longer matched — a silent sequential scan
+  // with nothing failing. Comparing the emitted SQL makes drift impossible by
+  // construction, because the emitted SQL is exactly what has to stay in sync.
+  const key = (fs: FieldDef[]) => searchVectorText(publicSearchableTargets(fs));
+  const next = key(newFields);
+  if (key(oldFields) === next) return; // expression unchanged
 
   // Indexes live on the tenant DB's entries table (A1).
   const tdb = await tenantDb(projectId);
   const name = searchIndexName(collectionId);
   await tdb.execute(sql.raw(`DROP INDEX IF EXISTS "${name}"`));
-  const subset = publicSearchableFields(newFields);
-  if (subset.length > 0) {
+  if (next.length > 0) {
     await tdb.execute(
       sql.raw(
-        `CREATE INDEX IF NOT EXISTS "${name}" ON entries USING GIN ((${searchVectorText(subset)})) ` +
+        `CREATE INDEX IF NOT EXISTS "${name}" ON entries USING GIN ((${next})) ` +
           `WHERE collection_id = '${collectionId}'`,
       ),
     );
