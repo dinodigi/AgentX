@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { C, CTA } from "./atoms";
+import { FIELD_PRIMITIVE_COUNT } from "@/lib/platform-facts";
 
 /**
  * AgentX capability browser (Product Leaf.dc.html). A left rail of 8 areas +
@@ -36,7 +37,7 @@ agentx ◂ plan:
   ⚠ tighten title.max 80          (3 existing rows exceed)
 agent ▸ confirm
 agentx ◂ ok · schema v14 live`,
-    facts: ["8 primitives, closed vocabulary", "unique / min / max / pattern + hint", "computed: slugify · template · now · uuid", "localized {locale: value} maps"],
+    facts: [`${FIELD_PRIMITIVE_COUNT} primitives, closed vocabulary`, "unique / min / max / pattern + hint", "computed: slugify · template · now · uuid", "localized {locale: value} maps"],
     boundary: "Constraint tightening never silently breaks rows — define-time scans report every existing violation before you confirm. Pattern constraints are safe-regex checked at define time so runtime matching is provably bounded.",
   },
   {

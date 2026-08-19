@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { C, Eyebrow, StatusBadge } from "@/components/marketing/atoms";
 import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
+import { MCP_TOOL_COUNT, FIELD_PRIMITIVE_COUNT, SMOKE_TEST_FLOOR } from "@/lib/platform-facts";
 
 export const metadata = {
   title: "Products — Pluggie",
@@ -47,9 +48,9 @@ export default function Products() {
                 included, with none of your code hosted by us.
               </p>
               <div className="flex flex-wrap gap-5 font-mono text-[11.5px]" style={{ color: C.faint }}>
-                <span><span style={{ color: C.ink }}>42</span> MCP tools</span>
-                <span><span style={{ color: C.ink }}>8</span> field primitives</span>
-                <span><span style={{ color: C.ink }}>458</span> tests green</span>
+                <span><span style={{ color: C.ink }}>{MCP_TOOL_COUNT}</span> MCP tools</span>
+                <span><span style={{ color: C.ink }}>{FIELD_PRIMITIVE_COUNT}</span> field primitives</span>
+                <span><span style={{ color: C.ink }}>{SMOKE_TEST_FLOOR}+</span> tests green</span>
               </div>
               <span className="font-mono text-[13px]" style={{ color: C.accent }}>explore AgentX →</span>
             </div>

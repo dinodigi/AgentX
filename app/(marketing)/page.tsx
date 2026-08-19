@@ -4,6 +4,8 @@ import { Reveal } from "@/components/marketing/Reveal";
 import { Transcript } from "@/components/marketing/Transcript";
 import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
 import { CountUp } from "@/components/marketing/CountUp";
+import { FIELD_PRIMITIVE_COUNT } from "@/lib/platform-facts";
+import { MCP_TOOL_COUNT, DELIVERY_ENDPOINTS, SMOKE_TEST_FLOOR } from "@/lib/platform-facts";
 
 export const metadata = {
   title: "Pluggie — tools for the agent era",
@@ -12,7 +14,7 @@ export const metadata = {
 };
 
 const CAPS: { n: string; title: string; desc: string; slug: string }[] = [
-  { n: "001", title: "Data modeling", desc: "8 primitives, constraints, computed fields, schema diffs with plan + confirm.", slug: "data-modeling" },
+  { n: "001", title: "Data modeling", desc: `${FIELD_PRIMITIVE_COUNT} primitives, constraints, computed fields, schema diffs with plan + confirm.`, slug: "data-modeling" },
   { n: "002", title: "Delivery API", desc: "Per-field public reads, query power, keyword search, i18n, strong ETags.", slug: "delivery-api" },
   { n: "003", title: "Authorization", desc: "Fail-closed presets, BYO Clerk, owner rows, org scoping — no expressions.", slug: "authorization" },
   { n: "004", title: "Automation", desc: "Events, delayed actions, schedules, declarative state machines.", slug: "automation" },
@@ -63,15 +65,15 @@ export default function Landing() {
             </div>
             <div className="mt-2 flex flex-wrap gap-x-8 gap-y-3 border-t pt-5 font-mono text-xs" style={{ color: C.faint, borderColor: C.line }}>
               <span className="flex flex-col gap-0.5">
-                <span className="text-[19px] tabular-nums" style={{ color: C.ink }}><CountUp to={42} /></span>
+                <span className="text-[19px] tabular-nums" style={{ color: C.ink }}><CountUp to={MCP_TOOL_COUNT} /></span>
                 MCP tools
               </span>
               <span className="flex flex-col gap-0.5">
-                <span className="text-[19px] tabular-nums" style={{ color: C.ink }}><CountUp to={7} /></span>
+                <span className="text-[19px] tabular-nums" style={{ color: C.ink }}><CountUp to={DELIVERY_ENDPOINTS} /></span>
                 endpoint families
               </span>
               <span className="flex flex-col gap-0.5">
-                <span className="text-[19px] tabular-nums" style={{ color: C.ink }}><CountUp to={458} /></span>
+                <span className="text-[19px] tabular-nums" style={{ color: C.ink }}><><CountUp to={SMOKE_TEST_FLOOR} />+</></span>
                 smoke tests green
               </span>
             </div>
@@ -102,7 +104,7 @@ export default function Landing() {
               <h3 className="m-0 text-[19px] font-semibold">Agent defines the schema</h3>
               <p className="m-0 text-sm leading-[1.6]" style={{ color: C.mute }}>
                 One <span className="font-mono text-[12.5px]" style={{ color: C.accent }}>define_collection</span> call.
-                8 field primitives, constraints, computed fields, workflows — a closed, self-describing
+                {FIELD_PRIMITIVE_COUNT} field primitives, constraints, computed fields, workflows — a closed, self-describing
                 vocabulary agents can't misuse.
               </p>
               <div className={codeBox} style={{ background: C.panel, border: `1px solid ${C.line}`, color: C.mute }}>

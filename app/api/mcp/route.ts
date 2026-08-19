@@ -5,6 +5,7 @@ import { readBounded, MAX_MCP_BODY_BYTES } from "@/lib/http";
 import { TOOL_DEFS, callTool } from "@/lib/mcp/tools";
 import { ensureToolSurfaceNotice } from "@/lib/tool-surface";
 import { ERROR_CODES } from "@/lib/error-codes";
+import { MCP_CALLS_PER_WINDOW } from "@/lib/platform-facts";
 import { originFromHeaders } from "@/lib/origin";
 
 /**
@@ -122,7 +123,7 @@ export async function POST(req: NextRequest) {
   // under this; it caps a runaway loop or a compromised token. Fail-open, like
   // the delivery limiter — this protects capacity, not authorization. Applied
   // before the body read so a flood can't force the max-size buffering.
-  const mcpLimit = await rateLimit(`mcp:${projectId}`, { projectId, max: 300 });
+  const mcpLimit = await rateLimit(`mcp:${projectId}`, { projectId, max: MCP_CALLS_PER_WINDOW });
   if (!mcpLimit.allowed) {
     // Hatchly feedback: the throttle must be as parseable as every other error —
     // a stable E_ code + machine-readable retry hint, never prose a client has

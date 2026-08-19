@@ -1,6 +1,7 @@
 import { C, Eyebrow } from "@/components/marketing/atoms";
 import { BetaRequestForm } from "@/components/marketing/BetaRequestForm";
 import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
+import { MCP_TOOL_COUNT } from "@/lib/platform-facts";
 
 export const metadata = {
   title: "Pricing — $19/project, workspace free | Pluggie",
@@ -27,7 +28,7 @@ const TIERS: Tier[] = [
     points: [
       "Shared infrastructure",
       "1,000 entries · 20 collections · 100 MB media",
-      "All 42 agent tools + delivery API",
+      `All ${MCP_TOOL_COUNT} agent tools + delivery API`,
       "Upgrade in place when it gets real",
     ],
   },

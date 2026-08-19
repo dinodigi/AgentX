@@ -3,6 +3,7 @@ import { z } from "zod";
 import { objectExists, getObjectBytes, putObject, listPrefixKeys, type ProjectStorage } from "./r2";
 import { rateLimit } from "./ratelimit";
 import { ValidationError } from "./validation";
+import { IMAGE_TRANSFORMS_PER_WINDOW_PER_IP } from "./platform-facts";
 
 /**
  * On-demand image transforms (J1). GET /v1/assets/{id}/image?w=&h=&fit=&format=
@@ -27,7 +28,7 @@ export const DERIVATIVE_BUDGET = 40;
  * image-heavy page (gallery, catalogue) rather than for a single API caller —
  * see the note at the rate-limit call. Cached derivatives never reach it.
  */
-export const IMAGE_BURST_PER_IP = 120;
+export const IMAGE_BURST_PER_IP = IMAGE_TRANSFORMS_PER_WINDOW_PER_IP;
 
 const QUALITY = { webp: 80, jpeg: 82 } as const;
 

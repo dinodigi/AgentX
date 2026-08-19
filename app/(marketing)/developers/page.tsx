@@ -1,21 +1,13 @@
 import { C, Eyebrow } from "@/components/marketing/atoms";
 import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
+import { TOOL_GROUPS } from "@/lib/tool-groups";
+import { MCP_TOOL_COUNT } from "@/lib/platform-facts";
 
 export const metadata = {
   title: "Developers — the MCP tool surface | Pluggie",
-  description: "42 self-describing MCP tools, API conventions (E_* errors, ETags), and the generated typed client.",
+  description: `${MCP_TOOL_COUNT} self-describing MCP tools, API conventions (E_* errors, ETags), and the generated typed client.`,
 };
 
-const GROUPS: { label: string; tools: string }[] = [
-  { label: "SCHEMA", tools: "define_collection · list_collections · describe_collection · delete_collection" },
-  { label: "WRITES", tools: "create_entry · update_entry · update_entry_if · delete_entry · bulk_create_entries · transact" },
-  { label: "READS", tools: "query_entries · get_entry · count_entries · aggregate_entries · search_entries" },
-  { label: "SAFETY NET", tools: "list_trash · restore_entry · purge_entry · empty_trash · list_entry_versions · restore_entry_version" },
-  { label: "AUTOMATION", tools: "list_jobs · cancel_job · define_schedule · list_schedules · delete_schedule" },
-  { label: "OBSERVABILITY", tools: "get_deliveries · refire_delivery · get_audit_log · get_changes" },
-  { label: "PROJECT / META", tools: "get_project_info · list_field_types · list_connectors · get_client_code · set_locales" },
-  { label: "ASSETS · PORTABILITY · COMPUTE", tools: "upload_asset · list_assets · delete_asset · export_entries · export_project · import_project · test_hook" },
-];
 
 const CONVENTIONS: { title: string; body: React.ReactNode }[] = [
   {
@@ -70,16 +62,19 @@ export default function Developers() {
         <div className="mx-auto max-w-[1200px] px-8 py-16">
           <h2 className="mb-10 mt-0 text-[26px] font-bold tracking-[-0.02em]">
             The MCP tool surface{" "}
-            <span className="font-mono text-sm font-normal" style={{ color: C.faint }}>— 42 tools, 8 groups</span>
+            <span className="font-mono text-sm font-normal" style={{ color: C.faint }}>
+              — {MCP_TOOL_COUNT} tools, {TOOL_GROUPS.length} groups
+            </span>
           </h2>
           <div
             className="grid gap-px font-mono [grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))]"
             style={{ background: C.line, border: `1px solid ${C.line}` }}
           >
-            {GROUPS.map((g) => (
+            {TOOL_GROUPS.map((g) => (
               <div key={g.label} className="flex flex-col gap-2 px-6 py-5" style={{ background: C.page }}>
                 <span className="text-[11px] tracking-[0.1em]" style={{ color: C.accent }}>{g.label}</span>
-                <span className="text-xs leading-[1.9]" style={{ color: C.mute }}>{g.tools}</span>
+                <span className="text-[11px] leading-[1.6] not-italic" style={{ color: C.faint }}>{g.blurb}</span>
+                <span className="text-xs leading-[1.9]" style={{ color: C.mute }}>{g.tools.join(" · ")}</span>
               </div>
             ))}
           </div>

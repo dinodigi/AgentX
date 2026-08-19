@@ -2,11 +2,12 @@ import Link from "next/link";
 import { C, Eyebrow, CTA, StatusBadge } from "@/components/marketing/atoms";
 import { HeroBackdrop } from "@/components/marketing/HeroBackdrop";
 import { Reveal } from "@/components/marketing/Reveal";
+import { FIELD_PRIMITIVE_COUNT, MCP_TOOL_COUNT } from "@/lib/platform-facts";
 
 export const metadata = {
   title: "AgentX — the backend your agent builds over MCP | Pluggie",
   description:
-    "Point an agent at AgentX and describe the project. It defines the schema with 42 self-describing tools; a branded admin and a delivery API appear.",
+    `Point an agent at AgentX and describe the project. It defines the schema with ${MCP_TOOL_COUNT} self-describing tools; a branded admin and a delivery API appear.`,
 };
 
 const BEATS: { glyph: string; title: string; body: string }[] = [
@@ -28,7 +29,7 @@ const BEATS: { glyph: string; title: string; body: string }[] = [
 ];
 
 const AREAS: { n: string; title: string; desc: string; slug: string }[] = [
-  { n: "001", title: "Data modeling", desc: "8 primitives · constraints · computed fields · localized fields · schema evolution with plan + confirm", slug: "data-modeling" },
+  { n: "001", title: "Data modeling", desc: `${FIELD_PRIMITIVE_COUNT} primitives · constraints · computed fields · localized fields · schema evolution with plan + confirm`, slug: "data-modeling" },
   { n: "002", title: "Delivery API", desc: "per-field public reads · filters, expand, reverse embeds · keyword search · ?locale= · strong ETags", slug: "delivery-api" },
   { n: "003", title: "Authorization", desc: "fail-closed presets · BYO Clerk issuer · owner rows · org scoping · field-level writes", slug: "authorization" },
   { n: "004", title: "Automation", desc: "events → webhook/email · delayed actions · recurring schedules · declarative state machines", slug: "automation" },
@@ -56,7 +57,7 @@ export default function AgentXHub() {
             <span className="grad-accent">MCP</span>.
           </h1>
           <p className="m-0 max-w-[620px] text-[17px] leading-[1.65]" style={{ color: C.mute }}>
-            Point an agent at AgentX and describe the project. It defines the schema with 42 self-describing
+            Point an agent at AgentX and describe the project. It defines the schema with {MCP_TOOL_COUNT} self-describing
             tools; AgentX answers with a branded admin your client works in and a delivery API your site
             consumes. No per-project backend code — yours or ours.
           </p>

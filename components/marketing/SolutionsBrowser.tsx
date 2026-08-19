@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { C, Eyebrow } from "./atoms";
 import { HeroBackdrop } from "./HeroBackdrop";
+import { MCP_TOOL_COUNT } from "@/lib/platform-facts";
 
 /**
  * Solutions by use case (Solutions.dc.html). Tab row + a two-column body that
@@ -46,9 +47,9 @@ your code shipped: 0 lines of backend`,
     id: "ai-builders",
     title: "AI builders",
     headline: "The backend your agent can drive end-to-end. No human in the loop.",
-    body: "AgentX is MCP-native, not MCP-wrapped. All 42 tools are self-describing; every error carries structured ConstraintIssue[] with fix hints; destructive changes return a plan and wait for confirm. An agent can define the schema, seed content, wire automations, generate a typed client and repair its own mistakes — from the tool surface alone.",
+    body: `AgentX is MCP-native, not MCP-wrapped. All ${MCP_TOOL_COUNT} tools are self-describing; every error carries structured ConstraintIssue[] with fix hints; destructive changes return a plan and wait for confirm. An agent can define the schema, seed content, wire automations, generate a typed client and repair its own mistakes — from the tool surface alone.`,
     points: [
-      "42 tools, closed vocabulary — discoverable via list_field_types, describe_collection",
+      `${MCP_TOOL_COUNT} tools, closed vocabulary — discoverable via list_field_types, describe_collection`,
       "Machine-readable E_* errors with hints: agents self-repair from the response",
       "Idempotency keys and CAS writes: retries and races are safe by default",
       "transact with dryRun: plan a multi-op change before committing it",

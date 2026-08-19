@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { C } from "./atoms";
+import { MCP_TOOL_COUNT, SMOKE_TEST_FLOOR } from "@/lib/platform-facts";
 
 /** Marketing footer (Footer.dc.html): brand blurb + 4 link columns + status bar. */
 const COLS: { head: string; links: [string, string, boolean?][] }[] = [
@@ -61,7 +62,7 @@ export function Footer() {
             Backend tools for the agent era. Built by Currents Studio.
           </p>
           <p className="m-0 font-mono text-[11px]" style={{ color: C.fainter }}>
-            42 MCP tools · 458 smoke tests green
+            {MCP_TOOL_COUNT} MCP tools · {SMOKE_TEST_FLOOR}+ smoke tests green
           </p>
         </div>
         {COLS.map((col) => (

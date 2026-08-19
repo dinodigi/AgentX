@@ -1038,12 +1038,31 @@ describe("CONTRACT-3 — the budgets publish their model, not just their numbers
     // A published claim about tiering must be pinned to the mechanism, or a later
     // plan-aware change would silently make the contract false.
     const src = readFileSync("lib/ratelimit.ts", "utf8");
-    assert.match(src, /const MAX_PER_WINDOW = 20;/, "the default budget");
-    assert.ok(
-      !/\bplan\b/.test(src),
-      "lib/ratelimit.ts now references a plan — the contract says rate does not vary by tier, so either " +
-        "the limiter became plan-aware (update deliveryApi.limits) or something else crept in",
+    // The default budget is now OWNED by lib/platform-facts.ts, because the
+    // marketing site quotes it and a second hand-typed copy is how "42 tools"
+    // and "8 primitives" went stale. This assertion used to demand the literal
+    // `20` here; it now follows the indirection, and checks the VALUE at its
+    // source, so the published claim stays pinned to the real number either way.
+    assert.match(
+      src,
+      /const MAX_PER_WINDOW = DELIVERY_REQUESTS_PER_WINDOW;/,
+      "the default budget must come from platform-facts, which is what the public surfaces quote",
     );
+    const facts = readFileSync("lib/platform-facts.ts", "utf8");
+    const m = facts.match(/DELIVERY_REQUESTS_PER_WINDOW = (\d+)/);
+    assert.ok(m, "platform-facts must state the delivery budget");
+    assert.equal(Number(m[1]), 20, "the published figure is 20 per window — change the contract copy if this moves");
+    // A published claim about tiering must be pinned to the mechanism, or a later
+    // plan-aware change would silently make the contract false. Checked in BOTH
+    // files now, since the constant moved.
+    for (const [name, text] of [["lib/ratelimit.ts", src], ["lib/platform-facts.ts", facts]]) {
+      const code = text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      assert.ok(
+        !/\bplan\b/.test(code),
+        `${name} now references a plan — the contract says rate does not vary by tier, so either ` +
+          "the limiter became plan-aware (update deliveryApi.limits) or something else crept in",
+      );
+    }
   });
 
   it("convergence names the PER-URL edge cache as a third cause", () => {

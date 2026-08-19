@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { controlDb } from "@/db";
+import { DELIVERY_REQUESTS_PER_WINDOW, RATE_WINDOW_MS } from "./platform-facts";
 
 /**
  * Durable rate limiter (C2). Fixed one-minute windows in the control DB,
@@ -17,8 +18,11 @@ import { controlDb } from "@/db";
  * to attribute the hit; rollupUsage() folds expired windows into usage_daily.
  */
 
-const WINDOW_MS = 60_000;
-const MAX_PER_WINDOW = 20;
+// Both figures are OWNED by lib/platform-facts.ts, which is what the public
+// surfaces quote. Defining them here and hoping the website's copy matched is
+// exactly how "42 tools" and "8 primitives" went stale.
+const WINDOW_MS = RATE_WINDOW_MS;
+const MAX_PER_WINDOW = DELIVERY_REQUESTS_PER_WINDOW;
 
 export async function rateLimit(
   key: string,
