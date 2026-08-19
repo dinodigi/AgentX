@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { activeHref } from "@/lib/nav-active";
 import {
   Boxes,
   Code2,
@@ -45,8 +46,24 @@ export function WorkspaceSidebar({
 
   const inProject = Boolean(currentId);
 
+  // Every href this rail can render, so the ACTIVE one is chosen by longest
+  // match instead of each item deciding for itself — see lib/nav-active.ts.
+  const projectHrefs = currentId
+    ? ["", "/schema", "/assets", "/trash", "/plugins", "/appearance", "/connectors", "/api", "/settings"].map(
+        (seg) => `/admin/${currentId}${seg}`,
+      )
+    : [];
+  const workspaceHrefs = ["/admin", "/admin/workspace", "/admin/new", "/admin/console", "/admin/console/feedback", "/admin/console/plugins"];
+  // Overview is exact-only: a project's children include every collection, and
+  // the rail must not claim Overview while the reader is inside one.
+  const current = activeHref(
+    pathname,
+    currentId ? projectHrefs : workspaceHrefs,
+    currentId ? [`/admin/${currentId}`] : [],
+  );
+
   const item = (href: string, label: string, Icon: typeof Table2) => {
-    const active = pathname === href || pathname.startsWith(href + "/");
+    const active = href === current;
     return (
       <Link
         key={href}

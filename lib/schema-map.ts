@@ -87,6 +87,11 @@ export interface MapNode {
   hiddenFields: number;
   /** Total field count, so a compact node can still state its real size. */
   totalFields: number;
+  /**
+   * Every field, drawn or not — the detail panel needs them, and the panel is
+   * the reason compact density is acceptable: nothing is lost, only deferred.
+   */
+  allFields: MapField[];
   exposure: Exposure;
   hasAccessRules: boolean;
 }
@@ -102,9 +107,28 @@ export interface MapEdge {
   labelY: number;
 }
 
+/**
+ * An edge before it has geometry: which field on which collection points where,
+ * plus its position among that collection's relations (`i` of `n`) which is what
+ * spreads the departure points apart.
+ *
+ * Separated from the drawn edge so the CLIENT can rebuild every path after the
+ * user drags a node, using the same function the server used for the initial
+ * render. Two implementations of this arithmetic would drift immediately.
+ */
+export interface EdgeSpec {
+  from: string;
+  to: string;
+  field: string;
+  i: number;
+  n: number;
+}
+
 export interface SchemaMapLayout {
   nodes: MapNode[];
   edges: MapEdge[];
+  /** The edges without geometry, so a moved node can be re-routed client-side. */
+  specs: EdgeSpec[];
   width: number;
   height: number;
   /** Collections omitted in `public` mode because nothing in them is readable. */
@@ -198,6 +222,121 @@ function assignLayers(cols: MapCollection[]): { layers: Map<string, number>; cyc
   return { layers, cycles: [...cycles].sort() };
 }
 
+// ---------------------------------------------------------------- edge routing
+
+/** Which relation fields become edges, and where each sits among its siblings. */
+function edgeSpecs(cols: MapCollection[], drawn: Map<string, MapNode>): EdgeSpec[] {
+  const out: EdgeSpec[] = [];
+  for (const c of [...cols].sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!drawn.has(c.name)) continue;
+    const rels = c.fields.filter(isRelation);
+    rels.forEach((f, i) => {
+      const target = f.targetCollection as string;
+      if (target === c.name) return; // a self-edge has no two endpoints to draw
+      out.push({ from: c.name, to: target, field: f.name, i, n: rels.length });
+    });
+  }
+  return out;
+}
+
+/**
+ * Turn edge specs plus CURRENT node positions into drawn paths.
+ *
+ * Exported because the client calls it on every drag: the user moves a
+ * collection and its edges must re-route, using this exact arithmetic rather
+ * than a second copy that would drift from the server's initial render.
+ *
+ * Two passes.
+ *
+ * Pass 1 fixes each edge's SOURCE anchor, spread down the source's right edge so
+ * several relations from one collection stay distinguishable.
+ *
+ * Pass 2 fixes the TARGET anchors, and exists because the first version aimed
+ * every incoming edge at dst.y + dst.h/2 — one single point. On a real project
+ * fifteen relations pointed at `users`, so fifteen long curves converged into one
+ * spot and swept across the whole canvas as an unreadable fan. Spreading arrivals
+ * down the target's left edge, ordered by where they came from, keeps them
+ * parallel instead of collapsing them together.
+ *
+ * Then labels are de-collided. Found by rendering a real 17-collection schema and
+ * looking at it — every unit test passed while two labels sat one pixel apart.
+ */
+export function buildEdgePaths(nodes: MapNode[], specs: EdgeSpec[]): MapEdge[] {
+  const byName = new Map(nodes.map((n) => [n.name, n]));
+
+  interface Intent { from: string; to: string; field: string; x1: number; y1: number; }
+  const intents: Intent[] = [];
+  for (const spec of specs) {
+    const src = byName.get(spec.from);
+    if (!src) continue;
+    const spread = src.h / (spec.n + 1);
+    intents.push({
+      from: spec.from,
+      to: spec.to,
+      field: spec.field,
+      x1: src.x + src.w,
+      y1: src.y + spread * (spec.i + 1),
+    });
+  }
+
+  const incoming = new Map<string, Intent[]>();
+  for (const it of intents) {
+    const list = incoming.get(it.to) ?? [];
+    list.push(it);
+    incoming.set(it.to, list);
+  }
+
+  const edges: MapEdge[] = [];
+  for (const [target, list] of [...incoming.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    // No target lookup before this point on purpose: a target that is not drawn —
+    // dangling, or omitted by public mode — is skipped HERE, so an earlier check
+    // would be unreachable. A negative control caught exactly that once.
+    const dst = byName.get(target);
+    if (!dst) continue;
+    // Sorted by where the edge comes FROM, so arrivals keep the same vertical
+    // order as their departures and the curves do not cross each other.
+    const ordered = [...list].sort(
+      (a, b) => a.y1 - b.y1 || a.from.localeCompare(b.from) || a.field.localeCompare(b.field),
+    );
+    ordered.forEach((it, k) => {
+      const y2 = dst.y + (dst.h * (k + 1)) / (ordered.length + 1);
+      // Enter from whichever side faces the source, so a node dragged to the LEFT
+      // of its target still gets a sane arrow instead of a loop back on itself.
+      const fromLeft = it.x1 <= dst.x;
+      const x2 = fromLeft ? dst.x : dst.x + dst.w;
+      const bend = Math.max(34, Math.abs(x2 - it.x1) / 2) * (fromLeft ? 1 : -1);
+      edges.push({
+        from: it.from,
+        to: target,
+        field: it.field,
+        path: `M ${round(it.x1)} ${round(it.y1)} C ${round(it.x1 + bend)} ${round(it.y1)} ${round(x2 - bend)} ${round(y2)} ${round(x2)} ${round(y2)}`,
+        labelX: round(it.x1 + (x2 - it.x1) * 0.32),
+        labelY: round(it.y1 + (y2 - it.y1) * 0.2 - 4),
+      });
+    });
+  }
+
+  // De-collide labels. Greedy and order-stable: walk them in a fixed order and
+  // push any that lands on top of an already-placed one downward until clear.
+  // Bounded, so a pathological schema degrades to slight overlap rather than
+  // looping.
+  const placed: { x: number; y: number }[] = [];
+  const collides = (x: number, y: number): boolean =>
+    placed.some((q) => Math.abs(q.x - x) < LABEL_MIN_DX && Math.abs(q.y - y) < LABEL_MIN_DY);
+  for (const e of [...edges].sort(
+    (a, b) => a.labelX - b.labelX || a.labelY - b.labelY || a.field.localeCompare(b.field),
+  )) {
+    let tries = 0;
+    while (collides(e.labelX, e.labelY) && tries < 8) {
+      e.labelY = round(e.labelY + LABEL_MIN_DY);
+      tries++;
+    }
+    placed.push({ x: e.labelX, y: e.labelY });
+  }
+
+  return edges;
+}
+
 // ---------------------------------------------------------------- layout
 
 export function layoutSchemaMap(
@@ -286,6 +425,7 @@ export function layoutSchemaMap(
         rows: m.rows,
         hiddenFields: m.hiddenFields,
         totalFields: m.totalFields,
+        allFields: m.c.fields,
         exposure: exposureOf(m.c),
         hasAccessRules: m.c.hasAccessRules === true,
       };
@@ -297,88 +437,13 @@ export function layoutSchemaMap(
   });
   const columnCount = colGroups.length;
 
-  // Edges, in two passes.
-  //
-  // Pass 1 fixes each edge's SOURCE anchor, spread down the source's right edge
-  // so several relations from one collection stay distinguishable.
-  //
-  // Pass 2 fixes the TARGET anchors, and exists because the first version aimed
-  // every incoming edge at dst.y + dst.h/2 — one single point. On a real project
-  // fifteen relations pointed at `users`, so fifteen long curves converged into
-  // one spot and swept across the whole canvas as an unreadable fan. Spreading
-  // arrivals down the target's left edge, ordered by where they came from, keeps
-  // them parallel instead of collapsing them together.
-  interface Intent { from: string; to: string; field: string; x1: number; y1: number; }
-  const intents: Intent[] = [];
-  for (const c of [...cols].sort((a, b) => a.name.localeCompare(b.name))) {
-    const src = byName.get(c.name);
-    if (!src) continue;
-    const rels = c.fields.filter(isRelation);
-    rels.forEach((f, i) => {
-      const target = f.targetCollection as string;
-      if (target === c.name) return; // a self-edge has no two endpoints to draw
-      // No target lookup here on purpose. Pass 2 skips any target that is not
-      // drawn — dangling, or omitted by public mode — so a check here would be
-      // unreachable. A negative control caught exactly that: the line could be
-      // deleted and no test failed. One guard, and it is the one under test.
-      const spread = src.h / (rels.length + 1);
-      intents.push({ from: c.name, to: target, field: f.name, x1: src.x + src.w, y1: src.y + spread * (i + 1) });
-    });
-  }
-
-  const incoming = new Map<string, Intent[]>();
-  for (const it of intents) {
-    const list = incoming.get(it.to) ?? [];
-    list.push(it);
-    incoming.set(it.to, list);
-  }
-
-  const edges: MapEdge[] = [];
-  for (const [target, list] of [...incoming.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const dst = byName.get(target);
-    if (!dst) continue;
-    // Sorted by where the edge comes FROM, so arrivals keep the same vertical
-    // order as their departures and the curves do not cross each other.
-    const ordered = [...list].sort((a, b) => a.y1 - b.y1 || a.from.localeCompare(b.from) || a.field.localeCompare(b.field));
-    ordered.forEach((it, k) => {
-      const y2 = dst.y + (dst.h * (k + 1)) / (ordered.length + 1);
-      const x2 = dst.x;
-      const bend = Math.max(34, (x2 - it.x1) / 2);
-      edges.push({
-        from: it.from,
-        to: target,
-        field: it.field,
-        path: `M ${round(it.x1)} ${round(it.y1)} C ${round(it.x1 + bend)} ${round(it.y1)} ${round(x2 - bend)} ${round(y2)} ${round(x2)} ${round(y2)}`,
-        // Placed at ~a third of the way along rather than the midpoint: source
-        // anchors are already spread by edge index, so staying near them keeps
-        // labels apart, while midpoints converge wherever several edges do.
-        labelX: round(it.x1 + (x2 - it.x1) * 0.32),
-        labelY: round(it.y1 + (y2 - it.y1) * 0.2 - 4),
-      });
-    });
-  }
-
-  // De-collide labels. Greedy and order-stable: walk them in a fixed order and
-  // push any that lands on top of an already-placed one downward until clear.
-  // Bounded, so a pathological schema degrades to slight overlap rather than
-  // looping. Found by rendering a real 17-collection schema and looking at it —
-  // every unit test passed while two labels sat one pixel apart.
-  const placed: { x: number; y: number }[] = [];
-  const collides = (x: number, y: number): boolean =>
-    placed.some((q) => Math.abs(q.x - x) < LABEL_MIN_DX && Math.abs(q.y - y) < LABEL_MIN_DY);
-  for (const e of [...edges].sort((a, b) => a.labelX - b.labelX || a.labelY - b.labelY || a.field.localeCompare(b.field))) {
-    let tries = 0;
-    while (collides(e.labelX, e.labelY) && tries < 8) {
-      e.labelY = round(e.labelY + LABEL_MIN_DY);
-      tries++;
-    }
-    placed.push({ x: e.labelX, y: e.labelY });
-  }
-
+  const specs = edgeSpecs(cols, byName);
+  const edges = buildEdgePaths(nodes, specs);
   const width = MARGIN_X * 2 + columnCount * NODE_W + Math.max(0, columnCount - 1) * COL_GAP;
   return {
     nodes,
     edges,
+    specs,
     width: Math.max(width, 320),
     height: Math.max(height - ROW_GAP + MARGIN_Y, 120),
     omitted,

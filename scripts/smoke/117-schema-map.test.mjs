@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { layoutSchemaMap, summarize } from "../../lib/schema-map.ts";
+import { layoutSchemaMap, summarize, buildEdgePaths } from "../../lib/schema-map.ts";
 
 // The schema map lays the content model out as a graph.
 //
@@ -370,5 +370,79 @@ describe("schema map: the public-surface view is a security statement", () => {
     assert.match(s, /1 relation\b/);
     assert.match(s, /2 publicly readable/);
     assert.match(s, /1 accepting anonymous writes/);
+  });
+});
+
+// Dragging a collection is a client-side act, but it must not be able to produce
+// a drawing the server could never produce — so the client re-routes through the
+// SAME buildEdgePaths, and these assert the properties that has to preserve.
+describe("schema map: re-routing after a node is moved", () => {
+  const COLS = [
+    { name: "users", fields: [{ name: "email", type: "text" }] },
+    { name: "orders", fields: [{ name: "buyer", type: "relation", targetCollection: "users" }] },
+    { name: "invoices", fields: [{ name: "order", type: "relation", targetCollection: "orders" }] },
+  ];
+
+  it("re-routing an unmoved layout reproduces the original edges exactly", () => {
+    // The guarantee that makes one shared function worthwhile: server render and
+    // client re-render agree byte for byte when nothing has moved.
+    const l = layoutSchemaMap(COLS);
+    assert.deepEqual(buildEdgePaths(l.nodes, l.specs), l.edges);
+  });
+
+  it("moving a node moves its edge endpoints with it, in BOTH axes", () => {
+    // The first version of this only checked the vertical endpoint, so a control
+    // that pinned x1 to a constant passed it. A half-checked coordinate is a
+    // half-tested guard.
+    const l = layoutSchemaMap(COLS);
+    const start = (p) => p.match(/^M ([\d.-]+) ([\d.-]+)/).slice(1).map(Number);
+    const before = start(buildEdgePaths(l.nodes, l.specs).find((e) => e.from === "orders").path);
+    const DX = 140;
+    const DY = 260;
+    const moved = l.nodes.map((n) => (n.name === "orders" ? { ...n, x: n.x + DX, y: n.y + DY } : n));
+    const after = start(buildEdgePaths(moved, l.specs).find((e) => e.from === "orders").path);
+    assert.ok(
+      Math.abs(after[0] - before[0] - DX) < 1,
+      `departure x must move with the node: expected +${DX}, got ${(after[0] - before[0]).toFixed(1)}`,
+    );
+    assert.ok(
+      Math.abs(after[1] - before[1] - DY) < 1,
+      `departure y must move with the node: expected +${DY}, got ${(after[1] - before[1]).toFixed(1)}`,
+    );
+  });
+
+  it("dragging a node to the LEFT of its target still yields a sane arrow", () => {
+    // The layered layout guarantees left-to-right; dragging does not. Without
+    // side-aware entry the curve would loop back through the target's own box.
+    const l = layoutSchemaMap(COLS);
+    const users = l.nodes.find((n) => n.name === "users");
+    const moved = l.nodes.map((n) => (n.name === "orders" ? { ...n, x: users.x + 900 } : n));
+    const e = buildEdgePaths(moved, l.specs).find((e) => e.from === "orders" && e.to === "users");
+    const endX = Number(e.path.trim().split(/\s+/).slice(-2)[0]);
+    assert.ok(
+      Math.abs(endX - (users.x + users.w)) < 1,
+      `an edge arriving from the right must enter the target's RIGHT edge (got ${endX}, right edge ${users.x + users.w})`,
+    );
+  });
+
+  it("re-routing is pure — it does not mutate the nodes it is given", () => {
+    const l = layoutSchemaMap(COLS);
+    const snapshot = JSON.stringify(l.nodes);
+    buildEdgePaths(l.nodes, l.specs);
+    assert.equal(JSON.stringify(l.nodes), snapshot, "a re-route must never move a node as a side effect");
+  });
+
+  it("every node carries its full field list for the detail panel", () => {
+    // Compact density is only acceptable because nothing is lost — the panel can
+    // still show every field. If allFields were the DRAWN subset, compact would
+    // silently hide data.
+    const l = layoutSchemaMap(
+      [{ name: "wide", fields: [{ name: "a", type: "text" }, { name: "b", type: "text" }, { name: "c", type: "text" }] }],
+      "model",
+      "compact",
+    );
+    const n = l.nodes[0];
+    assert.equal(n.rows.length, 0, "compact draws no rows for a relation-free collection");
+    assert.deepEqual(n.allFields.map((f) => f.name), ["a", "b", "c"], "…but the panel can still list them");
   });
 });

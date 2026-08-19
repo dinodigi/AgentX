@@ -10,6 +10,7 @@ import { projectConnectors } from "@/db/schema";
 import { decryptSecret } from "./crypto";
 import { migrateTenantDb } from "./tenant-migrations";
 import type { DbExecutor } from "./db-tx";
+import { unstable_cache } from "next/cache";
 
 /**
  * The per-project data-plane resolver (A1). Control-plane tables use `controlDb`
@@ -181,12 +182,31 @@ export interface TenantContentStats {
  * scale). An unreachable/quarantined tenant DB yields zeros rather than a
  * crashed dashboard — its connector's error status is the visible signal.
  */
-export async function tenantContentStats(projectIds: string[]): Promise<Map<string, TenantContentStats>> {
-  const out = new Map<string, TenantContentStats>();
-  await Promise.all(
-    projectIds.map(async (pid) => {
+/**
+ * CACHED, per project, 60s.
+ *
+ * Operator report: navigating back to the project list was laggy. Measured
+ * cause — one workspace had EIGHTEEN connector-backed projects, so every
+ * dashboard render fanned out to eighteen separate tenant databases and ran two
+ * aggregates in each, one of them a `sum(pg_column_size(data))` that scans every
+ * row. Thirty-six queries across eighteen endpoints, any of which may be cold,
+ * on a page people hit constantly.
+ *
+ * These are dashboard STATS — an entry count, stored bytes, a last-activity
+ * stamp. None of it is a correctness gate, so it is exactly the class of read
+ * that tolerates being a minute stale, and the fresh-read rule (which governs
+ * gates, not summaries) does not apply.
+ *
+ * Cached PER PROJECT rather than per request set, so the console and the fleet
+ * dashboard share entries instead of each warming its own. Carries a
+ * `revalidate` TTL per the repo convention: the fleet runs multiple instances
+ * and revalidateTag is per-instance, so a TTL is what actually converges them.
+ */
+function cachedStatsFor(projectId: string) {
+  return unstable_cache(
+    async (): Promise<TenantContentStats> => {
       try {
-        const tdb = await tenantDb(pid);
+        const tdb = await tenantDb(projectId);
         const [[row], [bytes]] = await Promise.all([
           tdb
             .select({
@@ -195,21 +215,34 @@ export async function tenantContentStats(projectIds: string[]): Promise<Map<stri
               dataBytes: sql<string>`coalesce(sum(pg_column_size(${schema.entries.data})), 0)`,
             })
             .from(schema.entries)
-            .where(eq(schema.entries.projectId, pid)),
+            .where(eq(schema.entries.projectId, projectId)),
           tdb
             .select({ total: sql<string>`coalesce(sum(${schema.assets.size}::bigint), 0)` })
             .from(schema.assets)
-            .where(eq(schema.assets.projectId, pid)),
+            .where(eq(schema.assets.projectId, projectId)),
         ]);
-        out.set(pid, {
+        return {
           entries: Number(row?.n ?? 0),
           assetBytes: Number(bytes?.total ?? 0),
           dataBytes: Number(row?.dataBytes ?? 0),
           lastActivity: row?.last ? new Date(row.last).toISOString() : null,
-        });
+        };
       } catch {
-        out.set(pid, { entries: 0, assetBytes: 0, dataBytes: 0, lastActivity: null });
+        // An unreachable or quarantined tenant DB yields zeros rather than a
+        // crashed dashboard — its connector's error status is the visible signal.
+        return { entries: 0, assetBytes: 0, dataBytes: 0, lastActivity: null };
       }
+    },
+    ["tenant-content-stats", projectId],
+    { tags: [`tenant-stats:${projectId}`], revalidate: 60 },
+  );
+}
+
+export async function tenantContentStats(projectIds: string[]): Promise<Map<string, TenantContentStats>> {
+  const out = new Map<string, TenantContentStats>();
+  await Promise.all(
+    projectIds.map(async (pid) => {
+      out.set(pid, await cachedStatsFor(pid)());
     }),
   );
   return out;

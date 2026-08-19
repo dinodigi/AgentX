@@ -1,21 +1,20 @@
 import Link from "next/link";
-import type { MapMode, MapDensity, SchemaMapLayout, MapNode, Exposure } from "@/lib/schema-map";
+import type { MapMode, MapDensity, SchemaMapLayout, Exposure } from "@/lib/schema-map";
+import { SchemaCanvas } from "./SchemaCanvas";
 
 /**
  * The schema map, rendered server-side as inline SVG — no client JS, no graph
  * library, no runtime layout. `lib/schema-map.ts` decides every coordinate; this
  * file only draws, which is why the layout is unit-testable on its own.
  *
- * IT IS A CANVAS, NOT A FIGURE. The first version put the SVG in a card inside
- * the page flow with `max-width: 100%`, which scaled a 2240px map down to the
- * column width — every label shrank to unreadable and the whole thing looked
- * cramped inside a lot of empty page. So the map now renders at its NATURAL size
- * inside a scrollable region that fills the viewport, the way a diagram tool
- * behaves: you pan it rather than squint at it.
+ * This is the CHROME: header, switches, legend, and the empty states. The
+ * drawing itself lives in SchemaCanvas, a client component, because pan/zoom/drag
+ * and a detail panel need state. The split keeps the server doing the layout —
+ * deterministic and unit-tested — and the client only moving things afterwards.
  *
- * The mode switch is a LINK, not a toggle, so the whole view stays a server
- * render and each mode is a shareable URL — useful when the public-surface view
- * is the thing you want to send someone.
+ * The mode and density switches are LINKS, not toggles, so each view stays a
+ * server render and a shareable URL — useful when the public-surface view is the
+ * thing you want to send someone.
  */
 
 const EXPOSURE_LABEL: Record<Exposure, string> = {
@@ -30,39 +29,6 @@ const EXPOSURE_FILL: Record<Exposure, string> = {
   intake: "var(--color-accent)",
   private: "var(--color-line-strong)",
 };
-
-function FieldRows({ n, density }: { n: MapNode; density: MapDensity }) {
-  return (
-    <g fontSize="10.5">
-      {n.rows.map((f, i) => {
-        const y = n.y + 24 + 11 + i * 15;
-        const rel = f.type === "relation";
-        const marks =
-          (f.unique ? " ◆" : "") + (f.indexed ? " ⌘" : "") + (f.searchable ? " ⌕" : "");
-        return (
-          <text key={f.name} x={n.x + 10} y={y}>
-            {/* Name at full ink, type muted — the first version had both at low
-                contrast, which read as grey mush at a glance. */}
-            <tspan fill={rel ? "var(--color-accent)" : "var(--color-ink)"}>{f.name}</tspan>
-            <tspan fill="var(--color-ink-mute)">
-              {"  "}
-              {f.type}
-              {marks}
-            </tspan>
-          </text>
-        );
-      })}
-      {n.hiddenFields > 0 && (
-        <text x={n.x + 10} y={n.y + 24 + 11 + n.rows.length * 15} fill="var(--color-line-strong)">
-          {/* Compact states the collection's real size rather than a remainder —
-              "12 fields" is information; "+ 12 more" only makes sense when some
-              were listed. */}
-          {density === "compact" ? `${n.totalFields} fields` : `+ ${n.hiddenFields} more`}
-        </text>
-      )}
-    </g>
-  );
-}
 
 export function SchemaMap({
   layout,
@@ -164,98 +130,14 @@ export function SchemaMap({
           </p>
         </div>
       ) : (
-        <div
-          className="min-h-0 flex-1 overflow-auto"
-          style={{
-            // A faint dot grid: reads as a canvas surface rather than a page, and
-            // gives the eye a fixed reference while panning.
-            backgroundImage: "radial-gradient(circle, var(--color-line) 1px, transparent 1px)",
-            backgroundSize: "24px 24px",
-            backgroundPosition: "-1px -1px",
-          }}
-        >
-          <svg
-            viewBox={`0 0 ${layout.width} ${layout.height}`}
-            width={layout.width}
-            height={layout.height}
-            role="img"
-            aria-label={`Schema map: ${summary}. ${layout.edges
-              .map((e) => `${e.from}.${e.field} references ${e.to}`)
-              .join("; ")}`}
-            className="block"
-          >
-            <defs>
-              <marker
-                id="sm-arrow"
-                viewBox="0 0 10 10"
-                refX="9"
-                refY="5"
-                markerWidth="7"
-                markerHeight="7"
-                orient="auto-start-reverse"
-              >
-                <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--color-accent)" />
-              </marker>
-            </defs>
-
-            {/* Edges first — nodes are opaque and paint over any crossing. */}
-            <g fill="none" stroke="var(--color-accent)" strokeWidth="1.25" opacity="0.75" markerEnd="url(#sm-arrow)">
-              {layout.edges.map((e) => (
-                <path key={`${e.from}.${e.field}->${e.to}`} d={e.path} />
-              ))}
-            </g>
-            <g
-              fontFamily="var(--font-mono)"
-              fontSize="10"
-              fill="var(--color-accent)"
-              paintOrder="stroke"
-              stroke="var(--color-paper)"
-              strokeWidth="4"
-              strokeLinejoin="round"
-            >
-              {layout.edges.map((e) => (
-                <text key={`l-${e.from}.${e.field}->${e.to}`} x={e.labelX} y={e.labelY} textAnchor="middle">
-                  {e.field}
-                </text>
-              ))}
-            </g>
-
-            <g fontFamily="var(--font-mono)">
-              {layout.nodes.map((n) => (
-                <g key={n.name}>
-                  <title>
-                    {n.name} — {EXPOSURE_LABEL[n.exposure]}
-                    {n.hasAccessRules ? ", access rules applied" : ""}
-                  </title>
-                  <rect
-                    x={n.x}
-                    y={n.y}
-                    width={n.w}
-                    height={n.h}
-                    rx="5"
-                    fill="var(--color-card)"
-                    stroke="var(--color-line-strong)"
-                  />
-                  <rect x={n.x} y={n.y} width={n.w} height="24" rx="5" fill="var(--color-raised)" />
-                  <line x1={n.x} y1={n.y + 24} x2={n.x + n.w} y2={n.y + 24} stroke="var(--color-line)" />
-                  {/* Exposure is encoded in FORM as well as color: a filled bar on
-                      the header's left edge, so it survives a greyscale print and
-                      does not rely on hue alone. */}
-                  <rect x={n.x} y={n.y} width="3.5" height="24" fill={EXPOSURE_FILL[n.exposure]} />
-                  <text x={n.x + 13} y={n.y + 16} fontSize="11.5" fontWeight="700" fill="var(--color-ink)">
-                    {n.name}
-                  </text>
-                  {n.hasAccessRules && (
-                    <text x={n.x + n.w - 9} y={n.y + 16} fontSize="9" textAnchor="end" fill="var(--color-line-strong)">
-                      access
-                    </text>
-                  )}
-                  <FieldRows n={n} density={density} />
-                </g>
-              ))}
-            </g>
-          </svg>
-        </div>
+        <SchemaCanvas
+          initialNodes={layout.nodes}
+          specs={layout.specs}
+          width={layout.width}
+          height={layout.height}
+          density={density}
+          storageKey={`pluggie:schema-map:${projectId}:${mode}:${density}`}
+        />
       )}
 
       {/* ---- footer: legend + the two things the layout has to admit ---- */}
