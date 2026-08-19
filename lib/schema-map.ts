@@ -53,6 +53,21 @@ export interface MapCollection {
  */
 export type MapMode = "model" | "public";
 
+/**
+ * How much of each collection to draw — an axis independent of `mode`.
+ *
+ * `compact` is the default and draws STRUCTURE: the relation fields (which are
+ * the edges) plus a count of everything else. `detailed` lists fields.
+ *
+ * This exists because node height drives the whole layout. Listing eight fields
+ * per collection made every box ~150px tall, which on a 25-collection project
+ * forced the columns to wrap, which in turn made 27 of 31 edges span two or more
+ * columns — so most edges had to pass behind unrelated boxes, vanishing and
+ * reappearing. Compact boxes shorten the columns, which shortens the edges,
+ * which is the only thing that actually reduces the tangle.
+ */
+export type MapDensity = "compact" | "detailed";
+
 // ---------------------------------------------------------------- output shapes
 
 /** How a collection is exposed on the delivery API — encoded on the node. */
@@ -66,10 +81,12 @@ export interface MapNode {
   h: number;
   /** 0 = references nothing; higher = further from the leaves. */
   layer: number;
-  /** Rows actually drawn (capped — see FIELD_ROW_CAP). */
+  /** Rows actually drawn. */
   rows: MapField[];
   /** How many fields were not drawn. */
   hiddenFields: number;
+  /** Total field count, so a compact node can still state its real size. */
+  totalFields: number;
   exposure: Exposure;
   hasAccessRules: boolean;
 }
@@ -103,14 +120,23 @@ export interface SchemaMapLayout {
 
 // ---------------------------------------------------------------- geometry
 
-const NODE_W = 178;
+const NODE_W = 190;
 const HEADER_H = 24;
 const ROW_H = 15;
 const NODE_PAD_BOTTOM = 9;
-const COL_GAP = 58;
-const ROW_GAP = 26;
-const MARGIN_X = 16;
-const MARGIN_Y = 20;
+const COL_GAP = 96;
+const ROW_GAP = 36;
+const MARGIN_X = 24;
+const MARGIN_Y = 24;
+/**
+ * A layer taller than this WRAPS into balanced sub-columns.
+ *
+ * Without it the map is a function of dependency depth alone, which on a real
+ * 25-collection project put nine nodes in one column and ran ~1900px down the
+ * page while two thirds of the canvas width sat empty. Wrapping trades height
+ * for width, which is the axis a screen actually has.
+ */
+const WRAP_HEIGHT = 820;
 /** Two edge labels closer than this in BOTH axes are unreadable. */
 const LABEL_MIN_DX = 34;
 const LABEL_MIN_DY = 12;
@@ -174,7 +200,11 @@ function assignLayers(cols: MapCollection[]): { layers: Map<string, number>; cyc
 
 // ---------------------------------------------------------------- layout
 
-export function layoutSchemaMap(collections: MapCollection[], mode: MapMode = "model"): SchemaMapLayout {
+export function layoutSchemaMap(
+  collections: MapCollection[],
+  mode: MapMode = "model",
+  density: MapDensity = "compact",
+): SchemaMapLayout {
   const omitted: string[] = [];
 
   // In public mode, keep only what the delivery API would serve anonymously.
@@ -199,44 +229,87 @@ export function layoutSchemaMap(collections: MapCollection[], mode: MapMode = "m
   const { layers, cycles } = assignLayers(cols);
   const maxLayer = cols.reduce((m, c) => Math.max(m, layers.get(c.name) ?? 0), 0);
 
-  // Group by column. x is mirrored so the HIGHEST layer sits leftmost.
-  const columns: MapCollection[][] = Array.from({ length: maxLayer + 1 }, () => []);
+  // Group by layer, alphabetically within it so the order is stable.
+  const byLayer: MapCollection[][] = Array.from({ length: maxLayer + 1 }, () => []);
   for (const c of [...cols].sort((a, b) => a.name.localeCompare(b.name))) {
-    columns[layers.get(c.name) ?? 0].push(c);
+    byLayer[layers.get(c.name) ?? 0].push(c);
+  }
+
+  const measure = (c: MapCollection) => {
+    // Compact keeps the relations — they are the edges, so hiding them would make
+    // the arrows unattributable — and summarises the rest as a count.
+    const rows = density === "compact" ? c.fields.filter(isRelation) : c.fields.slice(0, FIELD_ROW_CAP);
+    const hiddenFields = Math.max(0, c.fields.length - rows.length);
+    return { c, rows, hiddenFields, totalFields: c.fields.length, h: nodeHeight(rows.length, hiddenFields > 0) };
+  };
+  type Measured = ReturnType<typeof measure>;
+
+  // Build the column list, layers from highest to lowest so referrers stay LEFT
+  // of what they reference. A layer taller than WRAP_HEIGHT splits into balanced
+  // sub-columns; because every sub-column of a layer still precedes every column
+  // of the next, the left-to-right invariant holds and arrows never turn back.
+  const colGroups: { layer: number; items: Measured[] }[] = [];
+  for (let layer = maxLayer; layer >= 0; layer--) {
+    const items = byLayer[layer].map(measure);
+    if (items.length === 0) continue;
+    const total = items.reduce((sum, m) => sum + m.h + ROW_GAP, 0) - ROW_GAP;
+    const chunks = Math.max(1, Math.ceil(total / WRAP_HEIGHT));
+    const target = total / chunks;
+    const perChunk: Measured[][] = Array.from({ length: chunks }, () => []);
+    const filled = new Array(chunks).fill(0);
+    let ci = 0;
+    for (const m of items) {
+      // Move on once this sub-column has taken its share, but never leave a
+      // later one empty — that would reintroduce the unbalanced shape.
+      if (filled[ci] > 0 && filled[ci] + m.h > target && ci < chunks - 1) ci++;
+      perChunk[ci].push(m);
+      filled[ci] += m.h + ROW_GAP;
+    }
+    for (const chunk of perChunk) if (chunk.length > 0) colGroups.push({ layer, items: chunk });
   }
 
   const nodes: MapNode[] = [];
   const byName = new Map<string, MapNode>();
   let height = 0;
 
-  for (let layer = 0; layer <= maxLayer; layer++) {
-    const x = MARGIN_X + (maxLayer - layer) * (NODE_W + COL_GAP);
+  colGroups.forEach((group, ci) => {
+    const x = MARGIN_X + ci * (NODE_W + COL_GAP);
     let y = MARGIN_Y;
-    for (const c of columns[layer]) {
-      const rows = c.fields.slice(0, FIELD_ROW_CAP);
-      const hiddenFields = Math.max(0, c.fields.length - rows.length);
-      const h = nodeHeight(rows.length, hiddenFields > 0);
+    for (const m of group.items) {
       const node: MapNode = {
-        name: c.name,
+        name: m.c.name,
         x,
         y,
         w: NODE_W,
-        h,
-        layer,
-        rows,
-        hiddenFields,
-        exposure: exposureOf(c),
-        hasAccessRules: c.hasAccessRules === true,
+        h: m.h,
+        layer: group.layer,
+        rows: m.rows,
+        hiddenFields: m.hiddenFields,
+        totalFields: m.totalFields,
+        exposure: exposureOf(m.c),
+        hasAccessRules: m.c.hasAccessRules === true,
       };
       nodes.push(node);
-      byName.set(c.name, node);
-      y += h + ROW_GAP;
+      byName.set(m.c.name, node);
+      y += m.h + ROW_GAP;
       height = Math.max(height, y);
     }
-  }
+  });
+  const columnCount = colGroups.length;
 
-  // Edges: one per relation field, in a stable order.
-  const edges: MapEdge[] = [];
+  // Edges, in two passes.
+  //
+  // Pass 1 fixes each edge's SOURCE anchor, spread down the source's right edge
+  // so several relations from one collection stay distinguishable.
+  //
+  // Pass 2 fixes the TARGET anchors, and exists because the first version aimed
+  // every incoming edge at dst.y + dst.h/2 — one single point. On a real project
+  // fifteen relations pointed at `users`, so fifteen long curves converged into
+  // one spot and swept across the whole canvas as an unreadable fan. Spreading
+  // arrivals down the target's left edge, ordered by where they came from, keeps
+  // them parallel instead of collapsing them together.
+  interface Intent { from: string; to: string; field: string; x1: number; y1: number; }
+  const intents: Intent[] = [];
   for (const c of [...cols].sort((a, b) => a.name.localeCompare(b.name))) {
     const src = byName.get(c.name);
     if (!src) continue;
@@ -244,30 +317,43 @@ export function layoutSchemaMap(collections: MapCollection[], mode: MapMode = "m
     rels.forEach((f, i) => {
       const target = f.targetCollection as string;
       if (target === c.name) return; // a self-edge has no two endpoints to draw
-      // `byName` holds only DRAWN nodes, so this one guard covers both a dangling
-      // target and one omitted by public mode. An arrow to nowhere is worse than
-      // no arrow, and a negative control proved a second check here was dead code.
-      const dst = byName.get(target);
-      if (!dst) return;
-
-      // Anchor each edge at a distinct height on the source so parallel edges
-      // between the same pair of columns stay distinguishable.
+      // No target lookup here on purpose. Pass 2 skips any target that is not
+      // drawn — dangling, or omitted by public mode — so a check here would be
+      // unreachable. A negative control caught exactly that: the line could be
+      // deleted and no test failed. One guard, and it is the one under test.
       const spread = src.h / (rels.length + 1);
-      const y1 = src.y + spread * (i + 1);
-      const x1 = src.x + src.w;
+      intents.push({ from: c.name, to: target, field: f.name, x1: src.x + src.w, y1: src.y + spread * (i + 1) });
+    });
+  }
+
+  const incoming = new Map<string, Intent[]>();
+  for (const it of intents) {
+    const list = incoming.get(it.to) ?? [];
+    list.push(it);
+    incoming.set(it.to, list);
+  }
+
+  const edges: MapEdge[] = [];
+  for (const [target, list] of [...incoming.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const dst = byName.get(target);
+    if (!dst) continue;
+    // Sorted by where the edge comes FROM, so arrivals keep the same vertical
+    // order as their departures and the curves do not cross each other.
+    const ordered = [...list].sort((a, b) => a.y1 - b.y1 || a.from.localeCompare(b.from) || a.field.localeCompare(b.field));
+    ordered.forEach((it, k) => {
+      const y2 = dst.y + (dst.h * (k + 1)) / (ordered.length + 1);
       const x2 = dst.x;
-      const y2 = dst.y + dst.h / 2;
-      const bend = Math.max(28, (x2 - x1) / 2);
+      const bend = Math.max(34, (x2 - it.x1) / 2);
       edges.push({
-        from: c.name,
+        from: it.from,
         to: target,
-        field: f.name,
-        path: `M ${round(x1)} ${round(y1)} C ${round(x1 + bend)} ${round(y1)} ${round(x2 - bend)} ${round(y2)} ${round(x2)} ${round(y2)}`,
+        field: it.field,
+        path: `M ${round(it.x1)} ${round(it.y1)} C ${round(it.x1 + bend)} ${round(it.y1)} ${round(x2 - bend)} ${round(y2)} ${round(x2)} ${round(y2)}`,
         // Placed at ~a third of the way along rather than the midpoint: source
         // anchors are already spread by edge index, so staying near them keeps
         // labels apart, while midpoints converge wherever several edges do.
-        labelX: round(x1 + (x2 - x1) * 0.32),
-        labelY: round(y1 + (y2 - y1) * 0.2 - 4),
+        labelX: round(it.x1 + (x2 - it.x1) * 0.32),
+        labelY: round(it.y1 + (y2 - it.y1) * 0.2 - 4),
       });
     });
   }
@@ -289,7 +375,7 @@ export function layoutSchemaMap(collections: MapCollection[], mode: MapMode = "m
     placed.push({ x: e.labelX, y: e.labelY });
   }
 
-  const width = MARGIN_X * 2 + (maxLayer + 1) * NODE_W + maxLayer * COL_GAP;
+  const width = MARGIN_X * 2 + columnCount * NODE_W + Math.max(0, columnCount - 1) * COL_GAP;
   return {
     nodes,
     edges,

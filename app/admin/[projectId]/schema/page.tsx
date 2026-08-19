@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { getProject } from "@/lib/admin";
 import { listCollections } from "@/lib/collections";
-import { layoutSchemaMap, summarize, type MapCollection, type MapMode } from "@/lib/schema-map";
+import { layoutSchemaMap, summarize, type MapCollection, type MapMode, type MapDensity } from "@/lib/schema-map";
 import { SchemaMap } from "@/components/admin/SchemaMap";
 
 /**
@@ -20,14 +20,15 @@ export default async function SchemaPage({
   searchParams,
 }: {
   params: Promise<{ projectId: string }>;
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; density?: string }>;
 }) {
   const { projectId } = await params;
-  const { view } = await searchParams;
+  const { view, density: densityParam } = await searchParams;
   const [project, collections] = await Promise.all([getProject(projectId), listCollections(projectId)]);
   if (!project) notFound();
 
   const mode: MapMode = view === "public" ? "public" : "model";
+  const density: MapDensity = densityParam === "detailed" ? "detailed" : "compact";
 
   // Narrow the stored definition to what the layout needs. Container fields keep
   // their type so they draw as one collapsed row — expanding a blocks field can
@@ -48,11 +49,14 @@ export default async function SchemaPage({
     })),
   }));
 
-  const layout = layoutSchemaMap(input, mode);
+  const layout = layoutSchemaMap(input, mode, density);
 
   return (
-    <div className="mx-auto w-full max-w-[1200px] px-6 py-8">
-      <SchemaMap layout={layout} mode={mode} projectId={projectId} summary={summarize(layout)} />
+    // Break out of the shell's centred, padded content box and claim the whole
+    // viewport below the 52px top bar. A map is a canvas: it wants the screen,
+    // its own scrollbars, and no page scroll competing with them.
+    <div className="-mx-5 -my-7 flex h-[calc(100vh-52px)] flex-col md:-mx-10 md:-my-9">
+      <SchemaMap layout={layout} mode={mode} density={density} projectId={projectId} summary={summarize(layout)} />
     </div>
   );
 }

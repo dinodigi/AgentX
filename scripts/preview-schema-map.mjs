@@ -19,6 +19,7 @@ if (!projectId) {
   process.exit(1);
 }
 const mode = modeArg === "public" ? "public" : "model";
+const density = process.argv[4] === "detailed" || modeArg === "detailed" ? "detailed" : "compact";
 
 const [proj] = await sql`SELECT name FROM projects WHERE id = ${projectId}`;
 if (!proj) {
@@ -42,7 +43,7 @@ const input = rows.map((c) => ({
   })),
 }));
 
-const L = layoutSchemaMap(input, mode);
+const L = layoutSchemaMap(input, mode, density);
 const FILL = { public: "#a2571a", intake: "#0a6870", private: "#b4bfcb" };
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
@@ -51,25 +52,25 @@ const nodeSvg = (n) => {
     .map((f, i) => {
       const y = n.y + 24 + 11 + i * 15;
       const rel = f.type === "relation";
-      return `<text x="${n.x + 9}" y="${y}" font-size="10" fill="#5c6675"><tspan fill="${
-        rel ? "#0a6870" : "#5c6675"
-      }">${esc(f.name)}</tspan><tspan fill="#9aa5b1">  ${esc(f.type)}${f.unique ? " ◆" : ""}${
+      return `<text x="${n.x + 10}" y="${y}" font-size="10.5"><tspan fill="${
+        rel ? "#0a6870" : "#10151c"
+      }">${esc(f.name)}</tspan><tspan fill="#5c6675">  ${esc(f.type)}${f.unique ? " ◆" : ""}${
         f.indexed ? " ⌘" : ""
       }${f.searchable ? " ⌕" : ""}</tspan></text>`;
     })
     .join("");
   const more =
     n.hiddenFields > 0
-      ? `<text x="${n.x + 9}" y="${n.y + 24 + 11 + n.rows.length * 15}" font-size="10" fill="#9aa5b1">+ ${
-          n.hiddenFields
-        } more</text>`
+      ? `<text x="${n.x + 10}" y="${n.y + 24 + 11 + n.rows.length * 15}" font-size="10.5" fill="#9aa5b1">${
+          density === "compact" ? `${n.totalFields} fields` : `+ ${n.hiddenFields} more`
+        }</text>`
       : "";
   return `<g>
   <rect x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="4" fill="#fff" stroke="#b4bfcb"/>
   <rect x="${n.x}" y="${n.y}" width="${n.w}" height="24" rx="4" fill="#f2f5f8"/>
   <line x1="${n.x}" y1="${n.y + 24}" x2="${n.x + n.w}" y2="${n.y + 24}" stroke="#d9e0e8"/>
   <rect x="${n.x}" y="${n.y}" width="3.5" height="24" fill="${FILL[n.exposure]}"/>
-  <text x="${n.x + 12}" y="${n.y + 16}" font-size="11.5" font-weight="700" fill="#10151c">${esc(n.name)}</text>
+  <text x="${n.x + 13}" y="${n.y + 16}" font-size="11.5" font-weight="700" fill="#10151c">${esc(n.name)}</text>
   ${n.hasAccessRules ? `<text x="${n.x + n.w - 8}" y="${n.y + 16}" font-size="9" text-anchor="end" fill="#9aa5b1">access</text>` : ""}
   ${rows}${more}
 </g>`;
@@ -81,16 +82,16 @@ const html = `<!doctype html><meta charset="utf-8"><title>${esc(proj.name)} — 
   <h1 style="margin:0 0 4px;font-size:22px;letter-spacing:-.02em">${esc(proj.name)} — schema map</h1>
   <p style="margin:0 0 6px;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:#5c6675">${esc(
     summarize(L),
-  )} · mode=${mode} · viewBox ${L.width}×${L.height}</p>
+  )} · ${mode} / ${density} · viewBox ${L.width}×${L.height}</p>
   ${L.omitted.length ? `<p style="margin:0 0 6px;font-size:12.5px;color:#5c6675">not drawn: ${esc(L.omitted.join(", "))}</p>` : ""}
   ${L.cycles.length ? `<p style="margin:0 0 6px;font-size:12.5px;color:#a2571a">cycles: ${esc(L.cycles.join(", "))}</p>` : ""}
-  <div style="overflow:auto;border:1px solid #d9e0e8;border-radius:6px;background:#f2f5f8;padding:16px;margin-top:12px">
-  <svg viewBox="0 0 ${L.width} ${L.height}" width="${L.width}" style="max-width:100%;height:auto;font-family:ui-monospace,Consolas,monospace">
+  <div style="overflow:auto;border:1px solid #d9e0e8;border-radius:6px;background-color:#fbfcfd;background-image:radial-gradient(circle,#d9e0e8 1px,transparent 1px);background-size:24px 24px;margin-top:12px;max-height:78vh">
+  <svg viewBox="0 0 ${L.width} ${L.height}" width="${L.width}" height="${L.height}" style="display:block;font-family:ui-monospace,Consolas,monospace">
     <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="#0a6870"/></marker></defs>
-    <g fill="none" stroke="#0a6870" stroke-width="1.3" marker-end="url(#a)">
+    <g fill="none" stroke="#0a6870" stroke-width="1.25" opacity="0.75" marker-end="url(#a)">
       ${L.edges.map((e) => `<path d="${e.path}"/>`).join("\n      ")}
     </g>
-    <g font-size="10" fill="#0a6870" paint-order="stroke" stroke="#f2f5f8" stroke-width="3.5" stroke-linejoin="round">
+    <g font-size="10" fill="#0a6870" paint-order="stroke" stroke="#fbfcfd" stroke-width="4" stroke-linejoin="round">
       ${L.edges.map((e) => `<text x="${e.labelX}" y="${e.labelY}" text-anchor="middle">${esc(e.field)}</text>`).join("\n      ")}
     </g>
     ${L.nodes.map(nodeSvg).join("\n    ")}
@@ -98,7 +99,7 @@ const html = `<!doctype html><meta charset="utf-8"><title>${esc(proj.name)} — 
   </div>
 </div>`;
 
-const out = `schema-map-preview.html`;
+const out = `schema-map-${density}.html`;
 writeFileSync(out, html, "utf8");
 console.log(`${proj.name}: ${summarize(L)}`);
 console.log(`  mode=${mode} viewBox=${L.width}x${L.height} nodes=${L.nodes.length} edges=${L.edges.length}`);

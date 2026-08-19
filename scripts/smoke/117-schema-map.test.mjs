@@ -151,9 +151,9 @@ describe("schema map: layout", () => {
     assert.equal(l.edges.length, 0);
   });
 
-  it("caps the rows a node draws and reports the remainder", () => {
+  it("detailed density caps the rows a node draws and reports the remainder", () => {
     const wide = [{ name: "big", fields: Array.from({ length: 30 }, (_, i) => ({ name: `f${i}`, type: "text" })) }];
-    const l = layoutSchemaMap(wide);
+    const l = layoutSchemaMap(wide, "model", "detailed");
     const n = l.nodes[0];
     assert.ok(n.rows.length < 30, "a 30-field collection must not grow unboundedly");
     assert.equal(n.rows.length + n.hiddenFields, 30, "nothing may be silently dropped from the count");
@@ -200,19 +200,101 @@ describe("schema map: layout", () => {
       C("users", 9, ["role", "roles"]),
       C("cohorts", 8, ["course", "courses"]),
     ];
-    const l = layoutSchemaMap(dense);
-    assert.ok(l.edges.length >= 15, "fixture must reproduce the real converging graph");
-    for (let i = 0; i < l.edges.length; i++) {
-      for (let j = i + 1; j < l.edges.length; j++) {
-        const a = l.edges[i];
-        const b = l.edges[j];
-        const clash = Math.abs(a.labelX - b.labelX) < 34 && Math.abs(a.labelY - b.labelY) < 12;
-        assert.ok(
-          !clash,
-          `labels "${a.field}" (${a.labelX},${a.labelY}) and "${b.field}" (${b.labelX},${b.labelY}) overlap`,
-        );
+    // BOTH densities. The fixture collides under `detailed` (verified: 3 pairs
+    // without the de-collision pass), and checking only the compact default made
+    // this test vacuous once compact became the default — a control caught it.
+    for (const density of ["compact", "detailed"]) {
+      const l = layoutSchemaMap(dense, "model", density);
+      assert.ok(l.edges.length >= 15, "fixture must reproduce the real converging graph");
+      for (let i = 0; i < l.edges.length; i++) {
+        for (let j = i + 1; j < l.edges.length; j++) {
+          const a = l.edges[i];
+          const b = l.edges[j];
+          const clash = Math.abs(a.labelX - b.labelX) < 34 && Math.abs(a.labelY - b.labelY) < 12;
+          assert.ok(
+            !clash,
+            `[${density}] labels "${a.field}" (${a.labelX},${a.labelY}) and "${b.field}" (${b.labelX},${b.labelY}) overlap`,
+          );
+        }
       }
     }
+  });
+
+  it("edges arriving at one collection do NOT converge on a single point", () => {
+    // The fan. Every incoming edge used to aim at dst.y + dst.h/2, so on a real
+    // project fifteen relations pointing at `users` became fifteen long curves
+    // meeting at one spot and sweeping across the canvas. Arrivals must spread
+    // down the target's left edge instead.
+    const hub = [
+      { name: "users", fields: [{ name: "email", type: "text" }] },
+      ...Array.from({ length: 8 }, (_, i) => ({
+        name: `src${i}`,
+        fields: [{ name: `ref${i}`, type: "relation", targetCollection: "users" }],
+      })),
+    ];
+    const l = layoutSchemaMap(hub);
+    const arrivals = l.edges
+      .filter((e) => e.to === "users")
+      .map((e) => {
+        const nums = e.path.match(/-?[\d.]+/g).map(Number);
+        return Math.round(nums[nums.length - 1]);
+      });
+    assert.equal(arrivals.length, 8, "fixture must actually converge on one target");
+    assert.equal(
+      new Set(arrivals).size,
+      arrivals.length,
+      `all ${arrivals.length} edges arrive at ${new Set(arrivals).size} distinct heights — they must not stack`,
+    );
+  });
+
+  it("compact density is the default and draws relations plus a field count", () => {
+    // Compact exists because node height drives the layout: listing 8 fields per
+    // collection made 27 of 31 edges on a real project span two or more columns,
+    // so most edges had to pass behind unrelated boxes. Measured on Hatchly:
+    // 63 crossings detailed, 23 compact — and 2240x828 becomes 1382x636, which
+    // fits on a screen. Relations are always kept, because they ARE the edges and
+    // an unattributable arrow is worse than a longer box.
+    const c = [
+      {
+        name: "orders",
+        fields: [
+          { name: "ref", type: "text" },
+          { name: "total", type: "number" },
+          { name: "note", type: "text" },
+          { name: "customer", type: "relation", targetCollection: "people" },
+        ],
+      },
+      { name: "people", fields: [{ name: "name", type: "text" }] },
+    ];
+    const compact = layoutSchemaMap(c);
+    const orders = compact.nodes.find((n) => n.name === "orders");
+    assert.deepEqual(orders.rows.map((f) => f.name), ["customer"], "compact keeps only the relations");
+    assert.equal(orders.totalFields, 4, "…and still states the real size");
+    assert.equal(orders.hiddenFields, 3);
+    assert.equal(compact.edges.length, 1, "the edge survives compaction");
+
+    const detailed = layoutSchemaMap(c, "model", "detailed");
+    const dOrders = detailed.nodes.find((n) => n.name === "orders");
+    assert.equal(dOrders.rows.length, 4, "detailed lists them");
+    assert.ok(dOrders.h > orders.h, "compact must actually be shorter — that is the whole point");
+  });
+
+  it("compact produces a shorter, less crossed layout than detailed", () => {
+    // The claim compact is justified by, asserted rather than asserted-by-hand.
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      name: `t${i}`,
+      fields: [
+        ...Array.from({ length: 7 }, (_, k) => ({ name: `f${k}`, type: "text" })),
+        { name: "owner", type: "relation", targetCollection: "hub" },
+      ],
+    }));
+    const cols = [...many, { name: "hub", fields: [{ name: "name", type: "text" }] }];
+    const compact = layoutSchemaMap(cols, "model", "compact");
+    const detailed = layoutSchemaMap(cols, "model", "detailed");
+    assert.ok(
+      compact.height < detailed.height,
+      `compact must be shorter (${compact.height} vs ${detailed.height})`,
+    );
   });
 
   it("an empty schema lays out without throwing", () => {
@@ -254,7 +336,7 @@ describe("schema map: the public-surface view is a security statement", () => {
   it("public mode must NOT draw a private field of a drawn collection", () => {
     // The disclosure assertion. If this leaks, the view claims a field is public
     // when the delivery API would never return it — worse than having no view.
-    const l = layoutSchemaMap(MIXED, "public");
+    const l = layoutSchemaMap(MIXED, "public", "detailed");
     const posts = l.nodes.find((n) => n.name === "posts");
     const shown = posts.rows.map((f) => f.name);
     assert.ok(shown.includes("title"), "positive control: the public field IS drawn");
