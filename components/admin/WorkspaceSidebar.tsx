@@ -18,6 +18,7 @@ import {
   X,
   Puzzle,
   MessageSquare,
+  Network,
 } from "lucide-react";
 import { useRail } from "./AdminShell";
 
@@ -80,6 +81,7 @@ export function WorkspaceSidebar({
     <>
       {group("Project")}
       {item(`/admin/${currentId}`, "Overview", LayoutGrid)}
+      {item(`/admin/${currentId}/schema`, "Schema map", Network)}
       {item(`/admin/${currentId}/assets`, "Media", ImageIcon)}
       {item(`/admin/${currentId}/trash`, "Trash", Trash2)}
       {item(`/admin/${currentId}/plugins`, "Plugins", Puzzle)}
