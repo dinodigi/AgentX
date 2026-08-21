@@ -1,10 +1,6 @@
-import { PageSkeleton, HeaderSkeleton, PanelsSkeleton } from "@/components/admin/Skeleton";
+import { getSidebarCollapsed } from "@/lib/theme";
+import { WorkspaceShellSkeleton } from "@/components/admin/Skeleton";
 
-export default function Loading() {
-  return (
-    <PageSkeleton>
-      <HeaderSkeleton />
-      <PanelsSkeleton n={2} />
-    </PageSkeleton>
-  );
+export default async function Loading() {
+  return <WorkspaceShellSkeleton collapsed={await getSidebarCollapsed()} />;
 }

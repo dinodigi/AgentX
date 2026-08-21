@@ -1,6 +1,8 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { ChevronRight, Plus } from "lucide-react";
 import { ago, BrandTile, ConnectorHealth, Dot, isActive, Metric, sinceMonth } from "./fleet-util";
+import { ailingProjects } from "@/lib/fleet-health";
 
 /**
  * The studio home as a fleet control plane. Each project is a live client
@@ -37,7 +39,15 @@ export function ProjectFleet({
   const totalCollections = projects.reduce((s, p) => s + p.collections, 0);
   const totalEntries = projects.reduce((s, p) => s + p.entries, 0);
   // Fleet is "green" when no connected project has a connector in error.
-  const anyError = projects.some((p) => p.connectors.some((c) => c.status === "error"));
+  //
+  // This used to be a bare `.some()`, which knew a project was broken and threw
+  // away WHICH — the banner said "attention needed" and the operator had to open
+  // every project to find it. Keep the projects and the failing connector types:
+  // naming them is the entire value of the indicator.
+  const ailing = ailingProjects(projects);
+  const anyError = ailing.length > 0;
+  /** Two names inline keeps the banner one line; the rest collapse to a count. */
+  const NAMED = 2;
 
   return (
     <div className="mx-auto max-w-[1200px] px-5 py-8 md:px-10 md:py-10">
@@ -57,13 +67,41 @@ export function ProjectFleet({
           <span className="text-ink">{totalEntries}</span>
           <span className="text-ink-mute"> entries</span>
         </p>
-        <span
-          className="inline-flex items-center gap-2 font-mono text-[11px]"
-          style={{ color: anyError ? "var(--color-warn)" : "var(--color-accent)" }}
-        >
-          <Dot status={anyError ? "error" : "live"} live={!anyError} />
-          {anyError ? "attention needed" : "all systems live"}
-        </span>
+        {anyError ? (
+          <span
+            className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1 font-mono text-[11px]"
+            style={{ color: "var(--color-warn)" }}
+          >
+            <Dot status="error" />
+            <span>attention needed &mdash;</span>
+            {ailing.slice(0, NAMED).map(({ project: p, failing }, i) => (
+              <Fragment key={p.id}>
+                {i > 0 && <span className="text-line-strong">·</span>}
+                {/* Straight to the connectors tab: the status lives there, so this
+                    is one click from "something is wrong" to the actual reason. */}
+                <Link
+                  href={`/admin/${p.id}/connectors`}
+                  className="underline decoration-dotted underline-offset-2 hover:decoration-solid"
+                  title={`${p.name}: ${failing.join(", ")} connector in error — open its connectors`}
+                >
+                  {p.name}
+                </Link>
+                <span className="text-ink-mute">({failing.join(", ")})</span>
+              </Fragment>
+            ))}
+            {ailing.length > NAMED && (
+              <span className="text-ink-mute">and {ailing.length - NAMED} more</span>
+            )}
+          </span>
+        ) : (
+          <span
+            className="inline-flex items-center gap-2 font-mono text-[11px]"
+            style={{ color: "var(--color-accent)" }}
+          >
+            <Dot status="live" live />
+            all systems live
+          </span>
+        )}
       </div>
 
       <div className="mb-4 flex items-end justify-between">

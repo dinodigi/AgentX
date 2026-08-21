@@ -1,15 +1,7 @@
-import { PageSkeleton, HeaderSkeleton, CardGridSkeleton, PanelsSkeleton } from "@/components/admin/Skeleton";
+import { ProjectPageSkeleton } from "@/components/admin/Skeleton";
 
-/** Project overview. Also the DEFAULT boundary for every project sub-route that
- *  does not declare its own — a segment inherits its parent's loading UI. */
+/** Default for every project sub-route without its own boundary. Renders inside
+ *  the layout's <main>, so it must not redraw any chrome. */
 export default function Loading() {
-  return (
-    <PageSkeleton>
-      <HeaderSkeleton />
-      <div className="mb-5">
-        <CardGridSkeleton n={3} />
-      </div>
-      <PanelsSkeleton n={2} />
-    </PageSkeleton>
-  );
+  return <ProjectPageSkeleton />;
 }
