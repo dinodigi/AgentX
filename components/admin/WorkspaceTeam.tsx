@@ -98,9 +98,18 @@ export function WorkspaceTeam({
               const res = await addWorkspaceMember(workspaceId, fd);
               setError(res.error ?? null);
             }}
-            className="flex gap-2"
+            className="flex flex-wrap gap-2"
           >
-            <input name="email" placeholder="teammate@company.com" className="field-input flex-1" />
+            {/* min-w keeps the email field readable: a bare flex-1 collapses to
+                nothing next to the select and button on a narrow screen, and
+                flex-wrap lets the row break instead of crushing it. */}
+            <input
+              name="email"
+              type="email"
+              autoComplete="email"
+              placeholder="teammate@company.com"
+              className="field-input min-w-[16rem] flex-1"
+            />
             <select name="role" defaultValue="manager" className="field-input w-28 shrink-0">
               <option value="manager">manager</option>
               <option value="admin">admin</option>

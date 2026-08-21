@@ -318,28 +318,36 @@ body {
   color: var(--color-ink-mute);
 }
 
-.field-input {
-  width: 100%;
-  background: var(--color-card);
-  border: 1px solid var(--color-line);
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 14px;
-  color: var(--color-ink);
-  transition:
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-.field-input::placeholder {
-  color: var(--color-ink-mute);
-}
-.field-input:hover {
-  border-color: var(--color-line-strong);
-}
-.field-input:focus {
-  outline: none;
-  border-color: var(--brand);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+/* Component classes live in @layer components so Tailwind UTILITIES beat them.
+   Unlayered CSS outwins every layered utility in Tailwind v4, so `.field-input`'s
+   `width: 100%` was silently overriding `w-28`, `flex-1`, `w-24`, `w-56` and
+   `w-auto` everywhere they appeared alongside it — 7 of 14 usages. The visible
+   symptom was the workspace "add teammate" row: the role select took the whole
+   line and the email input collapsed to 26px, of which 24px was padding. */
+@layer components {
+  .field-input {
+    width: 100%;
+    background: var(--color-card);
+    border: 1px solid var(--color-line);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 14px;
+    color: var(--color-ink);
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  .field-input::placeholder {
+    color: var(--color-ink-mute);
+  }
+  .field-input:hover {
+    border-color: var(--color-line-strong);
+  }
+  .field-input:focus {
+    outline: none;
+    border-color: var(--brand);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 22%, transparent);
+  }
 }
 
 /* Controls read as technical: mono, tight, 6px radius. */
