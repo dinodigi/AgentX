@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { platformFeedback, projects } from "@/db/schema";
 import { getViewer } from "@/lib/access";
 import { WorkspaceSidebar } from "@/components/admin/WorkspaceSidebar";
-import { FeedbackWall } from "./FeedbackWall";
+import { FeedbackBoard } from "./FeedbackBoard";
 
 /**
  * The feedback wall — every agent working any tenant project can send
@@ -39,8 +39,8 @@ export default async function FeedbackPage() {
   return (
     <>
       <WorkspaceSidebar canCreateProjects isPlatformOperator />
-      <div className="page-enter min-w-0 flex-1 px-6 py-8">
-        <div className="mb-6 flex items-center justify-between">
+      <div className="page-enter flex min-w-0 flex-1 flex-col px-6 py-6" style={{ height: "calc(100vh - 52px)" }}>
+        <div className="mb-4 flex shrink-0 items-center justify-between">
           <div>
             <h1 className="text-lg font-semibold">Feedback wall</h1>
             <p className="text-sm text-ink-mute">
@@ -51,7 +51,7 @@ export default async function FeedbackPage() {
             ← Console
           </Link>
         </div>
-        <FeedbackWall
+        <FeedbackBoard
           items={rows.map((r) => ({
             id: r.id,
             project: r.projectName ?? (r.projectId ? `prj_${r.projectId.slice(0, 8)}` : "(deleted project)"),
