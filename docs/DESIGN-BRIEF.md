@@ -1,5 +1,9 @@
 # AgentX — Design Brief (platform UI pass + marketing site)
 
+> **Durable.** The active design direction. Updated on a real change of
+> direction, not on a schedule — see [README.md](README.md) for the classes.
+
+
 > **Living direction — set 2026-07-10.** Futuristic/technical is the target;
 > the earlier paper-and-ink look is out. Update only when the direction changes.
 

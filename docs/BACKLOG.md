@@ -1,6 +1,6 @@
 # Backlog — open ideas, feedback & parked decisions
 
-> **Living — last synced 2026-07-29 · CP10 sweep complete: every row carries a
+> **Living — last synced 2026-08-21 · CP10 sweep complete: every row carries a
 > disposition.** No fifth state, no "we'll see" — per
 > [pm/BURNDOWN.md](pm/BURNDOWN.md).
 

@@ -1,5 +1,9 @@
 # Docs — how to read this folder
 
+> **Durable.** The map of the folder. Updated when the folder's shape changes.
+> (This file states the class convention below and, until 2026-08-21, was the
+> only top-level doc that did not follow it.)
+
 > **Dateline convention:** every top-level doc opens with a class line —
 > `Living — last synced <date>` (kept current; updated as part of the ship
 > ritual in CLAUDE.md), `Durable`/`Contract` (ages slowly; updated on real
@@ -36,7 +40,20 @@ lives in [runbooks/](runbooks/); everything superseded drops into
 3. [SCALE-AND-CONTENT-MODEL-PLAN.md](plans/SCALE-AND-CONTENT-MODEL-PLAN.md) — index layer, pagination, repeaters (shipped)
 4. [SECURITY-REMEDIATION-PLAN.md](plans/SECURITY-REMEDIATION-PLAN.md) — fixes from the Hostile Agent v1 audit (shipped)
 5. [POST-DEPLOYMENT-V1.0-PLAN.md](plans/POST-DEPLOYMENT-V1.0-PLAN.md) — CDN, caps/metering, blocks, plugins, SEO (shipped)
-6. [POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md) — current: relations-in-blocks, block library, email, SEO v2
+6. [POST-DEPLOYMENT-V2-PLAN.md](plans/POST-DEPLOYMENT-V2-PLAN.md) — relations-in-blocks, block library, email, SEO v2
+7. [SPRINT-2026-07-HARDENING.md](plans/SPRINT-2026-07-HARDENING.md) — token lifecycle, health split, dedicated test DB (shipped)
+8. [PLUGIN-BASES-PLAN.md](plans/PLUGIN-BASES-PLAN.md) — composition core, wave-1 bases; blueprints deferred
+9. [MCP-FRICTION-PLAN.md](plans/MCP-FRICTION-PLAN.md) — fresh MCP reads, deploy notices, helpful 404s (shipped)
+10. [SPRINT-LOOSE-ENDS.md](plans/SPRINT-LOOSE-ENDS.md) — the carry-over batch
+11. [XVIBE-PLAN.md](plans/XVIBE-PLAN.md) — XVibe as a separate product; static heads only, no tenant code execution
+12. [SPRINT-XVIBE-INTAKE.md](plans/SPRINT-XVIBE-INTAKE.md) — the wall batch XVibe's own build produced
+13. [SPRINT-FIELD-SIGNAL.md](plans/SPRINT-FIELD-SIGNAL.md) — convergence honesty, stateless transport, and what tenants kept reporting
+14. [SPRINT-IDENTITY-ISOLATION.md](plans/SPRINT-IDENTITY-ISOLATION.md) — **current**: org-scoped admin (MT-2), identity setup, access diagnosis
+15. [ENV-EXPERIMENT-SETUP.md](plans/ENV-EXPERIMENT-SETUP.md) — ENV-1's first slice: a safe place to experiment, and the isolation checklist
+
+> Nine of these were missing from this index until 2026-08-21. If you add a plan,
+> add its line here — an index that omits half the folder is worse than none,
+> because it reads as complete.
 
 ## reviews/ — point-in-time audits & field reports
 
